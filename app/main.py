@@ -1,0 +1,1050 @@
+from fastapi import FastAPI, Request, HTTPException
+import os, json, sqlite3, datetime as dt
+from typing import Any, Dict, Optional, List, Tuple
+import httpx
+import re
+from zoneinfo import ZoneInfo
+
+# ==========================
+# Config
+# ==========================
+DB_PATH = os.getenv("DB_PATH", "/data/sentinel.db")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
+
+# GoHighLevel / LeadConnector API
+GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com")
+GHL_TOKEN = os.getenv("GHL_TOKEN", "")  # Private Integration token (Bearer)
+GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28")
+
+# Summary recipients (managers only, v1)
+MANAGER_CONTACT_IDS = [
+    s.strip() for s in (os.getenv("MANAGER_CONTACT_IDS", "")).split(",") if s.strip()
+]
+
+# Limits to keep SMS short and low-noise
+SUMMARY_MAX_ITEMS_PER_SECTION = int(os.getenv("SUMMARY_MAX_ITEMS_PER_SECTION", "8"))
+
+app = FastAPI()
+
+
+# ==========================
+# DB helpers + migrations
+# ==========================
+def db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def _col_exists(conn: sqlite3.Connection, table: str, col: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r["name"] == col for r in rows)
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, cols: List[tuple]) -> None:
+    for name, ddl in cols:
+        if not _col_exists(conn, table, name):
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+def init_db() -> None:
+    conn = db()
+    cur = conn.cursor()
+
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS raw_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        received_ts TEXT NOT NULL,
+        source TEXT NOT NULL,
+        payload TEXT NOT NULL
+      )
+    """)
+
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS issues (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        issue_type TEXT NOT NULL,             -- 'SMS' | 'CALL'
+        owner_id TEXT,
+        contact_id TEXT,
+        phone TEXT,
+        created_ts TEXT NOT NULL,
+        due_ts TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'OPEN',  -- OPEN | RESOLVED | SPAM
+        resolved_ts TEXT,
+        meta TEXT
+      )
+    """)
+
+    # Sentinel v1 issue fields
+    _ensure_columns(conn, "issues", [
+        ("first_inbound_ts", "TEXT"),
+        ("last_inbound_ts", "TEXT"),
+        ("inbound_count", "INTEGER DEFAULT 0"),
+        ("outbound_count", "INTEGER DEFAULT 0"),
+        ("conversation_id", "TEXT"),
+    ])
+
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS spam_phones (
+        phone TEXT PRIMARY KEY,
+        created_ts TEXT NOT NULL
+      )
+    """)
+
+    # For "resolved since last summary" dopamine
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS kv_store (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    """)
+
+    conn.commit()
+    conn.close()
+
+@app.on_event("startup")
+def _startup():
+    os.makedirs("/data", exist_ok=True)
+    init_db()
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
+# ==========================
+# Auth helper (shared)
+# ==========================
+def _auth_or_401(request: Request) -> None:
+    secret = request.headers.get("X-NTPP-Secret") or request.query_params.get("secret")
+    if not secret or secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# ==========================
+# Time / SLA helpers
+# ==========================
+def _now_local() -> dt.datetime:
+    return dt.datetime.now(tz=ZoneInfo(TZ_NAME))
+
+def _is_business_time(ts: dt.datetime) -> bool:
+    # Mon-Fri 09:00-18:00 local
+    if ts.weekday() >= 5:
+        return False
+    start = ts.replace(hour=9, minute=0, second=0, microsecond=0)
+    end = ts.replace(hour=18, minute=0, second=0, microsecond=0)
+    return start <= ts <= end
+
+def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
+    cur = ts
+    while True:
+        if cur.weekday() >= 5:
+            days_ahead = 7 - cur.weekday()
+            cur = (cur + dt.timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0)
+            continue
+        if cur.hour < 9:
+            return cur.replace(hour=9, minute=0, second=0, microsecond=0)
+        if cur.hour >= 18:
+            cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+            continue
+        return cur
+
+def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
+    """
+    Deterministic business-hours adder: Mon–Fri 09:00–18:00 local.
+    Adds hours strictly across business windows.
+    """
+    if start_local.tzinfo is None:
+        start_local = start_local.replace(tzinfo=ZoneInfo(TZ_NAME))
+
+    remaining = hours * 3600.0
+    cur = _roll_to_next_business_open(start_local)
+
+    while remaining > 0:
+        day_end = cur.replace(hour=18, minute=0, second=0, microsecond=0)
+        available = (day_end - cur).total_seconds()
+        if remaining <= available:
+            return cur + dt.timedelta(seconds=remaining)
+
+        remaining -= available
+        cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        while cur.weekday() >= 5:
+            cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+
+    return cur
+
+
+# ==========================
+# GHL API helpers
+# ==========================
+def _ghl_headers() -> Dict[str, str]:
+    if not GHL_TOKEN:
+        raise HTTPException(status_code=500, detail="Server missing GHL_TOKEN")
+    return {
+        "Authorization": f"Bearer {GHL_TOKEN}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Version": GHL_VERSION,
+    }
+
+async def ghl_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = GHL_BASE_URL.rstrip("/") + path
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(url, headers=_ghl_headers(), params=params or {})
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"GHL GET {path} failed: {r.status_code} {r.text[:300]}")
+        return r.json()
+
+async def ghl_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = GHL_BASE_URL.rstrip("/") + path
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.post(url, headers=_ghl_headers(), json=payload)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code} {r.text[:300]}")
+        return r.json()
+
+async def ghl_list_messages(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Verified response shape: {'messages': [...], 'traceId': ...}
+    (Your container probe showed top keys: ['messages','traceId'])
+    """
+    data = await ghl_get(f"/conversations/{conversation_id}/messages", params={"limit": limit})
+
+    if isinstance(data, dict):
+        msgs = data.get("messages")
+        if isinstance(msgs, list):
+            return msgs
+        # fallback older shapes
+        if isinstance(msgs, dict) and isinstance(msgs.get("messages"), list):
+            return msgs["messages"]
+        if isinstance(data.get("data"), list):
+            return data["data"]
+        if isinstance(data.get("data"), dict) and isinstance(data["data"].get("messages"), list):
+            return data["data"]["messages"]
+    if isinstance(data, list):
+        return data
+    return []
+
+async def ghl_send_message(conversation_id: str, contact_id: str, message_text: str) -> Dict[str, Any]:
+    """
+    LOCKED (verified):
+      POST /conversations/messages
+      payload:
+        type: "SMS"
+        message: "<text>"
+        conversationId: "<id>"
+        contactId: "<id>"
+    """
+    payload = {
+        "type": "SMS",
+        "message": message_text,
+        "conversationId": conversation_id,
+        "contactId": contact_id,
+    }
+    return await ghl_post("/conversations/messages", payload)
+
+async def ghl_find_conversation_id_for_contact(contact_id: Optional[str], phone: Optional[str]) -> Optional[str]:
+    """
+    Deterministic: call conversations/search and return the newest conversation id.
+    Prefers contact_id; falls back to phone if contact_id missing.
+
+    NOTE: response shape can vary; we normalize common shapes.
+    """
+    params: Dict[str, Any] = {}
+    if contact_id:
+        params["contactId"] = contact_id
+    elif phone:
+        params["phone"] = phone
+    else:
+        return None
+
+    data = await ghl_get("/conversations/search", params=params)
+
+    if isinstance(data, dict):
+        for key in ("conversations", "data", "items"):
+            if key in data and isinstance(data[key], list) and data[key]:
+                c = data[key][0]
+                if isinstance(c, dict):
+                    for k in ("id", "conversationId"):
+                        v = c.get(k)
+                        if isinstance(v, str) and v.strip():
+                            return v.strip()
+    return None
+
+
+# ==========================
+# Payload extraction helpers
+# ==========================
+def _normalize_phone(p: Optional[str]) -> Optional[str]:
+    if not p:
+        return None
+    s = str(p).strip()
+    s = re.sub(r"[^\d\+]", "", s)
+    if s.startswith("00"):
+        s = "+" + s[2:]
+    if s and s[0] != "+" and len(re.sub(r"\D", "", s)) == 10:
+        s = "+1" + re.sub(r"\D", "", s)
+    return s
+
+def _extract_text(payload: Dict[str, Any]) -> str:
+    for k in ("body", "message", "text", "content", "Message"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    # nested dicts (your workflow payload has message.body)
+    for k in ("data", "sms", "message", "Message"):
+        v = payload.get(k)
+        if isinstance(v, dict):
+            t = _extract_text(v)
+            if t:
+                return t
+    return ""
+
+def _extract_conversation_id(payload: Dict[str, Any]) -> Optional[str]:
+    for k in ("conversationId", "conversation_id", "conversation", "conversationID"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, dict):
+            for kk in ("id", "conversationId"):
+                vv = v.get(kk)
+                if isinstance(vv, str) and vv.strip():
+                    return vv.strip()
+    d = payload.get("data")
+    if isinstance(d, dict):
+        return _extract_conversation_id(d)
+    return None
+
+def _extract_contact_id(payload: Dict[str, Any]) -> Optional[str]:
+    for k in ("contactId", "contact_id", "contact", "contactID"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, dict):
+            vv = v.get("id")
+            if isinstance(vv, str) and vv.strip():
+                return vv.strip()
+    d = payload.get("data")
+    if isinstance(d, dict):
+        return _extract_contact_id(d)
+    return None
+
+def _extract_from_phone(payload: Dict[str, Any]) -> Optional[str]:
+    for k in ("from", "fromNumber", "phone", "customerPhone"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return _normalize_phone(v)
+    d = payload.get("data")
+    if isinstance(d, dict):
+        return _extract_from_phone(d)
+    return None
+
+def _extract_direction(payload: Dict[str, Any]) -> str:
+    for k in ("direction", "type"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+    d = payload.get("data")
+    if isinstance(d, dict):
+        return _extract_direction(d)
+    return ""
+
+def _extract_contact_type(payload: Dict[str, Any]) -> Optional[str]:
+    for k in ("contactType", "contact_type", "type"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+
+    d = payload.get("contact") or payload.get("data")
+    if isinstance(d, dict):
+        for k in ("contactType", "contact_type", "type"):
+            v = d.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip().lower()
+    return None
+
+
+# ==========================
+# Spam helper
+# ==========================
+def _is_spam(conn: sqlite3.Connection, phone: Optional[str]) -> bool:
+    if not phone:
+        return False
+    row = conn.execute("SELECT 1 FROM spam_phones WHERE phone = ?", (phone,)).fetchone()
+    return row is not None
+
+def mark_spam(phone: str) -> None:
+    conn = db()
+    conn.execute(
+        "INSERT OR IGNORE INTO spam_phones (phone, created_ts) VALUES (?, ?)",
+        (phone, _now_local().isoformat())
+    )
+    conn.commit()
+    conn.close()
+
+
+# ==========================
+# KV store helpers
+# ==========================
+def kv_get(key: str) -> Optional[str]:
+    conn = db()
+    row = conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+def kv_set(key: str, value: str) -> None:
+    conn = db()
+    conn.execute("INSERT INTO kv_store(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    conn.commit()
+    conn.close()
+
+
+# ==========================
+# Raw event ingestion
+# ==========================
+async def _parse_request_payload(request: Request) -> Dict[str, Any]:
+    content_type = (request.headers.get("content-type") or "").lower()
+    raw_body = await request.body()
+    payload: Dict[str, Any] = {
+        "_meta": {
+            "content_type": content_type,
+            "content_length": len(raw_body),
+        }
+    }
+
+    if "application/json" in content_type and raw_body.strip():
+        try:
+            payload.update(json.loads(raw_body.decode("utf-8")))
+        except Exception as e:
+            payload["_meta"]["json_error"] = str(e)
+            payload["_raw"] = raw_body.decode("utf-8", errors="replace")
+    else:
+        try:
+            form = await request.form()
+            payload.update(dict(form))
+        except Exception as e:
+            payload["_meta"]["form_error"] = str(e)
+            payload["_raw"] = raw_body.decode("utf-8", errors="replace")
+    return payload
+
+def _log_raw_event(source: str, payload: Dict[str, Any]) -> None:
+    conn = db()
+    conn.execute(
+        "INSERT INTO raw_events (received_ts, source, payload) VALUES (?, ?, ?)",
+        (dt.datetime.utcnow().isoformat(), source, json.dumps(payload))
+    )
+    conn.commit()
+    conn.close()
+
+
+# ==========================
+# Commands (kept minimal; internal only)
+# ==========================
+async def handle_command(text: str, command_contact_id: Optional[str], command_from_phone: Optional[str]) -> Dict[str, Any]:
+    parts = text.strip().split()
+    if len(parts) < 2:
+        return {"ok": False, "error": "Missing command"}
+
+    cmd = parts[1].upper()
+
+    if cmd == "LIST":
+        lines = list_open_issues()
+        body = "\n".join(lines) if lines else "No OPEN issues."
+        return {"ok": True, "cmd": "LIST", "count": len(lines), "text": body}
+
+    if cmd == "SPAM":
+        if len(parts) < 3:
+            return {"ok": False, "error": "Usage: SENTINEL SPAM <phone>"}
+        phone = _normalize_phone(parts[2])
+        if not phone:
+            return {"ok": False, "error": "Invalid phone"}
+        mark_spam(phone)
+        resolve_by_phone(phone, status="SPAM")
+        return {"ok": True, "cmd": "SPAM", "phone": phone}
+
+    if cmd == "RESOLVE":
+        if len(parts) < 3:
+            return {"ok": False, "error": "Usage: SENTINEL RESOLVE <phone|contact_id|name>"}
+        target = " ".join(parts[2:]).strip()
+        resolved = resolve_target(target)
+        return {"ok": True, "cmd": "RESOLVE", "resolved": resolved, "target": target}
+
+    return {"ok": False, "error": f"Unknown command: {cmd}"}
+
+
+def list_open_issues(limit: int = 20) -> List[str]:
+    conn = db()
+    rows = conn.execute("""
+        SELECT id, issue_type, phone, contact_id, created_ts, due_ts, inbound_count, last_inbound_ts
+        FROM issues
+        WHERE status='OPEN'
+        ORDER BY due_ts ASC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    lines = [f"OPEN issues (top {len(rows)}):"]
+    for r in rows:
+        phone = r["phone"] or "-"
+        cid = r["contact_id"] or "-"
+        it = r["issue_type"]
+        due = r["due_ts"]
+        inc = r["inbound_count"] if r["inbound_count"] is not None else 0
+        last_in = r["last_inbound_ts"] or r["created_ts"]
+        lines.append(f"#{r['id']} [{it}] phone={phone} contact={cid} inbound={inc} last_in={last_in} due={due}")
+    return lines
+
+def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
+    conn = db()
+    now = _now_local().isoformat()
+    cur = conn.execute("""
+        UPDATE issues
+        SET status=?, resolved_ts=?
+        WHERE status='OPEN' AND phone=?
+    """, (status, now, phone))
+    conn.commit()
+    conn.close()
+    return cur.rowcount
+
+def resolve_by_contact_id(contact_id: str, status: str = "RESOLVED") -> int:
+    conn = db()
+    now = _now_local().isoformat()
+    cur = conn.execute("""
+        UPDATE issues
+        SET status=?, resolved_ts=?
+        WHERE status='OPEN' AND contact_id=?
+    """, (status, now, contact_id))
+    conn.commit()
+    conn.close()
+    return cur.rowcount
+
+def resolve_by_name(name: str, status: str = "RESOLVED") -> int:
+    name_l = name.strip().lower()
+    if not name_l:
+        return 0
+
+    conn = db()
+    rows = conn.execute("SELECT id, meta FROM issues WHERE status='OPEN'").fetchall()
+    matched_ids: List[int] = []
+
+    for r in rows:
+        try:
+            meta = json.loads(r["meta"] or "{}")
+        except Exception:
+            meta = {}
+        cn = (meta.get("contact_name") or "").lower()
+        if cn and name_l in cn:
+            matched_ids.append(r["id"])
+
+    now = _now_local().isoformat()
+    if matched_ids:
+        q = "UPDATE issues SET status=?, resolved_ts=? WHERE id IN (%s)" % ",".join(["?"] * len(matched_ids))
+        conn.execute(q, [status, now] + matched_ids)
+        conn.commit()
+
+    conn.close()
+    return len(matched_ids)
+
+def _looks_like_contact_id(s: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9]{10,}", s))
+
+def resolve_target(target: str) -> int:
+    t = target.strip()
+    phone = _normalize_phone(t)
+    if phone:
+        return resolve_by_phone(phone)
+    if _looks_like_contact_id(t):
+        return resolve_by_contact_id(t)
+    return resolve_by_name(t)
+
+
+# ==========================
+# Webhooks
+# ==========================
+@app.post("/webhook/ghl")
+async def ghl_webhook_raw(request: Request):
+    _auth_or_401(request)
+    payload = await _parse_request_payload(request)
+    _log_raw_event("ghl_raw", payload)
+    return {"received": True}
+
+@app.post("/webhook/ghl/inbound_sms")
+async def inbound_sms(request: Request):
+    """
+    Final SMS Logic (Locked):
+
+    Inbound SMS webhook:
+      - Internal + "SENTINEL " -> command
+      - Internal + not command -> ignore
+      - Customer inbound:
+          - If no OPEN SMS issue for conversation (preferred) -> create issue
+            store first_inbound_ts, conversation_id, inbound_count=1
+            DO NOT reset due_ts later
+          - Else update last_inbound_ts and inbound_count += 1
+
+    conversation_id is looked up via /conversations/search using contact_id (preferred) or phone.
+    """
+    _auth_or_401(request)
+    payload = await _parse_request_payload(request)
+    _log_raw_event("inbound_sms", payload)
+
+    text = _extract_text(payload)
+    contact_id = _extract_contact_id(payload)
+    from_phone = _extract_from_phone(payload)
+    direction = _extract_direction(payload)
+    contact_type = _extract_contact_type(payload)
+
+    if direction in ("outbound", "outgoing"):
+        return {"received": True, "ignored": "outbound"}
+
+    if text.upper().startswith("SENTINEL "):
+        if contact_type == "internal":
+            result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
+            return {"received": True, "command": True, "result": result}
+
+    if contact_type == "internal":
+        return {"received": True, "ignored": "internal_non_command"}
+
+    conn = db()
+
+    if _is_spam(conn, from_phone):
+        conn.close()
+        return {"received": True, "ignored": "spam_phone"}
+
+    now_local = _now_local()
+    created_ts = now_local.isoformat()
+    due_ts = add_business_hours(now_local, 2.0).isoformat()
+
+    conversation_id: Optional[str] = None
+    try:
+        conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
+    except Exception:
+        conversation_id = None
+
+    row = None
+    if conversation_id:
+        row = conn.execute(
+            "SELECT * FROM issues WHERE status='OPEN' AND issue_type='SMS' AND conversation_id=? ORDER BY id DESC LIMIT 1",
+            (conversation_id,)
+        ).fetchone()
+
+    if row is None and from_phone:
+        row = conn.execute(
+            "SELECT * FROM issues WHERE status='OPEN' AND issue_type='SMS' AND phone=? ORDER BY id DESC LIMIT 1",
+            (from_phone,)
+        ).fetchone()
+
+    if row is None:
+        meta = {
+            "last_text": text[:500],
+            "source": "inbound_sms_webhook",
+        }
+        conn.execute("""
+            INSERT INTO issues
+              (issue_type, contact_id, phone, created_ts, due_ts, status, meta,
+               first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
+            VALUES
+              ('SMS', ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?)
+        """, (
+            contact_id, from_phone, created_ts, due_ts, json.dumps(meta),
+            created_ts, created_ts, conversation_id
+        ))
+    else:
+        meta = {}
+        try:
+            if row["meta"]:
+                meta = json.loads(row["meta"])
+        except Exception:
+            meta = {}
+
+        meta["last_text"] = text[:500]
+        meta["updated_by"] = "inbound_sms_webhook"
+
+        conn.execute("""
+            UPDATE issues
+            SET last_inbound_ts=?,
+                inbound_count=COALESCE(inbound_count,0)+1,
+                contact_id=COALESCE(contact_id, ?),
+                phone=COALESCE(phone, ?),
+                conversation_id=COALESCE(conversation_id, ?),
+                meta=?
+            WHERE id=?
+        """, (created_ts, contact_id, from_phone, conversation_id, json.dumps(meta), row["id"]))
+
+    conn.commit()
+    conn.close()
+    return {"received": True, "issue_created_or_updated": True}
+
+@app.post("/webhook/ghl/unanswered_call")
+async def unanswered_call(request: Request):
+    """
+    Deterministic CALL issues only from voicemail_route=tech_sentinel controlled signal.
+    """
+    _auth_or_401(request)
+    payload = await _parse_request_payload(request)
+    _log_raw_event("unanswered_call", payload)
+
+    vr = payload.get("voicemail_route")
+    if isinstance(vr, list):
+        routes = [str(x) for x in vr]
+    else:
+        routes = [str(vr)] if vr is not None else []
+
+    if "tech_sentinel" not in routes:
+        return {"received": True, "ignored": "voicemail_route_not_tech_sentinel"}
+
+    contact_id = _extract_contact_id(payload)
+    from_phone = _extract_from_phone(payload)
+
+    conn = db()
+    if _is_spam(conn, from_phone):
+        conn.close()
+        return {"received": True, "ignored": "spam_phone"}
+
+    now_local = _now_local()
+    created_ts = now_local.isoformat()
+    due_ts = add_business_hours(now_local, 2.0).isoformat()
+
+    meta = {"source": "voicemail_route=tech_sentinel"}
+    conn.execute("""
+        INSERT INTO issues (issue_type, contact_id, phone, created_ts, due_ts, status, meta)
+        VALUES ('CALL', ?, ?, ?, ?, 'OPEN', ?)
+    """, (contact_id, from_phone, created_ts, due_ts, json.dumps(meta)))
+    conn.commit()
+    conn.close()
+    return {"received": True, "issue_created": True}
+
+
+# ==========================
+# Polling resolver (SMS)
+# ==========================
+def _msg_ts(m: Dict[str, Any]) -> Optional[dt.datetime]:
+    v = m.get("dateAdded")
+    if isinstance(v, str) and v:
+        try:
+            return dt.datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    return None
+
+def _msg_direction(m: Dict[str, Any]) -> str:
+    v = m.get("direction")
+    if isinstance(v, str) and v:
+        return v.lower()
+    return ""
+
+@app.post("/jobs/poll_resolver")
+async def poll_resolver(request: Request, limit: int = 200):
+    """
+    For each OPEN SMS issue:
+      Fetch messages for conversation_id
+      Resolve if ANY outbound where dateAdded > first_inbound_ts
+    """
+    _auth_or_401(request)
+
+    conn = db()
+    rows = conn.execute("""
+        SELECT id, conversation_id, first_inbound_ts, outbound_count
+        FROM issues
+        WHERE status='OPEN'
+          AND issue_type='SMS'
+          AND conversation_id IS NOT NULL
+        ORDER BY due_ts ASC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+
+    checked = 0
+    resolved = 0
+    updated_counts = 0
+
+    for r in rows:
+        checked += 1
+        issue_id = r["id"]
+        conv_id = r["conversation_id"]
+        if not conv_id:
+            continue
+
+        try:
+            msgs = await ghl_list_messages(conv_id, limit=50)
+        except HTTPException:
+            continue
+
+        try:
+            fi = dt.datetime.fromisoformat((r["first_inbound_ts"] or "").replace("Z", "+00:00"))
+        except Exception:
+            fi = None
+
+        outbound_after = False
+        out_count = 0
+
+        for m in msgs:
+            d = _msg_direction(m)
+            if d == "outbound":
+                out_count += 1
+
+            if fi is not None and d == "outbound":
+                mts = _msg_ts(m)
+                if mts is None:
+                    continue
+                try:
+                    # compare as UTC
+                    fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
+                    if mts.astimezone(dt.timezone.utc) > fi_utc:
+                        outbound_after = True
+                except Exception:
+                    pass
+
+        conn2 = db()
+        prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
+        if out_count != prev_out:
+            conn2.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
+            conn2.commit()
+            updated_counts += 1
+
+        if outbound_after:
+            now = _now_local().isoformat()
+            conn2.execute("""
+                UPDATE issues
+                SET status='RESOLVED', resolved_ts=?
+                WHERE id=? AND status='OPEN'
+            """, (now, issue_id))
+            conn2.commit()
+            resolved += 1
+
+        conn2.close()
+
+    return {"job": "poll_resolver", "checked": checked, "resolved": resolved, "updated_counts": updated_counts}
+
+
+# ==========================
+# Summary logic (Managers only, v1)
+# ==========================
+def _short_phone(p: Optional[str]) -> str:
+    if not p:
+        return "-"
+    s = re.sub(r"\D", "", p)
+    if len(s) >= 10:
+        return f"+1***{s[-4:]}"
+    return p
+
+def _parse_iso(ts: Optional[str]) -> Optional[dt.datetime]:
+    if not ts:
+        return None
+    try:
+        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+def _is_escalated(issue_type: str, first_inbound_ts: Optional[str], created_ts: str, now_local: dt.datetime) -> bool:
+    """
+    Escalation: still OPEN after 24 business hours.
+    Uses business-hours adder from first_inbound_ts (SMS) or created_ts (CALL).
+    """
+    base_ts = first_inbound_ts if issue_type == "SMS" and first_inbound_ts else created_ts
+    base = _parse_iso(base_ts)
+    if not base:
+        return False
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=ZoneInfo(TZ_NAME))
+    threshold = add_business_hours(base.astimezone(ZoneInfo(TZ_NAME)), 24.0)
+    return now_local >= threshold
+
+async def _manager_conversation_for_contact(contact_id: str) -> Optional[str]:
+    # lookup via conversations/search?contactId=...
+    return await ghl_find_conversation_id_for_contact(contact_id, None)
+
+def _summary_title(slot: str) -> str:
+    s = slot.lower()
+    if s == "morning":
+        return "Morning"
+    if s == "midday":
+        return "Midday"
+    if s == "afternoon":
+        return "Afternoon"
+    return slot.capitalize()
+
+def _fmt_dt_local(ts: Optional[str]) -> str:
+    d = _parse_iso(ts)
+    if not d:
+        return "-"
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=ZoneInfo(TZ_NAME))
+    loc = d.astimezone(ZoneInfo(TZ_NAME))
+    return loc.strftime("%-I:%M%p").lower()
+
+def _build_section_lines(rows: List[sqlite3.Row], label: str, now_local: dt.datetime) -> Tuple[List[str], List[str]]:
+    """
+    Returns (normal_lines, escalated_lines)
+    """
+    normal: List[str] = []
+    escalated: List[str] = []
+
+    for r in rows[:SUMMARY_MAX_ITEMS_PER_SECTION]:
+        it = r["issue_type"]
+        phone = _short_phone(r["phone"])
+        last_in = r["last_inbound_ts"] or r["created_ts"]
+        due = r["due_ts"]
+        inc = r["inbound_count"] if r["inbound_count"] is not None else 0
+        marker = f"#{r['id']} {phone} last { _fmt_dt_local(last_in) } due { _fmt_dt_local(due) }"
+        if it == "SMS":
+            marker += f" in={inc}"
+        if _is_escalated(it, r["first_inbound_ts"], r["created_ts"], now_local):
+            escalated.append(marker)
+        else:
+            normal.append(marker)
+
+    header = f"{label} ({len(rows)})"
+    if not rows:
+        return [f"{header}: none"], []
+    return [header + ":"] + normal, escalated
+
+@app.post("/jobs/send_summary")
+async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0):
+    """
+    Manager-only scheduled summaries at 8/11/3.
+
+    Sections:
+      - Missed / Unanswered Calls
+      - Unanswered Customer Texts
+      - Resolved since last summary (dopamine, then disappears)
+
+    Escalation:
+      - If still OPEN after 24 business hours -> Escalated section
+    """
+    _auth_or_401(request)
+
+    now_local = _now_local()
+    now_iso = now_local.isoformat()
+
+    # (Optional) run resolver first so summaries don't include already-answered threads
+    # Keep deterministic, but don't fail summary if resolver has transient API issue.
+    try:
+        await poll_resolver(request, limit=500)
+    except Exception:
+        pass
+
+    conn = db()
+
+    # Overdue = OPEN and now >= due_ts
+    overdue_sms = conn.execute("""
+      SELECT *
+      FROM issues
+      WHERE status='OPEN' AND issue_type='SMS' AND due_ts <= ?
+      ORDER BY due_ts ASC
+    """, (now_iso,)).fetchall()
+
+    overdue_calls = conn.execute("""
+      SELECT *
+      FROM issues
+      WHERE status='OPEN' AND issue_type='CALL' AND due_ts <= ?
+      ORDER BY due_ts ASC
+    """, (now_iso,)).fetchall()
+
+    # Resolved since last summary
+    key = f"last_summary_ts_{slot.lower()}"
+    last_ts = kv_get(key)
+    resolved_since: List[sqlite3.Row] = []
+    if last_ts:
+        resolved_since = conn.execute("""
+          SELECT *
+          FROM issues
+          WHERE status='RESOLVED'
+            AND resolved_ts IS NOT NULL
+            AND resolved_ts > ?
+            AND resolved_ts <= ?
+          ORDER BY resolved_ts DESC
+          LIMIT 25
+        """, (last_ts, now_iso)).fetchall()
+
+    conn.close()
+
+    title = _summary_title(slot)
+    lines: List[str] = []
+    lines.append(f"NTPP Sentinel – {title} Summary")
+
+    # Calls
+    sec_calls, esc_calls = _build_section_lines(overdue_calls, "Missed / Unanswered Calls", now_local)
+    lines.extend(sec_calls)
+
+    # SMS
+    sec_sms, esc_sms = _build_section_lines(overdue_sms, "Unanswered Customer Texts", now_local)
+    lines.extend(sec_sms)
+
+    # Escalations section (manager-only rollup)
+    escalated_lines = []
+    if esc_calls or esc_sms:
+        escalated_lines.append("⚠️ Escalated (24+ business hrs):")
+        escalated_lines.extend(esc_calls[:SUMMARY_MAX_ITEMS_PER_SECTION])
+        escalated_lines.extend(esc_sms[:SUMMARY_MAX_ITEMS_PER_SECTION])
+
+    if escalated_lines:
+        lines.extend(escalated_lines)
+
+    # Dopamine section: show once then disappears
+    if last_ts:
+        if resolved_since:
+            lines.append(f"✅ Resolved since last summary ({len(resolved_since)}):")
+            for r in resolved_since[:SUMMARY_MAX_ITEMS_PER_SECTION]:
+                phone = _short_phone(r["phone"])
+                rt = _fmt_dt_local(r["resolved_ts"])
+                lines.append(f"#{r['id']} {r['issue_type']} {phone} at {rt}")
+        else:
+            lines.append("✅ Resolved since last summary: none")
+
+    # keep SMS concise
+    body = "\n".join(lines)
+    if len(body) > 1450:
+        body = body[:1450] + "\n…"
+
+    # Update last_summary_ts for this slot (even in dry_run, so set after send unless dry_run)
+    result = {
+        "job": "send_summary",
+        "slot": slot,
+        "overdue_sms": len(overdue_sms),
+        "overdue_calls": len(overdue_calls),
+        "resolved_since": len(resolved_since),
+        "dry_run": bool(dry_run),
+        "body": body,
+    }
+
+    if dry_run:
+        return result
+
+    if not MANAGER_CONTACT_IDS:
+        result["sent"] = False
+        result["error"] = "MANAGER_CONTACT_IDS not configured"
+        return result
+
+    sent_to: List[str] = []
+    errors: List[str] = []
+
+    for mgr_contact_id in MANAGER_CONTACT_IDS:
+        try:
+            conv_id = await _manager_conversation_for_contact(mgr_contact_id)
+            if not conv_id:
+                errors.append(f"manager contact {mgr_contact_id}: no conversation found")
+                continue
+            await ghl_send_message(conv_id, mgr_contact_id, body)
+            sent_to.append(mgr_contact_id)
+        except Exception as e:
+            errors.append(f"manager contact {mgr_contact_id}: {type(e).__name__}")
+
+    kv_set(key, now_iso)
+
+    result["sent"] = True if sent_to else False
+    result["sent_to"] = sent_to
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+# ==========================
+# Escalations job (optional separate rollup; v1 placeholder)
+# ==========================
+@app.post("/jobs/escalations")
+async def escalations(request: Request):
+    _auth_or_401(request)
+    return {"job": "escalations", "status": "placeholder"}
