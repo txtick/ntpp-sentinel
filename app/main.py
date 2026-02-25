@@ -1,25 +1,3 @@
-
-async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
-    if not contact_id:
-        return None
-    url = f"{GHL_BASE_URL}/contacts/{contact_id}"
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(url, headers=ghl_headers())
-        if r.status_code >= 300:
-            return None
-        data = r.json() if r.content else {}
-        c = data.get("contact") if isinstance(data, dict) else None
-        if not isinstance(c, dict):
-            c = data if isinstance(data, dict) else {}
-        for k in ("name", "fullName", "contactName"):
-            v = c.get(k)
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-    except Exception:
-        return None
-    return None
-
 from fastapi import FastAPI, Request, HTTPException
 import os, json, sqlite3, datetime as dt
 from typing import Any, Dict, Optional, List, Tuple
@@ -276,6 +254,25 @@ async def ghl_send_message(conversation_id: str, contact_id: str, message_text: 
         "contactId": contact_id,
     }
     return await ghl_post("/conversations/messages", payload)
+
+
+async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
+    """Best-effort contact name lookup via GHL Contacts API."""
+    if not contact_id:
+        return None
+    try:
+        data = await ghl_get(f"/contacts/{contact_id}")
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    c = data.get("contact") if isinstance(data.get("contact"), dict) else data
+    if isinstance(c, dict):
+        for k in ("name", "fullName", "contactName"):
+            v = c.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return None
 
 async def ghl_find_conversation_id_for_contact(contact_id: Optional[str], phone: Optional[str]) -> Optional[str]:
     """
@@ -709,14 +706,22 @@ async def inbound_sms(request: Request):
     text = _extract_text(payload)
     contact_id = _extract_contact_id(payload)
     from_phone = _extract_from_phone(payload)
+
     contact_name = _extract_contact_name(payload)
     if not contact_name:
-        contact_name = await ghl_get_contact_name(contact_id)
+        try:
+            contact_name = await ghl_get_contact_name(contact_id)
+        except Exception:
+            contact_name = None
     direction = _extract_direction(payload)
     contact_type = _extract_contact_type(payload)
+
     contact_name = _extract_contact_name(payload)
     if not contact_name:
-        contact_name = await ghl_get_contact_name(contact_id)
+        try:
+            contact_name = await ghl_get_contact_name(contact_id)
+        except Exception:
+            contact_name = None
 
     if direction in ("outbound", "outgoing"):
         return {"received": True, "ignored": "outbound"}
@@ -744,6 +749,8 @@ async def inbound_sms(request: Request):
         conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
     except Exception:
         conversation_id = None
+
+    conn = db()
 
     row = None
     if conversation_id:
@@ -824,6 +831,13 @@ async def unanswered_call(request: Request):
 
     contact_id = _extract_contact_id(payload)
     from_phone = _extract_from_phone(payload)
+
+    contact_name = _extract_contact_name(payload)
+    if not contact_name:
+        try:
+            contact_name = await ghl_get_contact_name(contact_id)
+        except Exception:
+            contact_name = None
 
     conn = db()
     if _is_spam(conn, from_phone):
