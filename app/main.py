@@ -1,3 +1,25 @@
+
+async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
+    if not contact_id:
+        return None
+    url = f"{GHL_BASE_URL}/contacts/{contact_id}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(url, headers=ghl_headers())
+        if r.status_code >= 300:
+            return None
+        data = r.json() if r.content else {}
+        c = data.get("contact") if isinstance(data, dict) else None
+        if not isinstance(c, dict):
+            c = data if isinstance(data, dict) else {}
+        for k in ("name", "fullName", "contactName"):
+            v = c.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    except Exception:
+        return None
+    return None
+
 from fastapi import FastAPI, Request, HTTPException
 import os, json, sqlite3, datetime as dt
 from typing import Any, Dict, Optional, List, Tuple
@@ -687,8 +709,14 @@ async def inbound_sms(request: Request):
     text = _extract_text(payload)
     contact_id = _extract_contact_id(payload)
     from_phone = _extract_from_phone(payload)
+    contact_name = _extract_contact_name(payload)
+    if not contact_name:
+        contact_name = await ghl_get_contact_name(contact_id)
     direction = _extract_direction(payload)
     contact_type = _extract_contact_type(payload)
+    contact_name = _extract_contact_name(payload)
+    if not contact_name:
+        contact_name = await ghl_get_contact_name(contact_id)
 
     if direction in ("outbound", "outgoing"):
         return {"received": True, "ignored": "outbound"}
@@ -735,6 +763,8 @@ async def inbound_sms(request: Request):
             "last_text": text[:500],
             "source": "inbound_sms_webhook",
         }
+        if contact_name:
+            meta["contact_name"] = contact_name
         conn.execute("""
             INSERT INTO issues
               (issue_type, contact_id, phone, created_ts, due_ts, status, meta,
@@ -755,6 +785,9 @@ async def inbound_sms(request: Request):
 
         meta["last_text"] = text[:500]
         meta["updated_by"] = "inbound_sms_webhook"
+
+        if contact_name and not meta.get("contact_name"):
+            meta["contact_name"] = contact_name
 
         conn.execute("""
             UPDATE issues
@@ -802,6 +835,8 @@ async def unanswered_call(request: Request):
     due_ts = add_business_hours(now_local, 2.0).isoformat()
 
     meta = {"source": "voicemail_route=tech_sentinel"}
+    if contact_name:
+        meta["contact_name"] = contact_name
     conn.execute("""
         INSERT INTO issues (issue_type, contact_id, phone, created_ts, due_ts, status, meta)
         VALUES ('CALL', ?, ?, ?, ?, 'OPEN', ?)
