@@ -3,16 +3,12 @@ set -e
 
 JOB="${1:-}"
 
-# Optional: load .env if present (not required if docker compose env_file works)
-ENV_FILE=""
-for p in /app/.env /opt/ntpp-sentinel/.env /.env; do
-  if [ -f "$p" ]; then ENV_FILE="$p"; break; fi
-done
-
-if [ -n "$ENV_FILE" ]; then
-  set -a
-  . "$ENV_FILE"
-  set +a
+# Cron often runs with a minimal environment.
+# Pull needed vars from the container's PID 1 environment.
+if [ -r /proc/1/environ ]; then
+  export $(tr '\0' '\n' < /proc/1/environ \
+    | grep -E '^(WEBHOOK_SECRET|GHL_TOKEN|GHL_VERSION|MANAGER_CONTACT_IDS|GHL_LOCATION_ID)=' \
+    | xargs)
 fi
 
 : "${WEBHOOK_SECRET:?WEBHOOK_SECRET is not set}"
