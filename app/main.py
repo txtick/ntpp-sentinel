@@ -1142,9 +1142,9 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
         if resolved_since:
             lines.append(f"✅ Resolved since last summary ({len(resolved_since)}):")
             for r in resolved_since[:SUMMARY_MAX_ITEMS_PER_SECTION]:
-                phone = _short_phone(r["phone"])
+                who = _display_name(r)
                 rt = _fmt_dt_local(r["resolved_ts"])
-                lines.append(f"#{r['id']} {r['issue_type']} {phone} at {rt}")
+                lines.append(f"#{r['id']} {r['issue_type']} {who} at {rt}")
         else:
             lines.append("✅ Resolved since last summary: none")
     lines.append("")
