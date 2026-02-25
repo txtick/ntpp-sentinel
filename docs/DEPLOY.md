@@ -84,7 +84,7 @@ Verify:
 
 From laptop:
 
-    ssh sentinel 'cd /opt/ntpp-sentinel && git checkout main && git pull --ff-only && docker compose up -d --build'
+    ssh kevin@sentinel 'cd /opt/ntpp-sentinel && git checkout main && git pull --ff-only && docker compose up -d --build'
 
 ---
 
