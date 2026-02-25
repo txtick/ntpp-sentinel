@@ -1152,6 +1152,36 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     # Enrich issues with contact names if missing
     await _enrich_issues_with_contact_names(list(overdue_sms) + list(overdue_calls) + list(resolved_since))
 
+    # Re-fetch issues after enrichment to get updated meta data
+    conn = db()
+    overdue_sms = conn.execute("""
+      SELECT *
+      FROM issues
+      WHERE status='OPEN' AND issue_type='SMS' AND due_ts <= ?
+      ORDER BY due_ts ASC
+    """, (now_iso,)).fetchall()
+
+    overdue_calls = conn.execute("""
+      SELECT *
+      FROM issues
+      WHERE status='OPEN' AND issue_type='CALL' AND due_ts <= ?
+      ORDER BY due_ts ASC
+    """, (now_iso,)).fetchall()
+
+    if last_ts:
+        resolved_since = conn.execute("""
+          SELECT *
+          FROM issues
+          WHERE status='RESOLVED'
+            AND resolved_ts IS NOT NULL
+            AND resolved_ts > ?
+            AND resolved_ts <= ?
+          ORDER BY resolved_ts DESC
+          LIMIT 25
+        """, (last_ts, now_iso)).fetchall()
+
+    conn.close()
+
     title = _summary_title(slot)
     lines: List[str] = []
     lines.append(f"NTPP Sentinel — {title} ({_fmt_date_local(now_local)}) • as of {_fmt_as_of_local(now_local)}")
