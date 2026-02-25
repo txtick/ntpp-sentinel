@@ -376,6 +376,24 @@ def _extract_contact_type(payload: Dict[str, Any]) -> Optional[str]:
                 return v.strip().lower()
     return None
 
+def _extract_contact_name(payload: Dict[str, Any]) -> Optional[str]:
+    # Try common direct keys
+    for k in ("contactName", "fullName", "full_name", "name"):
+        v = payload.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+
+    # Try nested objects commonly used by GHL webhooks
+    for container_key in ("contact", "data"):
+        d = payload.get(container_key)
+        if isinstance(d, dict):
+            for k in ("contactName", "fullName", "full_name", "name"):
+                v = d.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+
+    return None
+
 
 # ==========================
 # Spam helper
