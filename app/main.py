@@ -1052,6 +1052,42 @@ def _display_name(r: sqlite3.Row) -> str:
     name = (meta.get("contact_name") or "").strip()
     return name if name else _short_phone(r["phone"])
 
+async def _enrich_issues_with_contact_names(issues: List[sqlite3.Row]) -> None:
+    """
+    For issues missing contact_name in meta, fetch from GHL API and update DB.
+    """
+    conn = db()
+    for issue in issues:
+        try:
+            meta = json.loads(issue["meta"] or "{}")
+        except Exception:
+            meta = {}
+        
+        # Skip if contact_name already exists
+        if (meta.get("contact_name") or "").strip():
+            continue
+        
+        # Skip if no contact_id to look up
+        contact_id = issue["contact_id"]
+        if not contact_id:
+            continue
+        
+        # Fetch contact name from GHL API
+        try:
+            contact_name = await ghl_get_contact_name(contact_id)
+            if contact_name:
+                meta["contact_name"] = contact_name
+                conn.execute(
+                    "UPDATE issues SET meta=? WHERE id=?",
+                    (json.dumps(meta), issue["id"])
+                )
+                conn.commit()
+        except Exception:
+            # Silently continue on errors to not block summary generation
+            pass
+    
+    conn.close()
+
 
 @app.post("/jobs/send_summary")
 async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0):
@@ -1112,6 +1148,9 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
         """, (last_ts, now_iso)).fetchall()
 
     conn.close()
+
+    # Enrich issues with contact names if missing
+    await _enrich_issues_with_contact_names(list(overdue_sms) + list(overdue_calls) + list(resolved_since))
 
     title = _summary_title(slot)
     lines: List[str] = []
