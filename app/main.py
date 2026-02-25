@@ -262,16 +262,22 @@ async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
         return None
     try:
         data = await ghl_get(f"/contacts/{contact_id}")
-    except Exception:
+        print(f"DEBUG ghl_get_contact_name: contact_id={contact_id}, data={data}")
+    except Exception as e:
+        print(f"DEBUG ghl_get_contact_name: exception for {contact_id}: {e}")
         return None
     if not isinstance(data, dict):
+        print(f"DEBUG ghl_get_contact_name: data is not dict, type={type(data)}")
         return None
     c = data.get("contact") if isinstance(data.get("contact"), dict) else data
+    print(f"DEBUG ghl_get_contact_name: extracted c={c}")
     if isinstance(c, dict):
         for k in ("name", "fullName", "contactName"):
             v = c.get(k)
             if isinstance(v, str) and v.strip():
+                print(f"DEBUG ghl_get_contact_name: found {k}={v}")
                 return v.strip()
+    print(f"DEBUG ghl_get_contact_name: no name found in keys: name, fullName, contactName")
     return None
 
 async def ghl_find_conversation_id_for_contact(contact_id: Optional[str], phone: Optional[str]) -> Optional[str]:
