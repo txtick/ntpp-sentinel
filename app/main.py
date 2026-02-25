@@ -262,21 +262,16 @@ async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
         return None
     try:
         data = await ghl_get(f"/contacts/{contact_id}")
-        print(f"DEBUG ghl_get_contact_name: contact_id={contact_id}, data keys={data.keys() if isinstance(data, dict) else 'N/A'}")
-    except Exception as e:
-        print(f"DEBUG ghl_get_contact_name: exception for {contact_id}: {e}")
+    except Exception:
         return None
     if not isinstance(data, dict):
-        print(f"DEBUG ghl_get_contact_name: data is not dict, type={type(data)}")
         return None
     c = data.get("contact") if isinstance(data.get("contact"), dict) else data
-    print(f"DEBUG ghl_get_contact_name: extracted c keys={c.keys() if isinstance(c, dict) else 'N/A'}")
     if isinstance(c, dict):
         # Try standard fields first
         for k in ("name", "fullName", "contactName"):
             v = c.get(k)
             if isinstance(v, str) and v.strip():
-                print(f"DEBUG ghl_get_contact_name: found {k}={v}")
                 return v.strip()
         
         # Fallback to firstName + lastName
@@ -284,10 +279,8 @@ async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
         last = (c.get("lastName") or "").strip()
         if first or last:
             name = f"{first} {last}".strip()
-            print(f"DEBUG ghl_get_contact_name: constructed from firstName+lastName: {name}")
             return name if name else None
     
-    print(f"DEBUG ghl_get_contact_name: no name found")
     return None
 
 async def ghl_find_conversation_id_for_contact(contact_id: Optional[str], phone: Optional[str]) -> Optional[str]:
@@ -1073,7 +1066,6 @@ async def _enrich_issues_with_contact_names(issues: List[sqlite3.Row]) -> None:
     For issues missing contact_name in meta, fetch from GHL API and update DB.
     """
     conn = db()
-    enriched = 0
     for issue in issues:
         try:
             meta = json.loads(issue["meta"] or "{}")
@@ -1087,14 +1079,11 @@ async def _enrich_issues_with_contact_names(issues: List[sqlite3.Row]) -> None:
         # Skip if no contact_id to look up
         contact_id = issue["contact_id"]
         if not contact_id:
-            print(f"DEBUG: Issue #{issue['id']} has no contact_id, phone={issue['phone']}")
             continue
         
         # Fetch contact name from GHL API
         try:
-            print(f"DEBUG: Fetching contact name for contact_id={contact_id} (issue #{issue['id']})")
             contact_name = await ghl_get_contact_name(contact_id)
-            print(f"DEBUG: Got contact_name={contact_name}")
             if contact_name:
                 meta["contact_name"] = contact_name
                 conn.execute(
@@ -1102,13 +1091,9 @@ async def _enrich_issues_with_contact_names(issues: List[sqlite3.Row]) -> None:
                     (json.dumps(meta), issue["id"])
                 )
                 conn.commit()
-                enriched += 1
-                print(f"DEBUG: Updated issue #{issue['id']} with name {contact_name}")
-        except Exception as e:
-            print(f"DEBUG: Error enriching issue #{issue['id']}: {e}")
+        except Exception:
             pass
     
-    print(f"DEBUG: Enriched {enriched} issues")
     conn.close()
 
 
