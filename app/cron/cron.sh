@@ -3,10 +3,9 @@ set -e
 
 JOB="${1:-}"
 
-# ---- Load env for cron (cron does NOT load your shell env) ----
-# Try common paths (adjust if your repo lives elsewhere in-container)
+# Optional: load .env if present (not required if docker compose env_file works)
 ENV_FILE=""
-for p in /opt/ntpp-sentinel/.env /app/.env /.env; do
+for p in /app/.env /opt/ntpp-sentinel/.env /.env; do
   if [ -f "$p" ]; then ENV_FILE="$p"; break; fi
 done
 
@@ -16,7 +15,6 @@ if [ -n "$ENV_FILE" ]; then
   set +a
 fi
 
-# Reuse the same secret as your webhooks/jobs auth
 : "${WEBHOOK_SECRET:?WEBHOOK_SECRET is not set}"
 
 HDR="X-NTPP-Secret: ${WEBHOOK_SECRET}"
@@ -28,7 +26,6 @@ ts() { date "+%Y-%m-%d %H:%M:%S %Z"; }
 call_job() {
   URL="$1"
   echo "$(ts) cron: ${JOB} -> POST ${URL}"
-  # log status code but don't dump response body
   "$CURL" -sS -o /dev/null -w "$(ts) cron: ${JOB} <- http=%{http_code}\n" \
     -X POST "${URL}" -H "${HDR}"
 }
