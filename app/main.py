@@ -12,6 +12,9 @@ DB_PATH = os.getenv("DB_PATH", "/data/sentinel.db")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
+GHL_APP_BASE = os.getenv("GHL_APP_BASE", "https://app.gohighlevel.com")
+GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "")
+
 # GoHighLevel / LeadConnector API
 GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com")
 GHL_TOKEN = os.getenv("GHL_TOKEN", "")  # Private Integration token (Bearer)
@@ -170,6 +173,17 @@ def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
             cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
 
     return cur
+
+def _fmt_date_local(d: dt.datetime) -> str:
+    return d.strftime("%b %-d")  # e.g. "Feb 25"
+
+def _fmt_as_of_local(d: dt.datetime) -> str:
+    return d.strftime("%-I:%M%p").lower() + " CT"  # e.g. "1:01p CT"
+
+def ghl_conversation_link(conversation_id: Optional[str]) -> Optional[str]:
+    if not conversation_id or not GHL_LOCATION_ID:
+        return None
+    return f"{GHL_APP_BASE}/v2/location/{GHL_LOCATION_ID}/conversations/conversations/{conversation_id}"
 
 
 # ==========================
@@ -435,10 +449,6 @@ def _log_raw_event(source: str, payload: Dict[str, Any]) -> None:
     conn.commit()
     conn.close()
 
-
-# ==========================
-# Commands (kept minimal; internal only)
-# ==========================
 async def handle_command(text: str, command_contact_id: Optional[str], command_from_phone: Optional[str]) -> Dict[str, Any]:
     parts = text.strip().split()
     if len(parts) < 2:
@@ -468,7 +478,73 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
         resolved = resolve_target(target)
         return {"ok": True, "cmd": "RESOLVE", "resolved": resolved, "target": target}
 
+    if cmd == "OPEN":
+        if len(parts) < 3:
+            return {"ok": False, "error": "Usage: SENTINEL OPEN #ID"}
+        iid = _parse_issue_id(parts[2])
+        if not iid:
+            return {"ok": False, "error": "Invalid issue id"}
+        r = get_issue_by_id(iid)
+        if not r:
+            return {"ok": False, "error": "Issue not found"}
+        name = _display_name(r)
+        link = ghl_conversation_link(r["conversation_id"])
+        txt = f"{name}: {link}" if link else f"{name}: conversation_id={r['conversation_id'] or '-'}"
+        return {"ok": True, "cmd": "OPEN", "id": iid, "text": txt}
+
+    if cmd == "NOTE":
+        if len(parts) < 4:
+            return {"ok": False, "error": "Usage: SENTINEL NOTE #ID <text>"}
+        iid = _parse_issue_id(parts[2])
+        if not iid:
+            return {"ok": False, "error": "Invalid issue id"}
+        note_text = " ".join(parts[3:]).strip()
+        ok = add_note(iid, note_text)
+        return {"ok": ok, "cmd": "NOTE", "id": iid, "text": ("Noted." if ok else "Issue not found.")}
+
     return {"ok": False, "error": f"Unknown command: {cmd}"}
+
+
+def _parse_issue_id(token: str) -> Optional[int]:
+    t = token.strip()
+    if t.startswith("#"):
+        t = t[1:]
+    return int(t) if t.isdigit() else None
+
+def get_issue_by_id(issue_id: int) -> Optional[sqlite3.Row]:
+    conn = db()
+    row = conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
+    conn.close()
+    return row
+
+def resolve_by_id(issue_id: int, status: str = "RESOLVED") -> int:
+    conn = db()
+    now = _now_local().isoformat()
+    cur = conn.execute(
+        "UPDATE issues SET status=?, resolved_ts=? WHERE status='OPEN' AND id=?",
+        (status, now, issue_id),
+    )
+    conn.commit()
+    conn.close()
+    return cur.rowcount
+
+def add_note(issue_id: int, note: str) -> bool:
+    conn = db()
+    row = conn.execute("SELECT meta FROM issues WHERE id=?", (issue_id,)).fetchone()
+    if not row:
+        conn.close()
+        return False
+    try:
+        meta = json.loads(row["meta"] or "{}")
+    except Exception:
+        meta = {}
+    notes = meta.get("notes") or []
+    notes.append({"ts": _now_local().isoformat(), "text": note[:500]})
+    meta["notes"] = notes
+    conn.execute("UPDATE issues SET meta=? WHERE id=?", (json.dumps(meta), issue_id))
+    conn.commit()
+    conn.close()
+    return True
 
 
 def list_open_issues(limit: int = 20) -> List[str]:
@@ -602,16 +678,16 @@ async def inbound_sms(request: Request):
     if text.upper().startswith("SENTINEL "):
         if contact_type == "internal":
             result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
+            try:
+                if result.get("text") and contact_id:
+                    conv_id = await _manager_conversation_for_contact(contact_id)
+                    if conv_id:
+                        await ghl_send_message(conv_id, contact_id, result["text"])
+            except Exception:
+                pass
             return {"received": True, "command": True, "result": result}
-
-    if contact_type == "internal":
+        # internal non-command
         return {"received": True, "ignored": "internal_non_command"}
-
-    conn = db()
-
-    if _is_spam(conn, from_phone):
-        conn.close()
-        return {"received": True, "ignored": "spam_phone"}
 
     now_local = _now_local()
     created_ts = now_local.isoformat()
@@ -884,11 +960,11 @@ def _build_section_lines(rows: List[sqlite3.Row], label: str, now_local: dt.date
 
     for r in rows[:SUMMARY_MAX_ITEMS_PER_SECTION]:
         it = r["issue_type"]
-        phone = _short_phone(r["phone"])
+        who = _display_name(r)
         last_in = r["last_inbound_ts"] or r["created_ts"]
         due = r["due_ts"]
         inc = r["inbound_count"] if r["inbound_count"] is not None else 0
-        marker = f"#{r['id']} {phone} last { _fmt_dt_local(last_in) } due { _fmt_dt_local(due) }"
+        marker = f"#{r['id']} {who} — {_fmt_dt_local(last_in)} | due {_fmt_dt_local(due)}"
         if it == "SMS":
             marker += f" in={inc}"
         if _is_escalated(it, r["first_inbound_ts"], r["created_ts"], now_local):
@@ -900,6 +976,15 @@ def _build_section_lines(rows: List[sqlite3.Row], label: str, now_local: dt.date
     if not rows:
         return [f"{header}: none"], []
     return [header + ":"] + normal, escalated
+
+def _display_name(r: sqlite3.Row) -> str:
+    try:
+        meta = json.loads(r["meta"] or "{}")
+    except Exception:
+        meta = {}
+    name = (meta.get("contact_name") or "").strip()
+    return name if name else _short_phone(r["phone"])
+
 
 @app.post("/jobs/send_summary")
 async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0):
@@ -963,14 +1048,16 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
 
     title = _summary_title(slot)
     lines: List[str] = []
-    lines.append(f"NTPP Sentinel – {title} Summary")
+    lines.append(f"NTPP Sentinel — {title} ({_fmt_date_local(now_local)}) • as of {_fmt_as_of_local(now_local)}")
+    lines.append(f"Overdue: Calls {len(overdue_calls)} | Texts {len(overdue_sms)}")
+    lines.append("")
 
     # Calls
-    sec_calls, esc_calls = _build_section_lines(overdue_calls, "Missed / Unanswered Calls", now_local)
+    sec_calls, esc_calls = _build_section_lines(overdue_calls, "Calls", now_local)
     lines.extend(sec_calls)
 
     # SMS
-    sec_sms, esc_sms = _build_section_lines(overdue_sms, "Unanswered Customer Texts", now_local)
+    sec_sms, esc_sms = _build_section_lines(overdue_sms, "Texts", now_local)
     lines.extend(sec_sms)
 
     # Escalations section (manager-only rollup)
@@ -993,6 +1080,9 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
                 lines.append(f"#{r['id']} {r['issue_type']} {phone} at {rt}")
         else:
             lines.append("✅ Resolved since last summary: none")
+    lines.append("")
+    lines.append("Reply with:")
+    lines.append("OPEN #ID | RESOLVE #ID | SPAM #ID | NOTE #ID <text> | LIST")
 
     # keep SMS concise
     body = "\n".join(lines)
