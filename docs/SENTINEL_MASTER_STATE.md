@@ -1,316 +1,320 @@
-# Sentinel – Master State
+Sentinel Master State
+
+Project: Sentinel (North Texas Pool Pros)
+Status: Active Development
+Environment: Production (DigitalOcean Droplet)
+Public Base URL: https://sentinel.northtexaspoolpros.com
+Version: v0.1.x
+Last Updated: 2026-02-25
 
-Project: Sentinel (NTX Pool Pros)  
-Status: Active Development (Operational in Production)  
-Last Updated: 2026-02-25  
-Version: 0.1.0  
+⸻
+
+1. Purpose
+
+Sentinel is an automation and orchestration service that:
+	•	Ingests events (primarily from GoHighLevel webhooks)
+	•	Creates and tracks actionable “issues”
+	•	Applies business rules and SLA logic
+	•	Notifies managers via SMS summaries
+	•	(Future) Orchestrates intelligent customer communication
 
----
+Sentinel is the decision engine between:
+	•	GoHighLevel (CRM & communications)
+	•	Skimmer (operations & scheduling)
+	•	Managers (internal SMS summaries)
+	•	Customers (future intelligent notifications)
+
+⸻
 
-## 1. Purpose
+2. Current Production Capabilities (v0.1.x)
 
-Sentinel is an internal automation/orchestration service for NTX Pool Pros.
+2.1 Inbound SMS → Issue Creation
 
-It ingests operational events (primarily GoHighLevel webhooks) and produces deterministic issue tracking and scheduled manager rollups.
+Trigger:
+	•	POST /webhook/ghl
 
-Sentinel is designed around:
+Behavior:
+	•	Customer inbound SMS creates an SMS_OPEN issue
+	•	Issue includes:
+	•	contact_id
+	•	conversation_id
+	•	opened_ts
+	•	due_ts (based on SLA rules)
+	•	status = OPEN
 
-- Low-noise signal
-- Deterministic issue lifecycle
-- Scheduled rollups (not real-time alert spam)
-- Operational reliability over clever automation
+⸻
 
----
+2.2 Poll Resolver
 
-## 2. Architecture
+Endpoint:
+	•	POST /jobs/poll_resolver
 
-### Runtime
-- Python 3.11
-- FastAPI + Uvicorn
-- Docker Compose
-- Caddy reverse proxy
-- SQLite persistence
+Behavior:
+	•	Scans OPEN issues
+	•	If outbound human message detected in conversation after opened_ts:
+	•	status → RESOLVED
+	•	resolved_ts recorded
 
-### Deployment
-- Host: Linux VPS ("droplet")
-- Public URL: `https://sentinel.northtexaspoolpros.com`
-- Reverse proxy: Caddy → `sentinel:8000`
-- Timezone: America/Chicago (container TZ set)
+Resolver does NOT currently distinguish:
+	•	Human outbound
+	•	Automated outbound
 
-### Volumes
-- `./data` → `/data` (SQLite DB)
-- `./logs` → `/logs` (cron + runtime logs)
+(Call logic refinement required — see Section 6)
 
-### Container Behavior
-- Cron installed inside container
-- Uvicorn runs as primary process
-- Cron schedules jobs (resolver, summaries, escalations)
+⸻
 
----
+2.3 Manager SMS Summaries
 
-## 3. Integrations
+Endpoint:
+	•	POST /jobs/send_summary?slot=morning|midday|afternoon&dry_run=1|0
 
-### GoHighLevel (LeadConnectorHQ)
+Slots:
+	•	Morning (8:00)
+	•	Midday (11:00)
+	•	Afternoon (15:00)
 
-Base URL: https://services.leadconnectorhq.com
+Behavior:
+	•	Summarizes:
+	•	Open SMS issues
+	•	Escalated issues (past SLA)
+	•	Resolved since last summary
+	•	Sends SMS to all MANAGER_CONTACT_IDS
+	•	Uses GHL endpoint:
+	•	POST /conversations/messages
+	•	type=“SMS”
+	•	message=””
+	•	contactId
+	•	conversationId
 
+Watermarking:
+	•	last_summary_ts_{slot} stored in kv_store
 
-Auth:
-- Bearer Private Integration token
-- Required `Version: 2021-07-28` header
+Dry Run Mode:
+	•	Generates output
+	•	Does NOT send SMS
+	•	Does NOT advance watermark
 
-#### Inbound
-- `/webhook/ghl/inbound_sms`
-- `/webhook/ghl/unanswered_call`
-- `/webhook/ghl` (raw logger)
+⸻
 
-#### Outbound (Confirmed Contract)
-POST /conversations/messages
-{
-"type": "SMS",
-"message": "<text>",
-"conversationId": "<id>",
-"contactId": "<id>"
-}
+3. Issue Types (Current)
+	•	SMS_OPEN
+	•	CALL_MISSED (basic)
+	•	(Future) JOB_SCHEDULED
+	•	(Future) REPAIR_SCHEDULED
 
+Core States:
+	•	OPEN
+	•	RESOLVED
 
-Important:
-- `type` must be string `"SMS"`
-- `message` is required content key
-- Missing `Version` header causes 401
-- Invalid type or missing message causes 422
+Future States (Planned):
+	•	AUTO_ACK
+	•	CONTACTED
+	•	ESCALATED
+	•	CLOSED
 
-#### Conversation Lookup
+⸻
 
-GET /conversations/search?contactId=...
+4. SLA & Escalation Logic
 
-Sentinel stores `conversation_id` on the issue.
+Each issue has:
+	•	opened_ts
+	•	due_ts
 
----
+If current_time > due_ts:
+	•	Issue considered escalated
+	•	Displayed in summary under Escalated section
 
-## 4. Data Model (SQLite)
+Business-hour awareness may be added in future versions.
 
-Database: `/data/sentinel.db`
+⸻
 
-### raw_events
-Append-only webhook payload storage.
+5. Missed Call Tracking (Current + Known Limitation)
 
-### issues
+Current Behavior
+	•	Missed call webhook creates CALL_MISSED issue.
+	•	Resolver treats any outbound message as resolution.
 
-Fields:
-- id
-- issue_type (`SMS` | `CALL`)
-- contact_id
-- phone
-- conversation_id
-- created_ts
-- due_ts
-- status (`OPEN` | `RESOLVED` | `SPAM`)
-- resolved_ts
-- first_inbound_ts
-- last_inbound_ts
-- inbound_count
-- outbound_count
-- meta (JSON)
+Problem:
+	•	GHL IVR auto-sends missed-call SMS.
+	•	This may falsely resolve CALL_MISSED issues.
 
-### spam_phones
-Manual suppression list.
+⸻
 
-### kv_store
-Key-value store used for:
-- `last_summary_ts_{slot}`
+6. Planned: Replace IVR Auto-SMS with Sentinel Decisioning
 
----
+Objective
 
-## 5. Core Business Logic
+Disable GHL auto-missed-call SMS and move logic into Sentinel.
 
-### SMS Issue Lifecycle (Locked)
+Rationale
 
-When inbound customer SMS webhook fires:
+Current auto-reply:
+	•	Creates false resolution signals.
+	•	Lacks context awareness.
+	•	Causes occasional customer confusion.
 
-1. If no OPEN SMS issue for conversation:
-   - Create issue
-   - Set:
-     - first_inbound_ts
-     - last_inbound_ts
-     - inbound_count = 1
-     - due_ts = +2 business hours
-   - DO NOT reset due_ts on later inbound messages
+⸻
 
-2. If issue exists:
-   - Update last_inbound_ts
-   - inbound_count += 1
-   - DO NOT reset due_ts
+Target Architecture (V1 – Rules-Based)
 
-Clock always starts at first inbound.
+Flow:
+	1.	Missed call received.
+	2.	Sentinel creates CALL_MISSED issue.
+	3.	Sentinel waits 3–5 minutes.
+	4.	If no human follow-up:
+	•	Send controlled missed-call SMS.
+	5.	If human outbound occurs:
+	•	Mark CONTACTED.
 
----
+⸻
 
-### Resolver Logic
+Decision Conditions (V1)
 
-Runs:
-- Every 15 minutes (business hours)
-- Also immediately before summary
+Do NOT auto-reply if:
+	•	Repeat caller within 15 minutes
+	•	Human response within 3–5 minutes
+	•	Call returned
 
-For each OPEN SMS issue:
+Auto-reply if:
+	•	After hours
+	•	No human follow-up within threshold
+	•	New/unknown caller
 
-Fetch messages via: GET /conversations/{conversationId}/messages
+⸻
 
-If ANY outbound message exists where:
+Future V2 – AI-Assisted
 
-direction == "outbound"
-AND dateAdded > first_inbound_ts
+If voicemail transcription available:
 
+Sentinel will:
+	•	Classify intent
+	•	Select template
+	•	Adjust tone
+	•	Gate by confidence score
 
-→ Mark issue RESOLVED.
+Low confidence:
+	•	Include suggested reply in manager summary instead of auto-send.
 
-Outbound resolves issue permanently.
+⸻
 
-New inbound after resolution starts a new issue.
+Guardrail
 
----
+If no human response within X minutes (e.g., 10):
+	•	System must send fallback acknowledgment.
 
-### CALL Issue Logic (Deterministic)
+⸻
 
-Only created when webhook contains:
+7. Future Feature: Customer SMS for Scheduled Jobs & Repairs
 
-voicemail_route = tech_sentinel
+Current State
+	•	Skimmer sends email only.
+	•	Customers may miss email.
+	•	No SMS confirmation currently sent.
 
+⸻
 
-No inference from:
-- recordings
-- duration
-- generic inbound calls
+Goal
 
-CALL issues use same 2 business hour SLA.
+When a job/repair is scheduled:
+	•	Send SMS confirmation in addition to email.
 
----
+⸻
 
-## 6. SLA Rules
+Example SMS Templates
 
-### Default SLA
-2 business hours
+Repair Scheduled:
 
-Business window:
-Mon–Fri  
-09:00–18:00 America/Chicago
+“Hi [First Name], your pool repair is scheduled for [Date]. If you have questions, reply here or call 833-689-7665. – North Texas Pool Pros”
 
-Business hours adder is deterministic and window-aware.
+Install Scheduled:
 
----
+“Your pool service appointment is confirmed for [Date]. We’ll notify you if anything changes. Thank you!”
 
-## 7. Escalation Logic
+⸻
 
-Escalated if:
+Future Enhancements
+	•	24-hour reminder SMS
+	•	Morning-of reminder
+	•	Technician name personalization
+	•	DND compliance checks
+	•	Duplicate suppression if job edited
 
-OPEN for ≥ 24 business hours  
-(from first_inbound_ts for SMS, created_ts for CALL)
+⸻
 
-Escalated items appear in summary under:
+Required Fields (Future Issue Types)
 
-⚠️ Escalated (24+ business hrs)
+JOB_SCHEDULED / REPAIR_SCHEDULED:
+	•	contact_id
+	•	scheduled_date
+	•	notification_sent_ts
+	•	reminder_sent_ts
+	•	source (Skimmer / webhook / polling)
 
----
+⸻
 
-## 8. Scheduled Jobs
+8. Deployment Model
 
-### poll_resolver
-- Every 15 minutes
-- Business hours only
+Server Path:
+/opt/ntpp-sentinel
 
-### send_summary
-- 08:00 Mon–Fri (Morning)
-- 11:00 Mon–Fri (Midday)
-- 15:00 Mon–Fri (Afternoon)
+Deployment Workflow:
+	1.	Develop locally.
+	2.	Push to GitHub.
+	3.	SSH into droplet.
+	4.	git pull.
+	5.	Restart service (docker compose or systemd).
 
-Runs resolver immediately before generating summary.
+Environment Variables:
+	•	GHL_TOKEN
+	•	WEBHOOK_SECRET
+	•	GHL_VERSION=2021-07-28
+	•	MANAGER_CONTACT_IDS
 
-### escalations
-Hourly 09:00–17:00 (currently placeholder endpoint)
+⸻
 
----
+9. Known Technical Debt
+	•	Missed call auto-reply filtering not yet implemented.
+	•	No differentiation between human vs automated outbound.
+	•	No business-hours-aware SLA logic.
+	•	No AI integration yet.
+	•	No Skimmer integration yet.
 
-## 9. Manager Summary Structure (v1)
+⸻
 
-Sections:
+10. Long-Term Vision
 
-- Missed / Unanswered Calls
-- Unanswered Customer Texts
-- ⚠️ Escalated (24+ business hrs)
-- ✅ Resolved since last summary
+Sentinel evolves from:
 
-Resolved section:
-- Shows only once per slot
-- Controlled via kv_store timestamp
-- Disappears after next summary
+Alert Tracker
 
-Manager-only distribution.
+To:
 
-Tech-specific summaries deferred.
+Operational Intelligence Layer
 
----
+Capabilities roadmap:
+	•	Context-aware auto replies
+	•	Intelligent routing
+	•	AI-generated draft responses
+	•	Skimmer integration
+	•	Customer notification orchestration
+	•	Business-hours SLA engine
+	•	Revenue-protection monitoring
+	•	Technician accountability metrics
 
-## 10. Internal Commands
+⸻
 
-Sentinel listens for:
+11. Strategic Direction
 
-SENTINEL LIST
-SENTINEL SPAM <phone>
-SENTINEL RESOLVE <phone|contact_id|name>
+Sentinel will become the centralized logic layer that:
+	•	Prevents dropped leads
+	•	Prevents missed service issues
+	•	Reduces manager cognitive load
+	•	Improves customer communication consistency
+	•	Enables AI-assisted operations
 
+⸻
 
-Non-command internal texts are ignored.
-
----
-
-## 11. Design Philosophy
-
-Sentinel is intentionally:
-
-- Deterministic
-- Low-noise
-- Polling-based (not webhook-reliant for resolution)
-- Resistant to duplicate webhooks
-- Conversation-centric (not message-centric)
-
-No real-time alert spam.
-Only scheduled rollups.
-
----
-
-## 12. Known Constraints
-
-- Shared GHL inbox prevents tech-specific routing (v1 limitation)
-- Conversation search API response shapes vary
-- GHL rate limits not formally characterized
-- No external monitoring yet
-- No idempotency keys at raw_event level (issue-level dedupe only)
-
----
-
-## 13. Backlog (Next Phase)
-
-- Admin debug endpoint
-- Skimmer integration
-- Idempotency strategy
-- Alerting/monitoring
-- Rate limit tracking
-- Structured logging
-- Repo CI
-- Automated deploy
-
----
-
-## 14. Change Log
-
-### v0.1.0 (2026-02-25)
-
-- Locked SMS issue lifecycle rules
-- Implemented business-hour SLA engine
-- Implemented polling resolver
-- Implemented manager-only summaries
-- Added escalation logic
-- Dockerized deployment with cron
-- Confirmed GHL SMS send contract
-
-
+If you’d like next, I can:
+	•	Generate a version-controlled CHANGELOG.md
+	•	Create a DEPLOYMENT.md
+	•	Or draft a simple ARCHITECTURE.md diagram spec for the repo
