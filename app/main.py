@@ -499,38 +499,69 @@ def _log_raw_event(source: str, payload: Dict[str, Any]) -> None:
     conn.close()
 
 async def handle_command(text: str, command_contact_id: Optional[str], command_from_phone: Optional[str]) -> Dict[str, Any]:
-    parts = text.strip().split()
-    if len(parts) < 2:
-        return {"ok": False, "error": "Missing command"}
+    """
+    Manager command parser (internal only, invoked from inbound_sms when contact_type == "internal").
 
-    cmd = parts[1].upper()
+    Supported (case-insensitive; '#' optional; commas allowed):
+      List
+      Open 3
+      Resolve 3 5 6   (or: Resolve 3,5,6)
+      Resolve <phone/contactId/name>   (existing behavior)
+      Spam 7          (marks issue SPAM + adds phone to spam list if present)
+      Spam <phone>    (adds phone to spam list + resolves by phone)
+      Note 3 <text>
+    Optional prefix:
+      Sentinel <command...>
+    """
 
-    if cmd == "LIST":
+    raw = (text or "").strip()
+    if not raw:
+        return {"ok": False, "ignored": "empty"}
+
+    # Optional "Sentinel" prefix to reduce friction (not required)
+    raw = re.sub(r"^\s*sentinel\s+", "", raw, flags=re.IGNORECASE)
+
+    # Normalize commas into spaces so "3,5,6" works
+    raw = raw.replace(",", " ")
+
+    parts = raw.split()
+    if not parts:
+        return {"ok": False, "ignored": "empty"}
+
+    cmd = parts[0].strip().lower()
+    args = parts[1:]
+
+    # Only treat known first-words as commands; otherwise ignore (so normal internal texts don't get eaten)
+    known = {"list", "open", "resolve", "spam", "note"}
+    if cmd not in known:
+        return {"ok": False, "ignored": "not_a_command"}
+
+    def _parse_ids(tokens: List[str]) -> List[int]:
+        ids: List[int] = []
+        for t in tokens:
+            tt = t.strip()
+            if tt.startswith("#"):
+                tt = tt[1:]
+            if tt.isdigit():
+                ids.append(int(tt))
+        # de-dupe while preserving order
+        seen = set()
+        out: List[int] = []
+        for i in ids:
+            if i not in seen:
+                out.append(i)
+                seen.add(i)
+        return out
+
+    if cmd == "list":
         lines = list_open_issues()
         body = "\n".join(lines) if lines else "No OPEN issues."
         return {"ok": True, "cmd": "LIST", "count": len(lines), "text": body}
 
-    if cmd == "SPAM":
-        if len(parts) < 3:
-            return {"ok": False, "error": "Usage: SENTINEL SPAM <phone>"}
-        phone = _normalize_phone(parts[2])
-        if not phone:
-            return {"ok": False, "error": "Invalid phone"}
-        mark_spam(phone)
-        resolve_by_phone(phone, status="SPAM")
-        return {"ok": True, "cmd": "SPAM", "phone": phone}
-
-    if cmd == "RESOLVE":
-        if len(parts) < 3:
-            return {"ok": False, "error": "Usage: SENTINEL RESOLVE <phone|contact_id|name>"}
-        target = " ".join(parts[2:]).strip()
-        resolved = resolve_target(target)
-        return {"ok": True, "cmd": "RESOLVE", "resolved": resolved, "target": target}
-
-    if cmd == "OPEN":
-        if len(parts) < 3:
-            return {"ok": False, "error": "Usage: SENTINEL OPEN #ID"}
-        iid = _parse_issue_id(parts[2])
+    if cmd == "open":
+        if not args:
+            return {"ok": False, "error": "Usage: Open <id>"}
+        iid = _parse_issue_id(args[0])
         if not iid:
             return {"ok": False, "error": "Invalid issue id"}
         r = get_issue_by_id(iid)
@@ -541,21 +572,67 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
         txt = f"{name}: {link}" if link else f"{name}: conversation_id={r['conversation_id'] or '-'}"
         return {"ok": True, "cmd": "OPEN", "id": iid, "text": txt}
 
-    if cmd == "NOTE":
-        if len(parts) < 4:
-            return {"ok": False, "error": "Usage: SENTINEL NOTE #ID <text>"}
-        iid = _parse_issue_id(parts[2])
+    if cmd == "note":
+        if len(args) < 2:
+            return {"ok": False, "error": "Usage: Note <id> <text>"}
+        iid = _parse_issue_id(args[0])
         if not iid:
             return {"ok": False, "error": "Invalid issue id"}
-        note_text = " ".join(parts[3:]).strip()
+        note_text = " ".join(args[1:]).strip()
         ok = add_note(iid, note_text)
         return {"ok": ok, "cmd": "NOTE", "id": iid, "text": ("Noted." if ok else "Issue not found.")}
 
-    return {"ok": False, "error": f"Unknown command: {cmd}"}
+    if cmd == "resolve":
+        if not args:
+            return {"ok": False, "error": "Usage: Resolve <id...>  OR  Resolve <phone/contactId/name>"}
 
+        ids = _parse_ids(args)
+        if ids:
+            changed: List[int] = []
+            for iid in ids:
+                if resolve_by_id(iid, status="RESOLVED") > 0:
+                    changed.append(iid)
+            if changed:
+                return {"ok": True, "cmd": "RESOLVE", "ids": changed, "text": f"Sentinel: Resolved {', '.join(str(x) for x in changed)}."}
+            return {"ok": True, "cmd": "RESOLVE", "ids": ids, "text": "Sentinel: No matching OPEN issues for those IDs."}
+
+        # fallback: existing target resolver (phone/contactId/name)
+        target = " ".join(args).strip()
+        resolved = resolve_target(target)
+        return {"ok": True, "cmd": "RESOLVE", "resolved": resolved, "target": target, "text": f"Sentinel: Resolved {resolved} issue(s) for '{target}'."}
+
+    if cmd == "spam":
+        if not args:
+            return {"ok": False, "error": "Usage: Spam <id...>  OR  Spam <phone>"}
+
+        ids = _parse_ids(args)
+        if ids:
+            marked: List[int] = []
+            for iid in ids:
+                r = get_issue_by_id(iid)
+                if r and r["phone"]:
+                    try:
+                        mark_spam(r["phone"])
+                    except Exception:
+                        pass
+                if resolve_by_id(iid, status="SPAM") > 0:
+                    marked.append(iid)
+            if marked:
+                return {"ok": True, "cmd": "SPAM", "ids": marked, "text": f"Sentinel: Marked SPAM {', '.join(str(x) for x in marked)}."}
+            return {"ok": True, "cmd": "SPAM", "ids": ids, "text": "Sentinel: No matching OPEN issues for those IDs."}
+
+        # phone spam fallback
+        phone = _normalize_phone(args[0])
+        if not phone:
+            return {"ok": False, "error": "Invalid phone or IDs"}
+        mark_spam(phone)
+        resolve_by_phone(phone, status="SPAM")
+        return {"ok": True, "cmd": "SPAM", "phone": phone, "text": f"Sentinel: Marked SPAM {phone}."}
+
+    return {"ok": False, "error": "Unknown command"}
 
 def _parse_issue_id(token: str) -> Optional[int]:
-    t = token.strip()
+    t = (token or "").strip()
     if t.startswith("#"):
         t = t[1:]
     return int(t) if t.isdigit() else None
@@ -738,17 +815,20 @@ async def inbound_sms(request: Request):
     if direction in ("outbound", "outgoing"):
         return {"received": True, "ignored": "outbound"}
 
-    if text.upper().startswith("SENTINEL "):
-        if contact_type == "internal":
-            result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
+    # Internal manager commands (no "SENTINEL" prefix required; handled by handle_command)
+    if contact_type == "internal":
+        result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
+
+        # Only respond if it was actually a recognized command
+        if result.get("ok") and result.get("text") and contact_id:
             try:
-                if result.get("text") and contact_id:
-                    conv_id = await _manager_conversation_for_contact(contact_id)
-                    if conv_id:
-                        await ghl_send_message(conv_id, contact_id, result["text"])
+                conv_id = await _manager_conversation_for_contact(contact_id)
+                if conv_id:
+                    await ghl_send_message(conv_id, contact_id, result["text"])
             except Exception:
                 pass
             return {"received": True, "command": True, "result": result}
+
         # internal non-command
         return {"received": True, "ignored": "internal_non_command"}
 
@@ -1228,8 +1308,8 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
         else:
             lines.append("✅ Resolved since last summary: none")
     lines.append("")
-    lines.append("Reply with:")
-    lines.append("OPEN #ID | RESOLVE #ID | SPAM #ID | NOTE #ID <text> | LIST")
+    lines.append("Reply:")
+    lines.append("Open 3 | Resolve 3 5 6 | Spam 7 | Note 3 <text> | List")
 
     # keep SMS concise
     body = "\n".join(lines)
