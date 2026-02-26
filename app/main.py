@@ -498,6 +498,119 @@ def _log_raw_event(source: str, payload: Dict[str, Any]) -> None:
     conn.commit()
     conn.close()
 
+# ---- Manager LIST pagination (in-memory) ----
+# Keyed by manager contact_id. Resets on restart (fine).
+_MANAGER_LIST_OFFSETS: dict[str, int] = {}
+
+def _mask_phone(phone: str) -> str:
+    p = (phone or "").strip()
+    # expects +1XXXXXXXXXX
+    if len(p) >= 12 and p.startswith("+1"):
+        return "+1***" + p[-4:]
+    if len(p) >= 4:
+        return "***" + p[-4:]
+    return p or "Unknown"
+
+def _fmt_time_local(dt) -> str:
+    # dt may already be a datetime; your codebase likely uses aware dt.
+    # Keep it simple: match your summary style (e.g., 10:19pm)
+    try:
+        return dt.strftime("%-I:%M%p").lower()
+    except Exception:
+        try:
+            return dt.strftime("%I:%M%p").lstrip("0").lower()
+        except Exception:
+            return str(dt)
+
+def _format_issue_line_like_summary(r: dict) -> str:
+    """
+    Formats a single issue line in the same style as the summary:
+    #ID NameOrMaskedPhone — <last_time> | due <due_time> [in=N for SMS]
+    """
+    iid = r.get("id")
+    phone = r.get("phone") or ""
+    contact_name = r.get("contact_name") or r.get("contact") or ""  # depending on your schema
+    label = contact_name if contact_name and not contact_name.startswith(("0", "1", "2", "3", "4", "5", "6", "7", "8", "9")) else ""
+    who = label if label else _mask_phone(phone)
+
+    last_dt = r.get("last_in") or r.get("last_message_at") or r.get("last_seen_at")
+    due_dt = r.get("due_at") or r.get("due")
+
+    last_s = _fmt_time_local(last_dt) if last_dt else "?"
+    due_s = _fmt_time_local(due_dt) if due_dt else "?"
+
+    issue_type = r.get("issue_type") or r.get("type")  # 1=CALL? depends on your code
+    # In your existing output you label as [CALL] or [SMS]. We only need "in=N" for SMS.
+    inbound_count = r.get("inbound_count") or r.get("inbound") or 0
+
+    suffix = ""
+    # Only show in=N for texts (matches your summary)
+    # If your schema uses something else to tell SMS vs CALL, adjust this predicate.
+    if str(r.get("channel") or r.get("kind") or r.get("medium") or "").lower() in ("sms", "text"):
+        suffix = f" in={inbound_count}"
+    else:
+        # fallback: if your existing issues store something like r["is_sms"] or message types
+        if r.get("is_sms") or r.get("sms") or r.get("text"):
+            suffix = f" in={inbound_count}"
+
+    return f"#{iid} {who} — {last_s} | due {due_s}{suffix}".strip()
+
+def _list_open_issues_compact(limit: int, offset: int = 0) -> tuple[list[dict], int]:
+    """
+    Returns (issues, total_open).
+    Uses your existing DB access patterns. This assumes you already have a way
+    to fetch OPEN issues ordered by due/age, like the summary does.
+    """
+    # If you already have a function used by send_summary to get OPEN items,
+    # reuse it here to guarantee identical ordering.
+    issues = get_open_issues_ordered()  # <-- if this exists in your file, use it
+    # If you DON'T have that function, tell me what you have (or I’ll adapt it).
+    total = len(issues)
+    return issues[offset: offset + limit], total
+
+def _render_list_like_summary(issues: list[dict], total_open: int, offset: int, limit: int) -> str:
+    """
+    Render as:
+    OPEN (total) showing X-Y
+    Calls (N):
+    ...
+    Texts (N):
+    ...
+    More (if available)
+    """
+    calls = []
+    texts = []
+
+    for r in issues:
+        # Decide if CALL vs SMS the same way your summary does.
+        # Adjust these predicates to match your schema.
+        is_sms = False
+        t = (r.get("channel") or r.get("kind") or r.get("medium") or "").lower()
+        if t in ("sms", "text"):
+            is_sms = True
+        if r.get("is_sms") or r.get("sms") or r.get("text"):
+            is_sms = True
+
+        line = _format_issue_line_like_summary(r)
+        (texts if is_sms else calls).append(line)
+
+    start = offset + 1 if total_open else 0
+    end = min(offset + limit, total_open)
+
+    lines = []
+    lines.append(f"OPEN ({total_open}) — showing {start}-{end}")
+    if calls:
+        lines.append(f"Calls ({len(calls)}):")
+        lines.extend(calls)
+    if texts:
+        lines.append(f"Texts ({len(texts)}):")
+        lines.extend(texts)
+
+    if end < total_open:
+        lines.append("Reply: More")
+
+    return "\n".join(lines)
+
 async def handle_command(text: str, command_contact_id: Optional[str], command_from_phone: Optional[str]) -> Dict[str, Any]:
     """
     Manager command parser (internal only, invoked from inbound_sms when contact_type == "internal").
@@ -532,7 +645,7 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
     args = parts[1:]
 
     # Only treat known first-words as commands; otherwise ignore (so normal internal texts don't get eaten)
-    known = {"list", "open", "resolve", "spam", "note"}
+    known = {"list", "more", "open", "resolve", "spam", "note"}
     if cmd not in known:
         return {"ok": False, "ignored": "not_a_command"}
 
@@ -554,9 +667,33 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
         return out
 
     if cmd == "list":
-        lines = list_open_issues()
-        body = "\n".join(lines) if lines else "No OPEN issues."
-        return {"ok": True, "cmd": "LIST", "count": len(lines), "text": body}
+        if not command_contact_id:
+            return {"ok": False, "error": "Missing manager contact id"}
+
+        limit = 5
+        _MANAGER_LIST_OFFSETS[command_contact_id] = 0
+        offset = 0
+
+        page, total = _list_open_issues_compact(limit=limit, offset=offset)
+        body = _render_list_like_summary(page, total_open=total, offset=offset, limit=limit)
+        return {"ok": True, "cmd": "LIST", "text": body}
+
+    if cmd == "more":
+        if not command_contact_id:
+            return {"ok": False, "error": "Missing manager contact id"}
+
+        limit = 5
+        offset = _MANAGER_LIST_OFFSETS.get(command_contact_id, 0) + limit
+        _MANAGER_LIST_OFFSETS[command_contact_id] = offset
+
+        page, total = _list_open_issues_compact(limit=limit, offset=offset)
+        # If they ran out, reset and tell them
+        if not page:
+            _MANAGER_LIST_OFFSETS[command_contact_id] = 0
+            return {"ok": True, "cmd": "MORE", "text": "No more OPEN issues. Reply: List"}
+
+        body = _render_list_like_summary(page, total_open=total, offset=offset, limit=limit)
+        return {"ok": True, "cmd": "MORE", "text": body}
 
     if cmd == "open":
         if not args:
@@ -673,30 +810,110 @@ def add_note(issue_id: int, note: str) -> bool:
     return True
 
 
-def list_open_issues(limit: int = 20) -> List[str]:
+# ---- Manager LIST paging state (in-memory) ----
+_MANAGER_LIST_OFFSETS: dict[str, int] = {}
+
+def _mask_phone(phone: str) -> str:
+    p = (phone or "").strip()
+    if p.startswith("+1") and len(p) >= 12:
+        return "+1***" + p[-4:]
+    if len(p) >= 4:
+        return "***" + p[-4:]
+    return p or "Unknown"
+
+def _fmt_hhmm_ampm(dt_str: str) -> str:
+    """
+    Convert stored ISO-ish timestamp string to 'h:mmap' like the summary.
+    If parsing fails, return '?'.
+    """
+    if not dt_str:
+        return "?"
+    try:
+        # Your DB stores ISO strings (with timezone). datetime.fromisoformat can parse most of these.
+        dt = datetime.fromisoformat(dt_str)
+        try:
+            return dt.strftime("%-I:%M%p").lower()
+        except Exception:
+            return dt.strftime("%I:%M%p").lstrip("0").lower()
+    except Exception:
+        return "?"
+
+def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
+    """
+    Returns (rows, total_open) ordered by due_ts ASC.
+    Rows are dicts with the columns we need for summary-like formatting.
+    """
     conn = db()
+    total = conn.execute("""
+        SELECT COUNT(*) AS n
+        FROM issues
+        WHERE status='OPEN'
+    """).fetchone()["n"]
+
     rows = conn.execute("""
         SELECT id, issue_type, phone, contact_id, created_ts, due_ts, inbound_count, last_inbound_ts
         FROM issues
         WHERE status='OPEN'
         ORDER BY due_ts ASC
-        LIMIT ?
-    """, (limit,)).fetchall()
+        LIMIT ? OFFSET ?
+    """, (limit, offset)).fetchall()
     conn.close()
 
-    if not rows:
-        return []
-
-    lines = [f"OPEN issues (top {len(rows)}):"]
+    # sqlite Row -> dict
+    out = []
     for r in rows:
-        phone = r["phone"] or "-"
-        cid = r["contact_id"] or "-"
-        it = r["issue_type"]
-        due = r["due_ts"]
-        inc = r["inbound_count"] if r["inbound_count"] is not None else 0
-        last_in = r["last_inbound_ts"] or r["created_ts"]
-        lines.append(f"#{r['id']} [{it}] phone={phone} contact={cid} inbound={inc} last_in={last_in} due={due}")
-    return lines
+        out.append({
+            "id": r["id"],
+            "issue_type": r["issue_type"],  # "CALL" or "SMS" in your existing output
+            "phone": r["phone"],
+            "contact_id": r["contact_id"],
+            "created_ts": r["created_ts"],
+            "due_ts": r["due_ts"],
+            "inbound_count": r["inbound_count"] if r["inbound_count"] is not None else 0,
+            "last_inbound_ts": r["last_inbound_ts"] or r["created_ts"],
+        })
+    return out, int(total)
+
+def _render_list_like_summary(rows: list[dict], total_open: int, offset: int, limit: int) -> str:
+    """
+    Summary-like list output, 5 at a time, split into Calls/Text like summary.
+    """
+    calls = []
+    texts = []
+
+    for r in rows:
+        iid = r["id"]
+        it = (r.get("issue_type") or "").upper()
+        phone = r.get("phone") or ""
+        who = _mask_phone(phone)
+
+        last_s = _fmt_hhmm_ampm(r.get("last_inbound_ts") or "")
+        due_s = _fmt_hhmm_ampm(r.get("due_ts") or "")
+
+        line = f"#{iid} {who} — {last_s} | due {due_s}"
+        if it == "SMS":
+            line += f" in={r.get('inbound_count', 0)}"
+            texts.append(line)
+        else:
+            calls.append(line)
+
+    start = offset + 1 if total_open else 0
+    end = min(offset + limit, total_open)
+
+    lines = [f"OPEN ({total_open}) — showing {start}-{end}"]
+
+    if calls:
+        lines.append(f"Calls ({len(calls)}):")
+        lines.extend(calls)
+
+    if texts:
+        lines.append(f"Texts ({len(texts)}):")
+        lines.extend(texts)
+
+    if end < total_open:
+        lines.append("Reply: More")
+
+    return "\n".join(lines)
 
 def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
     conn = db()
@@ -1309,7 +1526,7 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
             lines.append("✅ Resolved since last summary: none")
     lines.append("")
     lines.append("Reply:")
-    lines.append("Open 3 | Resolve 3 5 6 | Spam 7 | Note 3 <text> | List")
+    lines.append("Open 3 | Resolve 3 5 6 | Spam 7 | Note 3 <text> | List | More")
 
     # keep SMS concise
     body = "\n".join(lines)
