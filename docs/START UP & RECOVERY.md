@@ -1,220 +1,288 @@
-Sentinel System Startup & Recovery Guide
+## Sentinel System Startup & Recovery Guide
 
 NTX Pool Pros – Production
 
-Server: sentinel
-Path: /opt/ntpp-sentinel
-Public URL: https://sentinel.northtexaspoolpros.com
+- **Server**: `sentinel`
+- **Path**: `/opt/ntpp-sentinel`
+- **Public URL**: `https://sentinel.northtexaspoolpros.com`
 
-1. Normal Deploy (Safe Path)
+---
+
+## 1. Normal Deploy (Safe Path)
 
 Use this when you've pushed changes to GitHub and want prod updated.
 
 From your laptop:
 
+```bash
 ssh kevin@sentinel '
-cd /opt/ntpp-sentinel &&
-git checkout main &&
-git pull --ff-only &&
-docker compose up -d --build
+  cd /opt/ntpp-sentinel &&
+  git checkout main &&
+  git pull --ff-only &&
+  docker compose up -d --build
 '
+```
 
 Then verify:
 
+```bash
 docker compose ps
 docker compose logs -n 50 sentinel
+```
 
 Health check:
 
+```bash
 curl https://sentinel.northtexaspoolpros.com/health
+```
 
 Expected:
 
+```bash
 {"ok": true}
+```
 
-2. Verify Environment Variables (Critical)
+---
+
+## 2. Verify Environment Variables (Critical)
 
 Inside container:
 
+```bash
 docker exec -it ntpp-sentinel sh -lc 'echo "$WEBHOOK_SECRET"'
 docker exec -it ntpp-sentinel sh -lc 'echo "$MANAGER_CONTACT_IDS"'
+docker exec -it ntpp-sentinel sh -lc 'echo "$INTERNAL_CONTACT_IDS"'
+docker exec -it ntpp-sentinel sh -lc 'echo "$INTERNAL_REPLY_GRACE_HOURS"'
+docker exec -it ntpp-sentinel sh -lc 'echo "$GHL_LOCATION_ID"'
 docker exec -it ntpp-sentinel sh -lc 'echo "$GHL_TOKEN" | wc -c'
+```
 
-If any are blank → fix .env and redeploy.
+If any are blank → fix `.env` and redeploy.
 
-.env lives at:
+`.env` lives at:
 
+```bash
 /opt/ntpp-sentinel/.env
+```
 
 After editing:
 
+```bash
 docker compose up -d --build
+```
 
-3. Verify Cron Is Running
+---
+
+## 3. Verify Cron Is Running
 
 Cron log:
 
+```bash
 tail -f /opt/ntpp-sentinel/logs/cron.log
+```
 
 You should see entries like:
 
+```text
 cron: morning -> POST http://localhost:8000/jobs/send_summary?slot=morning
-
 cron: morning <- http=200
+```
 
 If you see:
 
+```text
 WEBHOOK_SECRET is not set
+```
 
-→ cron.sh is not loading environment correctly
-→ rebuild container
+- `cron.sh` is not loading environment correctly  
+- Rebuild container.
 
-4. Manual Job Testing (Always Test Manually First)
+---
+
+## 4. Manual Job Testing (Always Test Manually First)
 
 Poll resolver:
 
-curl -X POST https://sentinel.northtexaspoolpros.com/jobs/poll_resolver
-
--H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```bash
+curl -X POST \
+  https://sentinel.northtexaspoolpros.com/jobs/poll_resolver \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
 
 Dry-run summary:
 
-curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1
-"
--H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```bash
+curl -X POST \
+  "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
 
 Live summary:
 
-curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning
-"
--H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```bash
+curl -X POST \
+  "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
 
 If manual send works but cron doesn’t → cron issue only.
 
-5. Check Database Directly
+---
+
+## 5. Check Database Directly
 
 Recent issues:
 
-sqlite3 /opt/ntpp-sentinel/data/sentinel.db
-"select id, issue_type, status from issues order by id desc limit 20;"
+```bash
+sqlite3 /opt/ntpp-sentinel/data/sentinel.db \
+  "select id, issue_type, status from issues order by id desc limit 20;"
+```
 
 Open issues:
 
-sqlite3 /opt/ntpp-sentinel/data/sentinel.db
-"select id, issue_type, phone, due_ts from issues where status='OPEN';"
+```bash
+sqlite3 /opt/ntpp-sentinel/data/sentinel.db \
+  "select id, issue_type, phone, due_ts from issues where status='OPEN';"
+```
 
-Watermarks:
+Watermarks / internal state:
 
-sqlite3 /opt/ntpp-sentinel/data/sentinel.db
-"select * from kv_store;"
+```bash
+sqlite3 /opt/ntpp-sentinel/data/sentinel.db \
+  "select * from kv_store;"
 
-6. If Container Won’t Start
+# Tracks internal-initiated threads by conversation
+sqlite3 /opt/ntpp-sentinel/data/sentinel.db \
+  "select * from conversation_state limit 20;"
+```
+
+---
+
+## 6. If Container Won’t Start
 
 Check logs:
 
+```bash
 docker compose logs -n 200 sentinel
+```
 
 Common causes:
 
-NameError
-Import error
-Bad merge
-Syntax error
+- `NameError`
+- Import error
+- Bad merge
+- Syntax error
+- Missing env vars (e.g. `WEBHOOK_SECRET`, `GHL_TOKEN`, `GHL_LOCATION_ID`)
 
 Fix locally → commit → redeploy.
 
-7. If Webhook Returns 500
+---
+
+## 7. If Webhook Returns 500
 
 Check:
 
+```bash
 docker compose logs -n 200 sentinel
+```
 
 Look for:
 
-Traceback
-NameError
-conn not defined
-Optional not defined
+- `Traceback`
+- `NameError`
+- `conn not defined`
+- `Optional not defined`
 
-Fix main.py → rebuild container.
+Fix `main.py` (or offending code) → rebuild container.
 
-8. If GHL Sending Fails
+---
+
+## 8. If GHL Sending Fails
 
 Check logs for:
 
-HTTP 401 → token invalid
-HTTP 403 → scope issue
-HTTP 404 → wrong endpoint
-HTTP 400 → wrong payload format
+- `HTTP 401` → token invalid
+- `HTTP 403` → scope issue
+- `HTTP 404` → wrong endpoint
+- `HTTP 400` → wrong payload format
 
 Correct send contract:
 
-Endpoint:
-POST /conversations/messages
+- **Endpoint**: `POST /conversations/messages`
+- **Body must include**:
+  - `"type": "SMS"`
+  - `"message": "<text>"`
+  - `"conversationId": "<id>"`
+  - `"contactId": "<id>"`
+- **Headers**:
+  - `Authorization: Bearer <GHL_TOKEN>`
+  - `Version: 2021-07-28`
+  - `LocationId: <GHL_LOCATION_ID>`
 
-Body must include:
+---
 
-"type": "SMS"
-"message": "<text>"
-"conversationId": "<id>"
-"contactId": "<id>"
-
-Header:
-Authorization: Bearer <GHL_TOKEN>
-Version: 2021-07-28
-
-9. Full Reset (Last Resort)
+## 9. Full Reset (Last Resort)
 
 If system is in a weird state:
 
+```bash
 cd /opt/ntpp-sentinel
 docker compose down
 docker compose up -d --build
+```
 
 If DB corruption suspected:
 
-STOP HERE and back up:
-
+```bash
 cp data/sentinel.db data/sentinel.db.bak
+```
 
 Only wipe DB if absolutely necessary.
 
-10. Safe Rollback
+---
+
+## 10. Safe Rollback
 
 If last deploy broke prod:
 
+```bash
 cd /opt/ntpp-sentinel
 git log --oneline
 git checkout <previous_commit_hash>
 docker compose up -d --build
+```
 
-To restore main afterward:
+To restore `main` afterward:
 
+```bash
+cd /opt/ntpp-sentinel
 git checkout main
 git pull
+```
 
-11. Production Confidence Checklist
+---
+
+## 11. Production Confidence Checklist
 
 Before walking away:
 
-• /health returns ok
-• Manual poll_resolver works
-• Manual send_summary works
-• Cron log shows scheduled entries
-• Summary SMS received on test
+- `/health` returns `{"ok": true}`
+- Manual `poll_resolver` works
+- Manual `send_summary` works
+- Cron log shows scheduled entries
+- Summary SMS received on test manager thread
 
 If all five are true → system stable.
 
-12. Mental Model
+---
+
+## 12. Mental Model
 
 Sentinel has four pillars:
 
-Webhooks create deterministic issues
+1. **Webhooks** create deterministic issues (missed calls, overdue texts).
+2. **Resolver** marks them resolved.
+3. **Summary** reports status to managers.
+4. **Cron** orchestrates timing.
 
-Resolver marks them resolved
-
-Summary reports status
-
-Cron orchestrates timing
-
-If something breaks, isolate which pillar failed.
+Recent change: internal-initiated SMS threads are tracked per `conversation_id` and customer replies within the `INTERNAL_REPLY_GRACE_HOURS` window are **ignored** for issue creation (no false “missed text” issues). If something breaks, isolate which pillar failed.*** End Patch】}"/>

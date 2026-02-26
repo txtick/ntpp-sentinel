@@ -31,13 +31,30 @@ Set production branch:
 
     git checkout main
 
-Ensure .env exists:
+Ensure `.env` exists and contains all required variables:
 
-    nano .env
+```bash
+nano .env
+```
+
+Minimum required keys:
+
+- `WEBHOOK_SECRET`
+- `DB_PATH`
+- `TIMEZONE` (or `TZ`)
+- `GHL_BASE_URL`
+- `GHL_TOKEN`
+- `GHL_VERSION`
+- `GHL_LOCATION_ID`
+- `MANAGER_CONTACT_IDS`
+- `INTERNAL_CONTACT_IDS`
+- `INTERNAL_REPLY_GRACE_HOURS`
 
 Ensure Docker works:
 
-    docker compose up -d --build
+```bash
+docker compose up -d --build
+```
 
 ---
 
