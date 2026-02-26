@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException # type: ignore
 import os, json, sqlite3, datetime as dt
 from typing import Any, Dict, Optional, List, Tuple
-import httpx
+import httpx # type: ignore
 import re
 from zoneinfo import ZoneInfo
 
@@ -36,6 +36,10 @@ INTERNAL_REPLY_GRACE_HOURS = int(os.getenv("INTERNAL_REPLY_GRACE_HOURS", "12"))
 # Limits to keep SMS short and low-noise
 SUMMARY_MAX_ITEMS_PER_SECTION = int(os.getenv("SUMMARY_MAX_ITEMS_PER_SECTION", "8"))
 
+# SLA for customer SMS and CALL response before it is considered an issue (hours)
+SMS_SLA_HOURS = float(os.getenv("SMS_SLA_HOURS", "2"))
+CALL_SLA_HOURS = float(os.getenv("CALL_SLA_HOURS", "2"))
+
 app = FastAPI()
 
 
@@ -61,8 +65,20 @@ def ensure_schema() -> None:
 
     # Existing column migrations on issues
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(issues)").fetchall()}
+
+    # Newer columns that may not exist on older DBs
     if "contact_name" not in cols:
         conn.execute("ALTER TABLE issues ADD COLUMN contact_name TEXT")
+
+    # Ensure v1 issue fields exist even if init_db didn't run on an older DB
+    for col, ddl in [
+        ("first_inbound_ts", "ALTER TABLE issues ADD COLUMN first_inbound_ts TEXT"),
+        ("last_inbound_ts", "ALTER TABLE issues ADD COLUMN last_inbound_ts TEXT"),
+        ("inbound_count", "ALTER TABLE issues ADD COLUMN inbound_count INTEGER DEFAULT 0"),
+        ("conversation_id", "ALTER TABLE issues ADD COLUMN conversation_id TEXT"),
+    ]:
+        if col not in cols:
+            conn.execute(ddl)
 
     # Conversation-level state for internal-initiated threads
     conn.execute(
@@ -205,6 +221,22 @@ def _parse_iso_dt(value) -> Optional[dt.datetime]:
             return dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
         except Exception:
             return None
+
+def _parse_ghl_date(value) -> Optional[dt.datetime]:
+    """Parse a GHL/LeadConnector timestamp (e.g. '2026-02-26T14:00:02.992Z') to a datetime."""
+    if not value:
+        return None
+    if isinstance(value, dt.datetime):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return dt.datetime.fromisoformat(s)
+    except Exception:
+        return None
 
 def _is_business_time(ts: dt.datetime) -> bool:
     # Mon-Fri 09:00-18:00 local
@@ -1125,8 +1157,9 @@ async def inbound_sms(request: Request):
     Final SMS Logic (Locked):
 
     Inbound SMS webhook:
-      - Internal + "SENTINEL " -> command
-      - Internal + not command -> ignore
+      - Internal manager SMS:
+          - Recognized command words (list/open/resolve/spam/note/more) are parsed by handle_command
+          - Non-command internal texts are ignored
       - Customer inbound:
           - If no OPEN SMS issue for conversation (preferred) -> create issue
             store first_inbound_ts, conversation_id, inbound_count=1
@@ -1156,17 +1189,24 @@ async def inbound_sms(request: Request):
 
     now_local = _now_local()
     created_ts = now_local.isoformat()
-    due_ts = add_business_hours(now_local, 2.0).isoformat()
+    due_ts = add_business_hours(now_local, SMS_SLA_HOURS).isoformat()
 
-    # Track internal-initiated outbound so customer replies within a grace window
-    if conversation_id and is_internal and direction in ("outbound", "outgoing"):
+    # If conversation_id wasn't in the payload, resolve via GHL search (do early so grace check can work)
+    if not conversation_id:
+        try:
+            conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
+        except Exception:
+            conversation_id = None
+
+    # Track internal activity so customer replies within a grace window don't create false positives
+    if conversation_id and is_internal:
         set_last_internal_outbound(conversation_id, created_ts, contact_id)
 
     if direction in ("outbound", "outgoing"):
         return {"received": True, "ignored": "outbound"}
 
     # Internal manager commands (no "SENTINEL" prefix required; handled by handle_command)
-    if contact_type == "internal":
+    if is_internal:
         result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
 
         # Only respond if it was actually a recognized command
@@ -1183,7 +1223,7 @@ async def inbound_sms(request: Request):
         return {"received": True, "ignored": "internal_non_command"}
 
     # If this is a customer reply inside an internal-initiated thread within grace window, ignore
-    if conversation_id and not is_internal:
+    if conversation_id:
         last_internal_ts = get_last_internal_outbound(conversation_id)
         last_dt = _parse_iso_dt(last_internal_ts)
         if last_dt:
@@ -1191,25 +1231,18 @@ async def inbound_sms(request: Request):
             if 0 <= delta.total_seconds() <= INTERNAL_REPLY_GRACE_HOURS * 3600:
                 return {"received": True, "ignored": "customer_reply_to_internal_initiated_thread"}
 
-    # For customer SMS, if conversation_id wasn't in the payload, resolve via GHL search
-    if not conversation_id:
-        try:
-            conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
-        except Exception:
-            conversation_id = None
-
     conn = db()
 
     row = None
     if conversation_id:
         row = conn.execute(
-            "SELECT * FROM issues WHERE status='OPEN' AND issue_type='SMS' AND conversation_id=? ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM issues WHERE status IN ('PENDING','OPEN') AND issue_type='SMS' AND conversation_id=? ORDER BY id DESC LIMIT 1",
             (conversation_id,)
         ).fetchone()
 
     if row is None and from_phone:
         row = conn.execute(
-            "SELECT * FROM issues WHERE status='OPEN' AND issue_type='SMS' AND phone=? ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM issues WHERE status IN ('PENDING','OPEN') AND issue_type='SMS' AND phone=? ORDER BY id DESC LIMIT 1",
             (from_phone,)
         ).fetchone()
 
@@ -1225,7 +1258,7 @@ async def inbound_sms(request: Request):
               (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
                first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
             VALUES
-              ('SMS', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?)
+              ('SMS', ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, 1, 0, ?)
         """, (
             contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta),
             created_ts, created_ts, conversation_id
@@ -1295,14 +1328,14 @@ async def unanswered_call(request: Request):
 
     now_local = _now_local()
     created_ts = now_local.isoformat()
-    due_ts = add_business_hours(now_local, 2.0).isoformat()
+    due_ts = add_business_hours(now_local, CALL_SLA_HOURS).isoformat()
 
     meta = {"source": "voicemail_route=tech_sentinel"}
     if contact_name:
         meta["contact_name"] = contact_name
     conn.execute("""
         INSERT INTO issues (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta)
-        VALUES ('CALL', ?, ?, ?, ?, ?, 'OPEN', ?)
+        VALUES ('CALL', ?, ?, ?, ?, ?, 'PENDING', ?)
     """, (contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta)))
     conn.commit()
     conn.close()
@@ -1327,6 +1360,37 @@ def _msg_direction(m: Dict[str, Any]) -> str:
         return v.lower()
     return ""
 
+
+def _set_issue_status(issue_id: int, status: str) -> None:
+    conn = db()
+    conn.execute("UPDATE issues SET status=? WHERE id=?", (status, issue_id))
+    conn.commit()
+    conn.close()
+
+
+def _has_outbound_after(msgs: List[Dict[str, Any]], first_inbound_ts: str) -> bool:
+    cutoff = _parse_iso_dt(first_inbound_ts)
+    if not cutoff:
+        return False
+
+    for m in msgs or []:
+        direction = _msg_direction(m)
+        if direction != "outbound":
+            continue
+        mts = _msg_ts(m)
+        if not mts:
+            continue
+        try:
+            cutoff_utc = cutoff.astimezone(dt.timezone.utc) if cutoff.tzinfo else cutoff.replace(
+                tzinfo=ZoneInfo(TZ_NAME)
+            ).astimezone(dt.timezone.utc)
+            if mts.astimezone(dt.timezone.utc) > cutoff_utc:
+                return True
+        except Exception:
+            continue
+
+    return False
+
 @app.post("/jobs/poll_resolver")
 async def poll_resolver(request: Request, limit: int = 200):
     """
@@ -1340,7 +1404,7 @@ async def poll_resolver(request: Request, limit: int = 200):
     rows = conn.execute("""
         SELECT id, conversation_id, first_inbound_ts, outbound_count
         FROM issues
-        WHERE status='OPEN'
+        WHERE status IN ('OPEN','PENDING')
           AND issue_type='SMS'
           AND conversation_id IS NOT NULL
         ORDER BY due_ts ASC
@@ -1401,7 +1465,7 @@ async def poll_resolver(request: Request, limit: int = 200):
             conn2.execute("""
                 UPDATE issues
                 SET status='RESOLVED', resolved_ts=?
-                WHERE id=? AND status='OPEN'
+                WHERE id=? AND status IN ('OPEN','PENDING')
             """, (now, issue_id))
             conn2.commit()
             resolved += 1
@@ -1409,6 +1473,113 @@ async def poll_resolver(request: Request, limit: int = 200):
         conn2.close()
 
     return {"job": "poll_resolver", "checked": checked, "resolved": resolved, "updated_counts": updated_counts}
+
+
+@app.post("/jobs/verify_pending")
+async def verify_pending(request: Request, limit: int = 200):
+    """
+    SLA verifier:
+      - For each PENDING SMS issue where due_ts <= now:
+          - If ANY outbound where message.dateAdded > first_inbound_ts -> RESOLVED
+          - Else -> promote to OPEN
+    """
+    _auth_or_401(request)
+
+    now_local = _now_local()
+    now_iso = now_local.isoformat()
+
+    conn = db()
+    rows = conn.execute("""
+        SELECT id, conversation_id, first_inbound_ts, due_ts, outbound_count
+        FROM issues
+        WHERE status=’PENDING’
+          AND issue_type=’SMS’
+          AND conversation_id IS NOT NULL
+          AND due_ts <= ?
+        ORDER BY due_ts ASC
+        LIMIT ?
+    """, (now_iso, limit)).fetchall()
+    conn.close()
+
+    checked = 0
+    promoted = 0
+    auto_resolved = 0
+    updated_counts = 0
+    errors = 0
+
+    for r in rows:
+        checked += 1
+        issue_id = r["id"]
+        conv_id = r["conversation_id"]
+        if not conv_id:
+            continue
+
+        try:
+            msgs = await ghl_list_messages(conv_id, limit=50)
+        except HTTPException:
+            errors += 1
+            continue
+
+        try:
+            fi = dt.datetime.fromisoformat((r["first_inbound_ts"] or "").replace("Z", "+00:00"))
+        except Exception:
+            fi = None
+
+        outbound_after = False
+        out_count = 0
+
+        for m in msgs:
+            d = _msg_direction(m)
+            if d == "outbound":
+                out_count += 1
+
+            if fi is not None and d == "outbound":
+                mts = _msg_ts(m)
+                if mts is None:
+                    continue
+                try:
+                    fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
+                    if mts.astimezone(dt.timezone.utc) > fi_utc:
+                        outbound_after = True
+                except Exception:
+                    pass
+
+        conn2 = db()
+
+        prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
+        if out_count != prev_out:
+            conn2.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
+            conn2.commit()
+            updated_counts += 1
+
+        if outbound_after:
+            conn2.execute("""
+                UPDATE issues
+                SET status=’RESOLVED’, resolved_ts=?
+                WHERE id=? AND status=’PENDING’
+            """, (now_iso, issue_id))
+            conn2.commit()
+            auto_resolved += 1
+            conn2.close()
+            continue
+
+        conn2.execute("""
+            UPDATE issues
+            SET status=’OPEN’
+            WHERE id=? AND status=’PENDING’
+        """, (issue_id,))
+        conn2.commit()
+        promoted += 1
+        conn2.close()
+
+    return {
+        "job": "verify_pending",
+        "checked": checked,
+        "promoted_open": promoted,
+        "auto_resolved": auto_resolved,
+        "updated_counts": updated_counts,
+        "errors": errors,
+    }
 
 
 # ==========================

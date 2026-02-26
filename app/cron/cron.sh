@@ -39,6 +39,9 @@ case "$JOB" in
   poll_resolver)
     call_job "${BASE}/jobs/poll_resolver"
     ;;
+  verify_pending)
+    call_job "${BASE}/jobs/verify_pending"
+    ;;
   escalations)
     call_job "${BASE}/jobs/escalations"
     ;;
