@@ -810,22 +810,44 @@ def _mask_phone(phone: str) -> str:
         return "***" + p[-4:]
     return p or "Unknown"
 
-def _fmt_hhmm_ampm(dt_str: str) -> str:
+def _fmt_hhmm_ampm(value) -> str:
     """
-    Convert stored ISO-ish timestamp string to 'h:mmap' like the summary.
-    If parsing fails, return '?'.
+    Convert a datetime or ISO-ish timestamp to 'h:mmap' like the summary (e.g., 3:41pm).
+    Accepts:
+      - datetime
+      - ISO strings (with/without timezone)
+      - sqlite-style strings 'YYYY-MM-DD HH:MM:SS'
     """
-    if not dt_str:
+    if not value:
         return "?"
-    try:
-        # Your DB stores ISO strings (with timezone). datetime.fromisoformat can parse most of these.
-        dt = datetime.fromisoformat(dt_str)
+
+    dt = None
+
+    # already a datetime?
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        s = str(value).strip()
+        if not s:
+            return "?"
         try:
-            return dt.strftime("%-I:%M%p").lower()
+            # Handles '2026-02-25T15:41:10.213158-06:00' and many variants
+            dt = datetime.fromisoformat(s)
         except Exception:
-            return dt.strftime("%I:%M%p").lstrip("0").lower()
+            # Try sqlite style 'YYYY-MM-DD HH:MM:SS'
+            try:
+                dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                # Try without seconds
+                try:
+                    dt = datetime.strptime(s, "%Y-%m-%d %H:%M")
+                except Exception:
+                    return "?"
+
+    try:
+        return dt.strftime("%-I:%M%p").lower()
     except Exception:
-        return "?"
+        return dt.strftime("%I:%M%p").lstrip("0").lower()
 
 def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
     """
