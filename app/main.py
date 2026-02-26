@@ -192,11 +192,14 @@ def ghl_conversation_link(conversation_id: Optional[str]) -> Optional[str]:
 def _ghl_headers() -> Dict[str, str]:
     if not GHL_TOKEN:
         raise HTTPException(status_code=500, detail="Server missing GHL_TOKEN")
+    if not GHL_LOCATION_ID:
+        raise HTTPException(status_code=500, detail="Server missing GHL_LOCATION_ID")
     return {
         "Authorization": f"Bearer {GHL_TOKEN}",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Version": GHL_VERSION,
+        "LocationId": GHL_LOCATION_ID,   # <-- THIS is the fix
     }
 
 async def ghl_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
