@@ -555,19 +555,6 @@ def _format_issue_line_like_summary(r: dict) -> str:
 
     return f"#{iid} {who} — {last_s} | due {due_s}{suffix}".strip()
 
-def _list_open_issues_compact(limit: int, offset: int = 0) -> tuple[list[dict], int]:
-    """
-    Returns (issues, total_open).
-    Uses your existing DB access patterns. This assumes you already have a way
-    to fetch OPEN issues ordered by due/age, like the summary does.
-    """
-    # If you already have a function used by send_summary to get OPEN items,
-    # reuse it here to guarantee identical ordering.
-    issues = get_open_issues_ordered()  # <-- if this exists in your file, use it
-    # If you DON'T have that function, tell me what you have (or I’ll adapt it).
-    total = len(issues)
-    return issues[offset: offset + limit], total
-
 def _render_list_like_summary(issues: list[dict], total_open: int, offset: int, limit: int) -> str:
     """
     Render as:
