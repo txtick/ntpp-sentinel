@@ -48,6 +48,14 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, cols: List[tuple]) -> 
         if not _col_exists(conn, table, name):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
+def ensure_schema() -> None:
+    conn = db()
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(issues)").fetchall()}
+    if "contact_name" not in cols:
+        conn.execute("ALTER TABLE issues ADD COLUMN contact_name TEXT")
+        conn.commit()
+    conn.close()
+
 def init_db() -> None:
     conn = db()
     cur = conn.cursor()
@@ -107,6 +115,7 @@ def init_db() -> None:
 def _startup():
     os.makedirs("/data", exist_ok=True)
     init_db()
+    ensure_schema()
 
 @app.get("/health")
 def health():
@@ -595,6 +604,8 @@ def _render_list_like_summary(issues: list[dict], total_open: int, offset: int, 
 
     if end < total_open:
         lines.append("Reply: More")
+    else:
+        lines.append("End of list. Reply: List")
 
     return "\n".join(lines)
 
@@ -665,6 +676,13 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
         if total == 0:
             return {"ok": True, "cmd": "LIST", "text": "No OPEN issues."}
 
+        for r in rows:
+            if not (r.get("contact_name") or "").strip() and r.get("contact_id"):
+                fetched = await ghl_get_contact_name(r["contact_id"])
+                if fetched:
+                    _set_issue_contact_name(r["id"], fetched)
+                    r["contact_name"] = fetched
+
         body = _render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
         return {"ok": True, "cmd": "LIST", "text": body}
 
@@ -680,6 +698,13 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
         if not rows:
             _MANAGER_LIST_OFFSETS[command_contact_id] = 0
             return {"ok": True, "cmd": "MORE", "text": "No more OPEN issues. Reply: List"}
+
+        for r in rows:
+            if not (r.get("contact_name") or "").strip() and r.get("contact_id"):
+                fetched = await ghl_get_contact_name(r["contact_id"])
+                if fetched:
+                    _set_issue_contact_name(r["id"], fetched)
+                    r["contact_name"] = fetched
 
         body = _render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
         return {"ok": True, "cmd": "MORE", "text": body}
@@ -862,7 +887,7 @@ def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]
     """).fetchone()["n"]
 
     rows = conn.execute("""
-        SELECT id, issue_type, phone, contact_id, created_ts, due_ts, inbound_count, last_inbound_ts
+        SELECT id, issue_type, phone, contact_id, contact_name, created_ts, due_ts, inbound_count, last_inbound_ts
         FROM issues
         WHERE status='OPEN'
         ORDER BY due_ts ASC
@@ -878,6 +903,7 @@ def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]
             "issue_type": r["issue_type"],  # "CALL" or "SMS" in your existing output
             "phone": r["phone"],
             "contact_id": r["contact_id"],
+            "contact_name": r["contact_name"],
             "created_ts": r["created_ts"],
             "due_ts": r["due_ts"],
             "inbound_count": r["inbound_count"] if r["inbound_count"] is not None else 0,
@@ -896,7 +922,8 @@ def _render_list_like_summary(rows: list[dict], total_open: int, offset: int, li
         iid = r["id"]
         it = (r.get("issue_type") or "").upper()
         phone = r.get("phone") or ""
-        who = _mask_phone(phone)
+        name = (r.get("contact_name") or "").strip()
+        who = name if name else _mask_phone(phone)
 
         last_s = _fmt_hhmm_ampm(r.get("last_inbound_ts") or "")
         due_s = _fmt_hhmm_ampm(r.get("due_ts") or "")
@@ -923,8 +950,21 @@ def _render_list_like_summary(rows: list[dict], total_open: int, offset: int, li
 
     if end < total_open:
         lines.append("Reply: More")
+    else:
+        lines.append("End of list. Reply: List")
 
     return "\n".join(lines)
+
+def _set_issue_contact_name(issue_id: int, name: str) -> None:
+    if not name:
+        return
+    conn = db()
+    conn.execute(
+        "UPDATE issues SET contact_name=? WHERE id=? AND (contact_name IS NULL OR contact_name='')",
+        (name, issue_id),
+    )
+    conn.commit()
+    conn.close()
 
 def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
     conn = db()
@@ -1025,20 +1065,13 @@ async def inbound_sms(request: Request):
     from_phone = _extract_from_phone(payload)
 
     contact_name = _extract_contact_name(payload)
-    if not contact_name:
+    if not contact_name and contact_id:
         try:
             contact_name = await ghl_get_contact_name(contact_id)
         except Exception:
             contact_name = None
     direction = _extract_direction(payload)
     contact_type = _extract_contact_type(payload)
-
-    contact_name = _extract_contact_name(payload)
-    if not contact_name:
-        try:
-            contact_name = await ghl_get_contact_name(contact_id)
-        except Exception:
-            contact_name = None
 
     if direction in ("outbound", "outgoing"):
         return {"received": True, "ignored": "outbound"}
@@ -1094,12 +1127,12 @@ async def inbound_sms(request: Request):
             meta["contact_name"] = contact_name
         conn.execute("""
             INSERT INTO issues
-              (issue_type, contact_id, phone, created_ts, due_ts, status, meta,
+              (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
                first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
             VALUES
-              ('SMS', ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?)
+              ('SMS', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?)
         """, (
-            contact_id, from_phone, created_ts, due_ts, json.dumps(meta),
+            contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta),
             created_ts, created_ts, conversation_id
         ))
     else:
@@ -1123,9 +1156,10 @@ async def inbound_sms(request: Request):
                 contact_id=COALESCE(contact_id, ?),
                 phone=COALESCE(phone, ?),
                 conversation_id=COALESCE(conversation_id, ?),
+                contact_name=CASE WHEN (contact_name IS NULL OR contact_name='') THEN ? ELSE contact_name END,
                 meta=?
             WHERE id=?
-        """, (created_ts, contact_id, from_phone, conversation_id, json.dumps(meta), row["id"]))
+        """, (created_ts, contact_id, from_phone, conversation_id, contact_name or None, json.dumps(meta), row["id"]))
 
     conn.commit()
     conn.close()
@@ -1172,9 +1206,9 @@ async def unanswered_call(request: Request):
     if contact_name:
         meta["contact_name"] = contact_name
     conn.execute("""
-        INSERT INTO issues (issue_type, contact_id, phone, created_ts, due_ts, status, meta)
-        VALUES ('CALL', ?, ?, ?, ?, 'OPEN', ?)
-    """, (contact_id, from_phone, created_ts, due_ts, json.dumps(meta)))
+        INSERT INTO issues (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta)
+        VALUES ('CALL', ?, ?, ?, ?, ?, 'OPEN', ?)
+    """, (contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta)))
     conn.commit()
     conn.close()
     return {"received": True, "issue_created": True}
