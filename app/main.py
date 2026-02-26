@@ -821,33 +821,33 @@ def _fmt_hhmm_ampm(value) -> str:
     if not value:
         return "?"
 
-    dt = None
+    parsed = None
 
     # already a datetime?
-    if isinstance(value, datetime):
-        dt = value
+    if isinstance(value, dt.datetime):
+        parsed = value
     else:
         s = str(value).strip()
         if not s:
             return "?"
         try:
             # Handles '2026-02-25T15:41:10.213158-06:00' and many variants
-            dt = datetime.fromisoformat(s)
+            parsed = dt.datetime.fromisoformat(s)
         except Exception:
             # Try sqlite style 'YYYY-MM-DD HH:MM:SS'
             try:
-                dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+                parsed = dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
             except Exception:
                 # Try without seconds
                 try:
-                    dt = datetime.strptime(s, "%Y-%m-%d %H:%M")
+                    parsed = dt.datetime.strptime(s, "%Y-%m-%d %H:%M")
                 except Exception:
                     return "?"
 
     try:
-        return dt.strftime("%-I:%M%p").lower()
+        return parsed.strftime("%-I:%M%p").lower()
     except Exception:
-        return dt.strftime("%I:%M%p").lstrip("0").lower()
+        return parsed.strftime("%I:%M%p").lstrip("0").lower()
 
 def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
     """
