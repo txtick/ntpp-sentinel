@@ -25,6 +25,14 @@ MANAGER_CONTACT_IDS = [
     s.strip() for s in (os.getenv("MANAGER_CONTACT_IDS", "")).split(",") if s.strip()
 ]
 
+# Internal manager contact whitelist and reply grace window
+INTERNAL_CONTACT_IDS = set(
+    x.strip()
+    for x in (os.getenv("INTERNAL_CONTACT_IDS", "")).split(",")
+    if x.strip()
+)
+INTERNAL_REPLY_GRACE_HOURS = int(os.getenv("INTERNAL_REPLY_GRACE_HOURS", "12"))
+
 # Limits to keep SMS short and low-noise
 SUMMARY_MAX_ITEMS_PER_SECTION = int(os.getenv("SUMMARY_MAX_ITEMS_PER_SECTION", "8"))
 
@@ -50,10 +58,24 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, cols: List[tuple]) -> 
 
 def ensure_schema() -> None:
     conn = db()
+
+    # Existing column migrations on issues
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(issues)").fetchall()}
     if "contact_name" not in cols:
         conn.execute("ALTER TABLE issues ADD COLUMN contact_name TEXT")
-        conn.commit()
+
+    # Conversation-level state for internal-initiated threads
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_state (
+            conversation_id TEXT PRIMARY KEY,
+            last_internal_outbound_ts TEXT,
+            last_internal_outbound_contact_id TEXT
+        )
+        """
+    )
+
+    conn.commit()
     conn.close()
 
 def init_db() -> None:
@@ -111,6 +133,36 @@ def init_db() -> None:
     conn.commit()
     conn.close()
 
+
+def set_last_internal_outbound(
+    conversation_id: str, ts_iso: str, internal_contact_id: Optional[str]
+) -> None:
+    conn = db()
+    conn.execute(
+        """
+      INSERT INTO conversation_state (conversation_id, last_internal_outbound_ts, last_internal_outbound_contact_id)
+      VALUES (?, ?, ?)
+      ON CONFLICT(conversation_id) DO UPDATE SET
+        last_internal_outbound_ts=excluded.last_internal_outbound_ts,
+        last_internal_outbound_contact_id=excluded.last_internal_outbound_contact_id
+    """,
+        (conversation_id, ts_iso, internal_contact_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_last_internal_outbound(conversation_id: str) -> Optional[str]:
+    conn = db()
+    row = conn.execute(
+        """
+      SELECT last_internal_outbound_ts FROM conversation_state WHERE conversation_id=?
+    """,
+        (conversation_id,),
+    ).fetchone()
+    conn.close()
+    return row["last_internal_outbound_ts"] if row else None
+
 @app.on_event("startup")
 def _startup():
     os.makedirs("/data", exist_ok=True)
@@ -136,6 +188,23 @@ def _auth_or_401(request: Request) -> None:
 # ==========================
 def _now_local() -> dt.datetime:
     return dt.datetime.now(tz=ZoneInfo(TZ_NAME))
+
+
+def _parse_iso_dt(value) -> Optional[dt.datetime]:
+    if not value:
+        return None
+    if isinstance(value, dt.datetime):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return dt.datetime.fromisoformat(s)
+    except Exception:
+        try:
+            return dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
 
 def _is_business_time(ts: dt.datetime) -> bool:
     # Mon-Fri 09:00-18:00 local
@@ -415,6 +484,14 @@ def _extract_contact_type(payload: Dict[str, Any]) -> Optional[str]:
             if isinstance(v, str) and v.strip():
                 return v.strip().lower()
     return None
+
+
+def _is_internal_sender(contact_type: Optional[str], contact_id: Optional[str]) -> bool:
+    if contact_type and contact_type.lower() == "internal":
+        return True
+    if contact_id and contact_id in INTERNAL_CONTACT_IDS:
+        return True
+    return False
 
 def _extract_contact_name(payload: Dict[str, Any]) -> Optional[str]:
     # Try common direct keys
@@ -930,7 +1007,9 @@ def _render_list_like_summary(rows: list[dict], total_open: int, offset: int, li
 
         line = f"#{iid} {who} — {last_s} | due {due_s}"
         if it == "SMS":
-            line += f" in={r.get('inbound_count', 0)}"
+            n = int(r.get("inbound_count", 0) or 0)
+            if n > 1:
+                line += f" ({n})"
             texts.append(line)
         else:
             calls.append(line)
@@ -1063,6 +1142,7 @@ async def inbound_sms(request: Request):
     text = _extract_text(payload)
     contact_id = _extract_contact_id(payload)
     from_phone = _extract_from_phone(payload)
+    conversation_id = _extract_conversation_id(payload)
 
     contact_name = _extract_contact_name(payload)
     if not contact_name and contact_id:
@@ -1072,6 +1152,15 @@ async def inbound_sms(request: Request):
             contact_name = None
     direction = _extract_direction(payload)
     contact_type = _extract_contact_type(payload)
+    is_internal = _is_internal_sender(contact_type, contact_id)
+
+    now_local = _now_local()
+    created_ts = now_local.isoformat()
+    due_ts = add_business_hours(now_local, 2.0).isoformat()
+
+    # Track internal-initiated outbound so customer replies within a grace window
+    if conversation_id and is_internal and direction in ("outbound", "outgoing"):
+        set_last_internal_outbound(conversation_id, created_ts, contact_id)
 
     if direction in ("outbound", "outgoing"):
         return {"received": True, "ignored": "outbound"}
@@ -1093,15 +1182,21 @@ async def inbound_sms(request: Request):
         # internal non-command
         return {"received": True, "ignored": "internal_non_command"}
 
-    now_local = _now_local()
-    created_ts = now_local.isoformat()
-    due_ts = add_business_hours(now_local, 2.0).isoformat()
+    # If this is a customer reply inside an internal-initiated thread within grace window, ignore
+    if conversation_id and not is_internal:
+        last_internal_ts = get_last_internal_outbound(conversation_id)
+        last_dt = _parse_iso_dt(last_internal_ts)
+        if last_dt:
+            delta = now_local - last_dt
+            if 0 <= delta.total_seconds() <= INTERNAL_REPLY_GRACE_HOURS * 3600:
+                return {"received": True, "ignored": "customer_reply_to_internal_initiated_thread"}
 
-    conversation_id: Optional[str] = None
-    try:
-        conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
-    except Exception:
-        conversation_id = None
+    # For customer SMS, if conversation_id wasn't in the payload, resolve via GHL search
+    if not conversation_id:
+        try:
+            conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
+        except Exception:
+            conversation_id = None
 
     conn = db()
 
