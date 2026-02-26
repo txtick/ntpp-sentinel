@@ -1,331 +1,371 @@
-# Sentinel Master State
+Sentinel Master State — NTX Pool Pros
 
-**Project:** Sentinel (NTX Pool Pros)  
-**Status:** Active development  
-**Environment:** Production + Local Dev  
-**Primary Repo:** https://github.com/txtick/ntpp-sentinel  
+Repo: https://github.com/txtick/ntpp-sentinel
 
----
+Public URL: https://sentinel.northtexaspoolpros.com
 
-# 1) Purpose
+Timezone: America/Chicago
+Stack: FastAPI + Uvicorn + Docker Compose + Caddy + SQLite + in-container cron
 
-Sentinel is an automation and orchestration service for North Texas Pool Pros.
+1. Purpose
 
-It ingests events (primarily from GoHighLevel webhooks) and produces:
+Sentinel is an automation/orchestration service for NTX Pool Pros.
 
-- Issue tracking (SMS + Calls)  
-- SLA monitoring  
-- Escalation detection  
-- Manager summary notifications (scheduled)  
-- Resolution detection via polling  
+It ingests GoHighLevel (GHL) webhooks and produces:
 
-Sentinel acts as a lightweight operational layer on top of GoHighLevel.
+• Deterministic CALL + SMS issues
+• SLA tracking (business hours aware)
+• Automated resolution detection
+• Manager summary SMS notifications
+• Watermark-based “resolved since last summary” tracking
 
----
+The system is deterministic by design. No AI logic is required for core issue tracking.
 
-# 2) High-Level Architecture
+2. Deployment Architecture
 
-## Inbound Events
-- `POST /webhook/ghl`
-- `POST /webhook/ghl/unanswered_call`
+Docker Compose runs two services:
 
-## Internal Jobs
-- `POST /jobs/poll_resolver`
-- `POST /jobs/send_summary`
+sentinel
 
-## Storage
-- SQLite database
-  - `issues`
-  - `kv_store`
-  - `raw_events`
+FastAPI app
 
-## Outbound
-- GHL API → `POST /conversations/messages`
+Exposes port 8000 internally
 
----
+Runs cron inside container
 
-# 3) Core Concepts
+caddy
 
-## Issues
+Reverse proxy
 
-An Issue is created when:
-- An inbound customer SMS is received  
-- An unanswered call webhook is received  
+Terminates TLS
 
-Each issue contains:
-- `id`
-- `type` (SMS / CALL)
-- `contact_id`
-- `conversation_id`
-- `state` (OPEN / RESOLVED)
-- `created_ts`
-- `due_ts`
-- `resolved_ts`
+Routes sentinel.northtexaspoolpros.com → sentinel:8000
 
----
+Ports 80 and 443 exposed publicly
 
-## SLA Logic
+Volumes:
 
-Each issue receives a `due_ts` when created.
+./data → /data (SQLite database)
+./logs → /logs (cron logs)
 
-If:
+Database file:
+data/sentinel.db
 
-    now > due_ts AND state = OPEN
-
-It becomes eligible for escalation and summary reporting.
-
----
-
-## Resolution Logic
-
-The `poll_resolver` job:
-
-1. Queries GHL conversations  
-2. Detects outbound replies from managers  
-3. Marks issue as `RESOLVED`  
-4. Sets `resolved_ts`  
-
----
-
-# 4) Environment Variables
-
-File location:
-
-    /opt/ntpp-sentinel/.env
+3. Environment Variables (.env)
 
 Required:
 
-    GHL_TOKEN=your_api_token
-    WEBHOOK_SECRET=your_internal_secret
-    GHL_VERSION=2021-07-28
-    MANAGER_CONTACT_IDS=contact1,contact2,contact3
+WEBHOOK_SECRET=shared_secret_value
+GHL_TOKEN=leadconnector_private_token
+GHL_VERSION=2021-07-28
+MANAGER_CONTACT_IDS=id1,id2,id3
 
-Optional:
+Recommended:
 
-    GHL_LOCATION_ID=your_location_id
+GHL_BASE_URL=https://services.leadconnectorhq.com
 
----
+TIMEZONE=America/Chicago
+DB_PATH=/data/sentinel.db
+SUMMARY_MAX_ITEMS_PER_SECTION=8
 
-# 5) API Endpoints
+Important:
+MANAGER_CONTACT_IDS must be a comma-separated list of valid GHL contact IDs or summary SMS will not send.
 
-## Inbound Webhook
+4. Authentication
 
-    POST /webhook/ghl
+All webhooks and job endpoints require authentication.
 
-Used for inbound SMS events.
+Either:
 
----
+Header:
+X-NTPP-Secret: <WEBHOOK_SECRET>
 
-## Unanswered Call Webhook
+OR
 
-    POST /webhook/ghl/unanswered_call
+Query param:
+?secret=<WEBHOOK_SECRET>
 
-Creates CALL-type issues.
+5. Webhooks
+Inbound SMS
 
----
-
-## Poll Resolver
-
-    POST /jobs/poll_resolver
-    Header: X-NTPP-Secret: <WEBHOOK_SECRET>
-
-Scans GHL conversations and resolves issues.
-
----
-
-## Send Summary
-
-    POST /jobs/send_summary?slot=morning|midday|afternoon&dry_run=1|0
-    Header: X-NTPP-Secret: <WEBHOOK_SECRET>
-
-Slots:
-- morning
-- midday
-- afternoon
+POST /webhook/ghl/inbound_sms
 
 Behavior:
 
-`dry_run=1`
-- Generates summary
-- Returns JSON
-- Does NOT send SMS
-- Does NOT advance watermark
+• Ignores outbound messages
+• If inbound from customer:
 
-Real run:
-- Sends SMS to managers
-- Updates watermark
+Creates OPEN SMS issue if none exists for conversation
 
----
+SLA = 2 business hours
 
-# 6) Manager Summary Logic
+Stores:
+contact_id
+phone
+conversation_id
+first_inbound_ts
+last_inbound_ts
+inbound_count
+meta.contact_name (if available)
 
-Each summary contains:
+Subsequent inbound messages:
+update inbound_count + last_inbound_ts
+DO NOT reset due_ts
 
-- Calls (open + overdue)
-- Texts (open + overdue)
-- Escalated (>24 business hours if configured)
-- Resolved since last summary
+• Internal “SENTINEL ” commands:
 
-Watermarks stored in `kv_store`:
+OPEN
 
-- `last_summary_ts_morning`
-- `last_summary_ts_midday`
-- `last_summary_ts_afternoon`
+RESOLVE
 
----
+SPAM
 
-# 7) Local Development Workflow
+NOTE
 
-Clone repo:
+LIST
 
-    git clone git@github.com:txtick/ntpp-sentinel.git
-    cd ntpp-sentinel
+Unanswered Call
 
-Create branch:
+POST /webhook/ghl/unanswered_call
 
-    git checkout -b dev
+Creates deterministic CALL issue only when voicemail_route=tech_sentinel signal is present.
 
-Commit changes:
+SLA: 2 business hours.
 
-    git add -A
-    git commit -m "Describe change"
-    git push -u origin dev
+6. Jobs
+poll_resolver
 
-Merge to main when ready:
+POST /jobs/poll_resolver
 
-    git checkout main
-    git merge dev
-    git push origin main
+Purpose:
 
----
+• Looks at open issues
+• Queries GHL conversation history
+• Detects outbound manager replies
+• Marks issue RESOLVED
+• Sets resolved_ts
 
-# 8) Production Deployment Workflow
+Manual trigger example:
 
-SSH into droplet:
+curl -X POST https://sentinel.northtexaspoolpros.com/jobs/poll_resolver
 
-    ssh sentinel
+-H "X-NTPP-Secret: <WEBHOOK_SECRET>"
 
-Pull latest code:
+send_summary
 
-    cd /opt/ntpp-sentinel
-    git fetch --all --tags
-    git checkout main
-    git pull --ff-only
+POST /jobs/send_summary?slot=morning|midday|afternoon&dry_run=0|1
 
-Restart service (Docker):
+Slots:
+morning
+midday
+afternoon
 
-    docker compose down
-    docker compose up -d --build
+Dry run (no SMS sent):
 
-View logs:
+curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1
+"
+-H "X-NTPP-Secret: <WEBHOOK_SECRET>"
 
-    docker compose logs -f --tail=100
+Live send:
 
-If using systemd:
+curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning
+"
+-H "X-NTPP-Secret: <WEBHOOK_SECRET>"
 
-    sudo systemctl restart ntpp-sentinel
-    sudo systemctl status ntpp-sentinel --no-pager
-    journalctl -u ntpp-sentinel -n 200 --no-pager
+Summary format includes:
 
----
+• Overdue Calls count
+• Overdue Texts count
+• Calls section
+• Texts section
+• “Resolved since last summary” section
+• Reply command footer
 
-# 9) Cron Schedule (Recommended v1)
+Watermark logic ensures resolved items appear only once.
 
-8:00 AM
+escalations
 
-    send_summary?slot=morning
+POST /jobs/escalations
 
-11:00 AM
+Currently placeholder / future enhancement.
 
-    send_summary?slot=midday
+7. Cron
 
-3:00 PM
+Cron runs inside sentinel container.
 
-    send_summary?slot=afternoon
+Script:
+app/cron/cron.sh
 
-Optional:
-Have `send_summary` internally call `poll_resolver` to prevent double cron entries.
+Default schedule:
 
----
+08:00 → morning summary
+11:00 → midday summary
+15:00 → afternoon summary
 
-# 10) Smoke Test Checklist
+poll_resolver runs periodically during business hours.
 
-Inbound SMS:
-- Customer texts → Issue created
+Cron logs:
 
-Resolver:
-- Manager replies in GHL
-- Run `poll_resolver`
-- Issue becomes RESOLVED
+Host:
+logs/cron.log
 
-Summary dry run:
-- Before `due_ts` → not listed
-- After `due_ts` → listed
+View:
+tail -f logs/cron.log
 
-Summary real:
-- SMS delivered to managers
+Cron loads environment from container process environment, not shell profiles.
 
-Resolved tracking:
-- Run real summary once
-- Resolve issue
-- Run again
-- Issue appears under "Resolved since last summary"
+8. Database Model
 
----
+Table: issues
 
-# 11) Force Issue to Overdue (Testing Only)
+Key fields:
 
-If `due_ts` is epoch:
+id
+issue_type (SMS or CALL)
+contact_id
+phone
+conversation_id
+created_ts
+due_ts
+resolved_ts
+status (OPEN, RESOLVED, SPAM)
+first_inbound_ts
+last_inbound_ts
+inbound_count
+outbound_count
+meta (JSON)
 
-    sqlite3 /opt/ntpp-sentinel/data/sentinel.db "UPDATE issues SET due_ts = strftime('%s','now') - 60 WHERE id = 1;"
+Table: kv_store
 
-If `due_ts` is datetime:
+Used for watermark tracking per summary slot.
 
-    sqlite3 /opt/ntpp-sentinel/data/sentinel.db "UPDATE issues SET due_ts = datetime('now','-2 minutes') WHERE id = 1;"
+9. Verified GHL Send Contract
 
-Inspect schema:
+Endpoint:
 
-    sqlite3 /opt/ntpp-sentinel/data/sentinel.db "PRAGMA table_info(issues);"
+POST /conversations/messages
 
----
+Payload:
 
-# 12) Versioning
+{
+"type": "SMS",
+"message": "text here",
+"conversationId": "conversation_id",
+"contactId": "contact_id"
+}
 
-Tag release:
+Headers:
 
-    git tag v0.1.0
-    git push origin refs/tags/v0.1.0
+Authorization: Bearer <GHL_TOKEN>
+Version: 2021-07-28
 
-Push all tags:
+type must be "SMS"
+key must be "message"
 
-    git push origin --tags
+10. Smoke Test Checklist
 
----
+Inbound SMS test:
 
-# 13) Current Version Goals
+Send text from customer
 
-## v0.1.x
-- Stable issue creation
-- Stable resolution polling
-- Working manager summaries
-- Cron automation
+Verify OPEN issue created in DB
 
-## v0.2.x (planned)
-- Business-hour escalation logic
-- Per-manager routing
-- Call transcript analysis
-- Structured logging
-- Better summary formatting
+Resolver test:
 
----
+Manager replies in GHL
 
-# 14) Operational Philosophy
+Run poll_resolver
 
-Sentinel must:
+Verify issue marked RESOLVED
 
-- Be deterministic  
-- Be observable  
-- Be testable via curl  
-- Avoid hidden background behavior  
-- Prefer idempotent jobs  
-- Keep business logic explicit  
+Summary test:
+
+Run dry_run=1
+
+Confirm formatted output
+
+Run live send
+
+Confirm SMS delivered
+
+Resolve an issue
+
+Run summary again
+
+Confirm appears in “Resolved since last summary” once
+
+11. Common Failure Causes
+
+No summary SMS received:
+
+• MANAGER_CONTACT_IDS empty
+• dry_run=1 used
+• GHL_TOKEN invalid
+• Cron not firing
+• WEBHOOK_SECRET mismatch
+
+Inbound SMS failing:
+
+• Missing DB connection in handler
+• Invalid auth
+• Unexpected payload shape
+
+Cron error “WEBHOOK_SECRET is not set”:
+
+• cron.sh not loading environment
+• container rebuilt without env
+
+12. Useful DB Queries
+
+Recent issues:
+
+sqlite3 data/sentinel.db "select id, issue_type, status, phone, contact_id from issues order by id desc limit 20;"
+
+Open issues:
+
+sqlite3 data/sentinel.db "select id, issue_type, phone, due_ts from issues where status='OPEN';"
+
+Watermarks:
+
+sqlite3 data/sentinel.db "select * from kv_store;"
+
+13. Deploy Workflow
+
+Local:
+
+git add -A
+git commit -m "message"
+git push origin main
+
+Server deploy:
+
+ssh kevin@sentinel '
+cd /opt/ntpp-sentinel &&
+git checkout main &&
+git pull --ff-only &&
+docker compose up -d --build
+'
+
+14. Current System Status (as of latest session)
+
+• Inbound SMS webhook working
+• contact_name stored in meta
+• Summary display updated to show names
+• Resolver job functioning
+• Cron environment loading fixed
+• Git workflow corrected
+• Live summary send pending verification
+
+15. Next Logical Steps
+
+Confirm manual live summary send works
+
+Confirm cron-delivered summaries arrive on schedule
+
+Add stronger outbound GHL send logging
+
+Optional: backfill contact_name for old issues
+
+Implement escalation policy (e.g., 24 business hours)
+
+Add lightweight admin endpoint for system diagnostics
