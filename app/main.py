@@ -671,11 +671,14 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
             return {"ok": False, "error": "Missing manager contact id"}
 
         limit = 5
-        _MANAGER_LIST_OFFSETS[command_contact_id] = 0
         offset = 0
+        _MANAGER_LIST_OFFSETS[command_contact_id] = offset
 
-        page, total = _list_open_issues_compact(limit=limit, offset=offset)
-        body = _render_list_like_summary(page, total_open=total, offset=offset, limit=limit)
+        rows, total = list_open_issues(limit=limit, offset=offset)
+        if total == 0:
+            return {"ok": True, "cmd": "LIST", "text": "No OPEN issues."}
+
+        body = _render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
         return {"ok": True, "cmd": "LIST", "text": body}
 
     if cmd == "more":
@@ -686,13 +689,12 @@ async def handle_command(text: str, command_contact_id: Optional[str], command_f
         offset = _MANAGER_LIST_OFFSETS.get(command_contact_id, 0) + limit
         _MANAGER_LIST_OFFSETS[command_contact_id] = offset
 
-        page, total = _list_open_issues_compact(limit=limit, offset=offset)
-        # If they ran out, reset and tell them
-        if not page:
+        rows, total = list_open_issues(limit=limit, offset=offset)
+        if not rows:
             _MANAGER_LIST_OFFSETS[command_contact_id] = 0
             return {"ok": True, "cmd": "MORE", "text": "No more OPEN issues. Reply: List"}
 
-        body = _render_list_like_summary(page, total_open=total, offset=offset, limit=limit)
+        body = _render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
         return {"ok": True, "cmd": "MORE", "text": body}
 
     if cmd == "open":
