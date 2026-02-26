@@ -75,6 +75,7 @@ def ensure_schema() -> None:
         ("first_inbound_ts", "ALTER TABLE issues ADD COLUMN first_inbound_ts TEXT"),
         ("last_inbound_ts", "ALTER TABLE issues ADD COLUMN last_inbound_ts TEXT"),
         ("inbound_count", "ALTER TABLE issues ADD COLUMN inbound_count INTEGER DEFAULT 0"),
+        ("outbound_count", "ALTER TABLE issues ADD COLUMN outbound_count INTEGER DEFAULT 0"),
         ("conversation_id", "ALTER TABLE issues ADD COLUMN conversation_id TEXT"),
     ]:
         if col not in cols:
