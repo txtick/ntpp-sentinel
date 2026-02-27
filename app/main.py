@@ -60,6 +60,8 @@ ACK_CLOSE_MAX_LEN = int(os.getenv("ACK_CLOSE_MAX_LEN", "80"))
 
 # Limits to keep SMS short and low-noise
 SUMMARY_MAX_ITEMS_PER_SECTION = int(os.getenv("SUMMARY_MAX_ITEMS_PER_SECTION", "8"))
+RESOLVED_SINCE_MAX_ITEMS = 5
+FLOW_LOG_ENABLED = os.getenv("FLOW_LOG_ENABLED", "1").lower() in ("1", "true", "yes", "on")
 
 # SLA for customer SMS and CALL response before it is considered an issue (hours)
 SMS_SLA_HOURS = float(os.getenv("SMS_SLA_HOURS", "2"))
@@ -723,6 +725,32 @@ def _log_raw_event(source: str, payload: Dict[str, Any]) -> None:
     conn.commit()
     conn.close()
 
+def _flow_who(contact_name: Optional[str], phone: Optional[str], contact_id: Optional[str]) -> str:
+    if isinstance(contact_name, str) and contact_name.strip():
+        return contact_name.strip()
+    if isinstance(phone, str) and phone.strip():
+        p = phone.strip()
+        if p.startswith("+1") and len(p) >= 12:
+            return "+1***" + p[-4:]
+        if len(p) >= 4:
+            return "***" + p[-4:]
+        return p
+    if isinstance(contact_id, str) and contact_id.strip():
+        return f"contact:{contact_id.strip()}"
+    return "unknown"
+
+def _flow_log(event: str, **fields: Any) -> None:
+    if not FLOW_LOG_ENABLED:
+        return
+    payload = {
+        "ts": dt.datetime.now(tz=ZoneInfo(TZ_NAME)).isoformat(),
+        "event": event,
+    }
+    for k, v in fields.items():
+        if v is not None:
+            payload[k] = v
+    print("FLOW " + json.dumps(payload, separators=(",", ":"), ensure_ascii=True))
+
 # ---- Manager LIST pagination (in-memory) ----
 # Keyed by manager contact_id. Resets on restart (fine).
 _MANAGER_LIST_OFFSETS: dict[str, int] = {}
@@ -1293,6 +1321,7 @@ async def inbound_sms(request: Request):
     direction = _extract_direction(payload)
     contact_type = _extract_contact_type(payload)
     is_internal = _is_internal_sender(contact_type, contact_id)
+    who = _flow_who(contact_name, from_phone, contact_id)
 
     now_local = _now_local()
     created_ts = now_local.isoformat()
@@ -1310,6 +1339,7 @@ async def inbound_sms(request: Request):
         set_last_internal_outbound(conversation_id, created_ts, contact_id)
 
     if direction in ("outbound", "outgoing"):
+        _flow_log("sms.ignored_outbound", who=who, contact_id=contact_id, conversation_id=conversation_id)
         return {"received": True, "ignored": "outbound"}
 
     # Internal manager commands (no "SENTINEL" prefix required; handled by handle_command)
@@ -1324,9 +1354,11 @@ async def inbound_sms(request: Request):
                     await ghl_send_message(conv_id, contact_id, result["text"])
             except Exception:
                 pass
+            _flow_log("sms.internal_command", who=who, contact_id=contact_id, command=result.get("cmd"))
             return {"received": True, "command": True, "result": result}
 
         # internal non-command
+        _flow_log("sms.ignored_internal_non_command", who=who, contact_id=contact_id)
         return {"received": True, "ignored": "internal_non_command"}
 
     # Customer "ack/close-out" after a staff reply:
@@ -1345,6 +1377,12 @@ async def inbound_sms(request: Request):
                 within_window = 0 <= delta.total_seconds() <= (ACK_CLOSE_WINDOW_HOURS * 3600.0)
 
             if within_window and _is_ack_closeout(text):
+                _flow_log(
+                    "sms.ignored_ack_closeout",
+                    who=who,
+                    contact_id=contact_id,
+                    conversation_id=conversation_id,
+                )
                 return {"received": True, "ignored": "ack_closeout_after_staff_reply"}
 
     conn = db()
@@ -1369,7 +1407,7 @@ async def inbound_sms(request: Request):
         }
         if contact_name:
             meta["contact_name"] = contact_name
-        conn.execute("""
+        cur = conn.execute("""
             INSERT INTO issues
               (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
                first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
@@ -1379,6 +1417,15 @@ async def inbound_sms(request: Request):
             contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta),
             created_ts, created_ts, conversation_id
         ))
+        _flow_log(
+            "sms.issue_created",
+            issue_id=cur.lastrowid,
+            who=who,
+            contact_id=contact_id,
+            conversation_id=conversation_id,
+            status="PENDING",
+            due_ts=due_ts,
+        )
     else:
         meta = {}
         try:
@@ -1404,6 +1451,14 @@ async def inbound_sms(request: Request):
                 meta=?
             WHERE id=?
         """, (created_ts, contact_id, from_phone, conversation_id, contact_name or None, json.dumps(meta), row["id"]))
+        _flow_log(
+            "sms.issue_updated",
+            issue_id=row["id"],
+            who=who,
+            contact_id=contact_id,
+            conversation_id=conversation_id,
+            status=row["status"],
+        )
 
     conn.commit()
     conn.close()
@@ -1442,10 +1497,12 @@ async def unanswered_call(request: Request):
             conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
         except Exception:
             conversation_id = None
+    who = _flow_who(contact_name, from_phone, contact_id)
 
     conn = db()
     if _is_spam(conn, from_phone):
         conn.close()
+        _flow_log("call.ignored_spam", who=who, contact_id=contact_id, conversation_id=conversation_id)
         return {"received": True, "ignored": "spam_phone"}
 
     now_local = _now_local()
@@ -1455,7 +1512,7 @@ async def unanswered_call(request: Request):
     meta = {"source": "voicemail_route=tech_sentinel"}
     if contact_name:
         meta["contact_name"] = contact_name
-    conn.execute("""
+    cur = conn.execute("""
         INSERT INTO issues (
             issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
             conversation_id, first_inbound_ts, last_inbound_ts, inbound_count, outbound_count
@@ -1467,6 +1524,15 @@ async def unanswered_call(request: Request):
     ))
     conn.commit()
     conn.close()
+    _flow_log(
+        "call.issue_created",
+        issue_id=cur.lastrowid,
+        who=who,
+        contact_id=contact_id,
+        conversation_id=conversation_id,
+        status="PENDING",
+        due_ts=due_ts,
+    )
     return {"received": True, "issue_created": True}
 
 
@@ -1650,6 +1716,12 @@ async def poll_resolver(request: Request, limit: int = 200):
             """, (now, issue_id))
             conn2.commit()
             resolved += 1
+            _flow_log(
+                "sms.auto_resolved",
+                issue_id=issue_id,
+                conversation_id=conv_id,
+                via="poll_resolver",
+            )
 
         conn2.close()
 
@@ -1765,6 +1837,12 @@ async def verify_pending(request: Request, limit: int = 200):
             """, (now_iso, issue_id))
             conn2.commit()
             auto_resolved += 1
+            _flow_log(
+                "sms.auto_resolved",
+                issue_id=issue_id,
+                conversation_id=conv_id,
+                via="verify_pending",
+            )
             conn2.close()
             continue
 
@@ -1775,6 +1853,12 @@ async def verify_pending(request: Request, limit: int = 200):
         """, (issue_id,))
         conn2.commit()
         promoted += 1
+        _flow_log(
+            "sms.promoted_open",
+            issue_id=issue_id,
+            conversation_id=conv_id,
+            via="verify_pending",
+        )
         conn2.close()
 
     for r in call_rows:
@@ -1856,6 +1940,13 @@ async def verify_pending(request: Request, limit: int = 200):
             """, (now_iso, issue_id))
             conn2.commit()
             call_auto_resolved += 1
+            _flow_log(
+                "call.auto_resolved",
+                issue_id=issue_id,
+                contact_id=contact_id,
+                conversation_id=conv_id,
+                via="verify_pending",
+            )
             conn2.close()
             continue
 
@@ -1866,6 +1957,13 @@ async def verify_pending(request: Request, limit: int = 200):
         """, (issue_id,))
         conn2.commit()
         call_promoted += 1
+        _flow_log(
+            "call.promoted_open",
+            issue_id=issue_id,
+            contact_id=contact_id,
+            conversation_id=conv_id,
+            via="verify_pending",
+        )
         conn2.close()
 
     return {
@@ -2052,8 +2150,9 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     """, (now_iso,)).fetchall()
 
     # Resolved since last summary
-    key = f"last_summary_ts_{slot.lower()}"
-    last_ts = kv_get(key)
+    key = "last_summary_ts"
+    slot_key = f"last_summary_ts_{slot.lower()}"  # backward-compat fallback
+    last_ts = kv_get(key) or kv_get(slot_key)
     resolved_since: List[sqlite3.Row] = []
     if last_ts:
         resolved_since = conn.execute("""
@@ -2064,7 +2163,7 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
             AND resolved_ts > ?
             AND resolved_ts <= ?
           ORDER BY resolved_ts DESC
-          LIMIT 25
+          LIMIT 100
         """, (last_ts, now_iso)).fetchall()
 
     conn.close()
@@ -2097,7 +2196,7 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
             AND resolved_ts > ?
             AND resolved_ts <= ?
           ORDER BY resolved_ts DESC
-          LIMIT 25
+          LIMIT 100
         """, (last_ts, now_iso)).fetchall()
 
     conn.close()
@@ -2130,7 +2229,7 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     if last_ts:
         if resolved_since:
             lines.append(f"✅ Resolved since last summary ({len(resolved_since)}):")
-            for r in resolved_since[:SUMMARY_MAX_ITEMS_PER_SECTION]:
+            for r in resolved_since[:RESOLVED_SINCE_MAX_ITEMS]:
                 who = _display_name(r)
                 rt = _fmt_dt_local(r["resolved_ts"])
                 lines.append(f"#{r['id']} {r['issue_type']} {who} at {rt}")
@@ -2179,6 +2278,7 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
             errors.append(f"manager contact {mgr_contact_id}: {type(e).__name__}")
 
     kv_set(key, now_iso)
+    kv_set(slot_key, now_iso)
 
     result["sent"] = True if sent_to else False
     result["sent_to"] = sent_to
@@ -2311,6 +2411,7 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
         conn.execute(q, [now_iso] + ids)
         conn.commit()
         conn.close()
+        _flow_log("escalations.sent", issue_ids=ids, sent_to_count=len(sent_to))
 
     result["sent"] = True if sent_to else False
     result["sent_to"] = sent_to
