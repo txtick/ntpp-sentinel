@@ -1493,8 +1493,8 @@ async def verify_pending(request: Request, limit: int = 200):
     rows = conn.execute("""
         SELECT id, conversation_id, first_inbound_ts, due_ts, outbound_count
         FROM issues
-        WHERE status=’PENDING’
-          AND issue_type=’SMS’
+        WHERE status='PENDING'
+          AND issue_type='SMS'
           AND conversation_id IS NOT NULL
           AND due_ts <= ?
         ORDER BY due_ts ASC
@@ -1556,8 +1556,8 @@ async def verify_pending(request: Request, limit: int = 200):
         if outbound_after:
             conn2.execute("""
                 UPDATE issues
-                SET status=’RESOLVED’, resolved_ts=?
-                WHERE id=? AND status=’PENDING’
+                SET status='RESOLVED', resolved_ts=?
+                WHERE id=? AND status='PENDING'
             """, (now_iso, issue_id))
             conn2.commit()
             auto_resolved += 1
@@ -1566,8 +1566,8 @@ async def verify_pending(request: Request, limit: int = 200):
 
         conn2.execute("""
             UPDATE issues
-            SET status=’OPEN’
-            WHERE id=? AND status=’PENDING’
+            SET status='OPEN'
+            WHERE id=? AND status='PENDING'
         """, (issue_id,))
         conn2.commit()
         promoted += 1
