@@ -77,6 +77,7 @@ def ensure_schema() -> None:
         ("inbound_count", "ALTER TABLE issues ADD COLUMN inbound_count INTEGER DEFAULT 0"),
         ("outbound_count", "ALTER TABLE issues ADD COLUMN outbound_count INTEGER DEFAULT 0"),
         ("conversation_id", "ALTER TABLE issues ADD COLUMN conversation_id TEXT"),
+        ("breach_notified_ts", "ALTER TABLE issues ADD COLUMN breach_notified_ts TEXT"),
     ]:
         if col not in cols:
             conn.execute(ddl)
@@ -130,6 +131,7 @@ def init_db() -> None:
         ("inbound_count", "INTEGER DEFAULT 0"),
         ("outbound_count", "INTEGER DEFAULT 0"),
         ("conversation_id", "TEXT"),
+        ("breach_notified_ts", "TEXT"),
     ])
 
     cur.execute("""
@@ -240,11 +242,11 @@ def _parse_ghl_date(value) -> Optional[dt.datetime]:
         return None
 
 def _is_business_time(ts: dt.datetime) -> bool:
-    # Mon-Fri 09:00-18:00 local
+    # Mon-Fri 08:00-17:00 local
     if ts.weekday() >= 5:
         return False
-    start = ts.replace(hour=9, minute=0, second=0, microsecond=0)
-    end = ts.replace(hour=18, minute=0, second=0, microsecond=0)
+    start = ts.replace(hour=8, minute=0, second=0, microsecond=0)
+    end = ts.replace(hour=17, minute=0, second=0, microsecond=0)
     return start <= ts <= end
 
 def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
@@ -252,18 +254,18 @@ def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
     while True:
         if cur.weekday() >= 5:
             days_ahead = 7 - cur.weekday()
-            cur = (cur + dt.timedelta(days=days_ahead)).replace(hour=9, minute=0, second=0, microsecond=0)
+            cur = (cur + dt.timedelta(days=days_ahead)).replace(hour=8, minute=0, second=0, microsecond=0)
             continue
-        if cur.hour < 9:
-            return cur.replace(hour=9, minute=0, second=0, microsecond=0)
-        if cur.hour >= 18:
-            cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        if cur.hour < 8:
+            return cur.replace(hour=8, minute=0, second=0, microsecond=0)
+        if cur.hour >= 17:
+            cur = (cur + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
             continue
         return cur
 
 def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
     """
-    Deterministic business-hours adder: Mon–Fri 09:00–18:00 local.
+    Deterministic business-hours adder: Mon–Fri 08:00–17:00 local.
     Adds hours strictly across business windows.
     """
     if start_local.tzinfo is None:
@@ -273,15 +275,15 @@ def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
     cur = _roll_to_next_business_open(start_local)
 
     while remaining > 0:
-        day_end = cur.replace(hour=18, minute=0, second=0, microsecond=0)
+        day_end = cur.replace(hour=17, minute=0, second=0, microsecond=0)
         available = (day_end - cur).total_seconds()
         if remaining <= available:
             return cur + dt.timedelta(seconds=remaining)
 
         remaining -= available
-        cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        cur = (cur + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
         while cur.weekday() >= 5:
-            cur = (cur + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+            cur = (cur + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
 
     return cur
 
@@ -2028,6 +2030,130 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
 # Escalations job (optional separate rollup; v1 placeholder)
 # ==========================
 @app.post("/jobs/escalations")
-async def escalations(request: Request):
+async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
     _auth_or_401(request)
-    return {"job": "escalations", "status": "placeholder"}
+
+    now_local = _now_local()
+    now_iso = now_local.isoformat()
+
+    # Keep deterministic and reduce false positives from stale issue states.
+    try:
+        await poll_resolver(request, limit=500)
+    except Exception:
+        pass
+    try:
+        await verify_pending(request, limit=500)
+    except Exception:
+        pass
+
+    conn = db()
+    rows = conn.execute("""
+      SELECT *
+      FROM issues
+      WHERE status='OPEN'
+        AND due_ts <= ?
+        AND breach_notified_ts IS NULL
+      ORDER BY due_ts ASC
+      LIMIT ?
+    """, (now_iso, limit)).fetchall()
+    conn.close()
+    if not rows:
+        return {
+            "job": "escalations",
+            "new_breaches": 0,
+            "dry_run": bool(dry_run),
+            "sent": False,
+        }
+
+    await _enrich_issues_with_contact_names(list(rows))
+
+    conn = db()
+    rows = conn.execute("""
+      SELECT *
+      FROM issues
+      WHERE status='OPEN'
+        AND due_ts <= ?
+        AND breach_notified_ts IS NULL
+      ORDER BY due_ts ASC
+      LIMIT ?
+    """, (now_iso, limit)).fetchall()
+    conn.close()
+    if not rows:
+        return {
+            "job": "escalations",
+            "new_breaches": 0,
+            "dry_run": bool(dry_run),
+            "sent": False,
+        }
+
+    lines: List[str] = []
+    lines.append(f"NTPP Sentinel — SLA Breach Alert ({_fmt_date_local(now_local)}) • as of {_fmt_as_of_local(now_local)}")
+    lines.append(f"New breaches: {len(rows)}")
+    lines.append("")
+
+    calls = [r for r in rows if (r["issue_type"] or "").upper() == "CALL"]
+    texts = [r for r in rows if (r["issue_type"] or "").upper() == "SMS"]
+
+    if calls:
+        lines.append(f"Calls ({len(calls)}):")
+        for r in calls[:SUMMARY_MAX_ITEMS_PER_SECTION]:
+            lines.append(f"#{r['id']} {_display_name(r)} — due {_fmt_dt_local(r['due_ts'])}")
+
+    if texts:
+        lines.append(f"Texts ({len(texts)}):")
+        for r in texts[:SUMMARY_MAX_ITEMS_PER_SECTION]:
+            inc = r["inbound_count"] if r["inbound_count"] is not None else 0
+            lines.append(f"#{r['id']} {_display_name(r)} — due {_fmt_dt_local(r['due_ts'])} in={inc}")
+
+    shown = min(len(calls), SUMMARY_MAX_ITEMS_PER_SECTION) + min(len(texts), SUMMARY_MAX_ITEMS_PER_SECTION)
+    if len(rows) > shown:
+        lines.append(f"+{len(rows) - shown} more")
+
+    body = "\n".join(lines)
+    if len(body) > 1450:
+        body = body[:1450] + "\n…"
+
+    result = {
+        "job": "escalations",
+        "new_breaches": len(rows),
+        "dry_run": bool(dry_run),
+        "body": body,
+    }
+
+    if dry_run:
+        return result
+
+    if not MANAGER_CONTACT_IDS:
+        result["sent"] = False
+        result["error"] = "MANAGER_CONTACT_IDS not configured"
+        return result
+
+    sent_to: List[str] = []
+    errors: List[str] = []
+
+    for mgr_contact_id in MANAGER_CONTACT_IDS:
+        try:
+            conv_id = await _manager_conversation_for_contact(mgr_contact_id)
+            if not conv_id:
+                errors.append(f"manager contact {mgr_contact_id}: no conversation found")
+                continue
+            await ghl_send_message(conv_id, mgr_contact_id, body)
+            sent_to.append(mgr_contact_id)
+        except Exception as e:
+            errors.append(f"manager contact {mgr_contact_id}: {type(e).__name__}")
+
+    # Mark alerted only if at least one manager received the alert.
+    if sent_to:
+        conn = db()
+        ids = [r["id"] for r in rows]
+        q = "UPDATE issues SET breach_notified_ts=? WHERE id IN (%s) AND breach_notified_ts IS NULL" % ",".join(["?"] * len(ids))
+        conn.execute(q, [now_iso] + ids)
+        conn.commit()
+        conn.close()
+
+    result["sent"] = True if sent_to else False
+    result["sent_to"] = sent_to
+    if errors:
+        result["errors"] = errors
+    result["marked_notified"] = len(rows) if sent_to else 0
+    return result

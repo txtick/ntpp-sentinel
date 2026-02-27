@@ -2,7 +2,10 @@
 0 11 * * 1-5 /app/cron/cron.sh midday >> /logs/cron.log 2>&1
 0 15 * * 1-5 /app/cron/cron.sh afternoon >> /logs/cron.log 2>&1
 
-0 9-17 * * 1-5 /app/cron/cron.sh escalations >> /logs/cron.log 2>&1
+* 8-16 * * 1-5 /app/cron/cron.sh escalations >> /logs/cron.log 2>&1
+0 17 * * 1-5 /app/cron/cron.sh escalations >> /logs/cron.log 2>&1
 
-*/15 9-17 * * 1-5 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
-*/5  9-17 * * 1-5 /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
+*/15 8-16 * * 1-5 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
+0 17 * * 1-5 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
+*/5  8-16 * * 1-5 /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
+0 17 * * 1-5 /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
