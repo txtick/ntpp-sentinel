@@ -15,6 +15,25 @@ TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 GHL_APP_BASE = os.getenv("GHL_APP_BASE", "https://app.gohighlevel.com")
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "")
 
+def _parse_hhmm(value: str, fallback_hour: int, fallback_minute: int) -> Tuple[int, int]:
+    s = (value or "").strip()
+    m = re.match(r"^(\d{1,2}):(\d{2})$", s)
+    if not m:
+        return fallback_hour, fallback_minute
+    h = int(m.group(1))
+    mm = int(m.group(2))
+    if h < 0 or h > 23 or mm < 0 or mm > 59:
+        return fallback_hour, fallback_minute
+    return h, mm
+
+_bh_start_h, _bh_start_m = _parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
+_bh_end_h, _bh_end_m = _parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
+_bh_start_total = (_bh_start_h * 60) + _bh_start_m
+_bh_end_total = (_bh_end_h * 60) + _bh_end_m
+if _bh_end_total <= _bh_start_total:
+    _bh_start_h, _bh_start_m = 8, 0
+    _bh_end_h, _bh_end_m = 17, 0
+
 # GoHighLevel / LeadConnector API
 GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com")
 GHL_TOKEN = os.getenv("GHL_TOKEN", "")  # Private Integration token (Bearer)
@@ -242,11 +261,11 @@ def _parse_ghl_date(value) -> Optional[dt.datetime]:
         return None
 
 def _is_business_time(ts: dt.datetime) -> bool:
-    # Mon-Fri 08:00-17:00 local
+    # Mon-Fri in configured business-hour window.
     if ts.weekday() >= 5:
         return False
-    start = ts.replace(hour=8, minute=0, second=0, microsecond=0)
-    end = ts.replace(hour=17, minute=0, second=0, microsecond=0)
+    start = ts.replace(hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0)
+    end = ts.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
     return start <= ts <= end
 
 def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
@@ -254,18 +273,23 @@ def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
     while True:
         if cur.weekday() >= 5:
             days_ahead = 7 - cur.weekday()
-            cur = (cur + dt.timedelta(days=days_ahead)).replace(hour=8, minute=0, second=0, microsecond=0)
+            cur = (cur + dt.timedelta(days=days_ahead)).replace(
+                hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
+            )
             continue
-        if cur.hour < 8:
-            return cur.replace(hour=8, minute=0, second=0, microsecond=0)
-        if cur.hour >= 17:
-            cur = (cur + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+        cur_mins = (cur.hour * 60) + cur.minute
+        if cur_mins < _bh_start_total:
+            return cur.replace(hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0)
+        if cur_mins >= _bh_end_total:
+            cur = (cur + dt.timedelta(days=1)).replace(
+                hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
+            )
             continue
         return cur
 
 def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
     """
-    Deterministic business-hours adder: Mon–Fri 08:00–17:00 local.
+    Deterministic business-hours adder: Mon-Fri, configured hours local time.
     Adds hours strictly across business windows.
     """
     if start_local.tzinfo is None:
@@ -275,15 +299,19 @@ def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
     cur = _roll_to_next_business_open(start_local)
 
     while remaining > 0:
-        day_end = cur.replace(hour=17, minute=0, second=0, microsecond=0)
+        day_end = cur.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
         available = (day_end - cur).total_seconds()
         if remaining <= available:
             return cur + dt.timedelta(seconds=remaining)
 
         remaining -= available
-        cur = (cur + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+        cur = (cur + dt.timedelta(days=1)).replace(
+            hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
+        )
         while cur.weekday() >= 5:
-            cur = (cur + dt.timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+            cur = (cur + dt.timedelta(days=1)).replace(
+                hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
+            )
 
     return cur
 
