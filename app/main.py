@@ -1314,6 +1314,7 @@ async def unanswered_call(request: Request):
 
     contact_id = _extract_contact_id(payload)
     from_phone = _extract_from_phone(payload)
+    conversation_id = _extract_conversation_id(payload)
 
     contact_name = _extract_contact_name(payload)
     if not contact_name:
@@ -1321,6 +1322,11 @@ async def unanswered_call(request: Request):
             contact_name = await ghl_get_contact_name(contact_id)
         except Exception:
             contact_name = None
+    if not conversation_id:
+        try:
+            conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
+        except Exception:
+            conversation_id = None
 
     conn = db()
     if _is_spam(conn, from_phone):
@@ -1335,9 +1341,15 @@ async def unanswered_call(request: Request):
     if contact_name:
         meta["contact_name"] = contact_name
     conn.execute("""
-        INSERT INTO issues (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta)
-        VALUES ('CALL', ?, ?, ?, ?, ?, 'PENDING', ?)
-    """, (contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta)))
+        INSERT INTO issues (
+            issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
+            conversation_id, first_inbound_ts, last_inbound_ts, inbound_count, outbound_count
+        )
+        VALUES ('CALL', ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, 1, 0)
+    """, (
+        contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta),
+        conversation_id, created_ts, created_ts
+    ))
     conn.commit()
     conn.close()
     return {"received": True, "issue_created": True}
@@ -1372,9 +1384,8 @@ def _msg_is_staff_outbound(m: Dict[str, Any]) -> bool:
     Returns True only for a real staff reply:
       - direction == outbound
       - userId is present (excludes workflow automation which has no userId)
-      - userId is in INTERNAL_USER_IDS allowlist, if that env var is set
-    Loose mode (INTERNAL_USER_IDS unset): any userId resolves.
-    Strict mode (INTERNAL_USER_IDS set): only listed user IDs resolve.
+      - userId is in INTERNAL_USER_IDS allowlist
+    Strict mode only: INTERNAL_USER_IDS must be configured for any auto-resolve.
     """
     if not isinstance(m, dict):
         return False
@@ -1384,7 +1395,9 @@ def _msg_is_staff_outbound(m: Dict[str, Any]) -> bool:
     if not uid:
         return False
     allow = _internal_user_ids()
-    return (not allow) or (uid in allow)
+    if not allow:
+        return False
+    return uid in allow
 
 
 def _set_issue_status(issue_id: int, status: str) -> None:
@@ -1507,6 +1520,9 @@ async def verify_pending(request: Request, limit: int = 200):
       - For each PENDING SMS issue where due_ts <= now:
           - If ANY outbound where message.dateAdded > first_inbound_ts -> RESOLVED
           - Else -> promote to OPEN
+      - For each PENDING CALL issue where due_ts <= now:
+          - If ANY staff outbound message/call log after created_ts -> RESOLVED
+          - Else -> promote to OPEN
     """
     _auth_or_401(request)
 
@@ -1524,6 +1540,15 @@ async def verify_pending(request: Request, limit: int = 200):
         ORDER BY due_ts ASC
         LIMIT ?
     """, (now_iso, limit)).fetchall()
+    call_rows = conn.execute("""
+        SELECT id, conversation_id, contact_id, phone, created_ts, due_ts, outbound_count
+        FROM issues
+        WHERE status='PENDING'
+          AND issue_type='CALL'
+          AND due_ts <= ?
+        ORDER BY due_ts ASC
+        LIMIT ?
+    """, (now_iso, limit)).fetchall()
     conn.close()
 
     checked = 0
@@ -1531,6 +1556,11 @@ async def verify_pending(request: Request, limit: int = 200):
     auto_resolved = 0
     updated_counts = 0
     errors = 0
+    call_checked = 0
+    call_promoted = 0
+    call_auto_resolved = 0
+    call_updated_counts = 0
+    call_errors = 0
 
     for r in rows:
         checked += 1
@@ -1596,6 +1626,85 @@ async def verify_pending(request: Request, limit: int = 200):
         promoted += 1
         conn2.close()
 
+    for r in call_rows:
+        call_checked += 1
+        issue_id = r["id"]
+        conv_id = r["conversation_id"]
+        contact_id = r["contact_id"]
+        phone = r["phone"]
+
+        if not conv_id:
+            try:
+                conv_id = await ghl_find_conversation_id_for_contact(contact_id, phone)
+            except Exception:
+                conv_id = None
+
+        msgs: List[Dict[str, Any]] = []
+        if conv_id:
+            try:
+                msgs = await ghl_list_messages(conv_id, limit=50)
+            except HTTPException:
+                call_errors += 1
+                continue
+
+        created = _parse_iso_dt(r["created_ts"])
+        created_utc: Optional[dt.datetime] = None
+        if created is not None:
+            try:
+                created_utc = created.astimezone(dt.timezone.utc) if created.tzinfo else created.replace(
+                    tzinfo=ZoneInfo(TZ_NAME)
+                ).astimezone(dt.timezone.utc)
+            except Exception:
+                created_utc = None
+
+        outbound_after = False
+        out_count = 0
+
+        for m in msgs:
+            if _msg_is_staff_outbound(m):
+                out_count += 1
+                if created_utc is None:
+                    continue
+                mts = _msg_ts(m)
+                if mts is None:
+                    continue
+                try:
+                    if mts.astimezone(dt.timezone.utc) > created_utc:
+                        outbound_after = True
+                except Exception:
+                    pass
+
+        conn2 = db()
+        if conv_id and conv_id != r["conversation_id"]:
+            conn2.execute("UPDATE issues SET conversation_id=? WHERE id=?", (conv_id, issue_id))
+            conn2.commit()
+
+        prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
+        if out_count != prev_out:
+            conn2.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
+            conn2.commit()
+            call_updated_counts += 1
+
+        if outbound_after:
+            conn2.execute("""
+                UPDATE issues
+                SET status='RESOLVED', resolved_ts=?
+                WHERE id=? AND status='PENDING'
+            """, (now_iso, issue_id))
+            conn2.commit()
+            call_auto_resolved += 1
+            conn2.close()
+            continue
+
+        conn2.execute("""
+            UPDATE issues
+            SET status='OPEN'
+            WHERE id=? AND status='PENDING'
+        """, (issue_id,))
+        conn2.commit()
+        call_promoted += 1
+        conn2.close()
+
     return {
         "job": "verify_pending",
         "checked": checked,
@@ -1603,6 +1712,11 @@ async def verify_pending(request: Request, limit: int = 200):
         "auto_resolved": auto_resolved,
         "updated_counts": updated_counts,
         "errors": errors,
+        "call_checked": call_checked,
+        "call_promoted_open": call_promoted,
+        "call_auto_resolved": call_auto_resolved,
+        "call_updated_counts": call_updated_counts,
+        "call_errors": call_errors,
     }
 
 
