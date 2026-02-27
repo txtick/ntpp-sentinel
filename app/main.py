@@ -1566,6 +1566,15 @@ def _msg_direction(m: Dict[str, Any]) -> str:
         return v.lower()
     return ""
 
+def _msg_text(m: Dict[str, Any]) -> str:
+    if not isinstance(m, dict):
+        return ""
+    for k in ("body", "message", "text", "content"):
+        v = m.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return ""
+
 def _internal_user_ids() -> set:
     raw = os.getenv("INTERNAL_USER_IDS", "").strip()
     if not raw:
@@ -1669,6 +1678,8 @@ async def poll_resolver(request: Request, limit: int = 200):
         out_count = 0
         latest_staff_ts: Optional[dt.datetime] = None
         latest_staff_uid: Optional[str] = None
+        latest_customer_inbound_ts: Optional[dt.datetime] = None
+        latest_customer_inbound_text: str = ""
 
         for m in msgs:
             if _msg_is_staff_outbound(m):
@@ -1855,6 +1866,35 @@ async def verify_pending(request: Request, limit: int = 200):
                             outbound_after = True
                     except Exception:
                         pass
+            else:
+                direction = _msg_direction(m)
+                if direction == "inbound":
+                    mts_in = _msg_ts(m)
+                    if mts_in is not None and (
+                        latest_customer_inbound_ts is None or mts_in > latest_customer_inbound_ts
+                    ):
+                        latest_customer_inbound_ts = mts_in
+                        latest_customer_inbound_text = _msg_text(m)
+
+        ack_closeout_after_staff = False
+        if (
+            ACK_CLOSE_ENABLED
+            and latest_staff_ts is not None
+            and latest_customer_inbound_ts is not None
+            and latest_customer_inbound_ts > latest_staff_ts
+            and _is_ack_closeout(latest_customer_inbound_text)
+        ):
+            try:
+                staff_local = latest_staff_ts.astimezone(ZoneInfo(TZ_NAME))
+                inbound_local = latest_customer_inbound_ts.astimezone(ZoneInfo(TZ_NAME))
+                if ACK_CLOSE_WINDOW_MODE == "eod":
+                    window_end = _business_day_end_for(staff_local)
+                    ack_closeout_after_staff = (inbound_local >= staff_local) and (inbound_local <= window_end)
+                else:
+                    delta = inbound_local - staff_local
+                    ack_closeout_after_staff = 0 <= delta.total_seconds() <= (ACK_CLOSE_WINDOW_HOURS * 3600.0)
+            except Exception:
+                ack_closeout_after_staff = False
 
         conn2 = db()
         if conv_id != r["conversation_id"]:
@@ -1867,7 +1907,7 @@ async def verify_pending(request: Request, limit: int = 200):
             conn2.commit()
             updated_counts += 1
 
-        if outbound_after:
+        if outbound_after or ack_closeout_after_staff:
             conn2.execute("""
                 UPDATE issues
                 SET status='RESOLVED', resolved_ts=?
@@ -1879,7 +1919,7 @@ async def verify_pending(request: Request, limit: int = 200):
                 "sms.auto_resolved",
                 issue_id=issue_id,
                 conversation_id=conv_id,
-                via="verify_pending",
+                via=("verify_pending_ack_closeout" if ack_closeout_after_staff else "verify_pending"),
             )
             conn2.close()
             continue
