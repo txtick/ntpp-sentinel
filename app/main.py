@@ -1361,6 +1361,31 @@ def _msg_direction(m: Dict[str, Any]) -> str:
         return v.lower()
     return ""
 
+def _internal_user_ids() -> set:
+    raw = os.getenv("INTERNAL_USER_IDS", "").strip()
+    if not raw:
+        return set()
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+def _msg_is_staff_outbound(m: Dict[str, Any]) -> bool:
+    """
+    Returns True only for a real staff reply:
+      - direction == outbound
+      - userId is present (excludes workflow automation which has no userId)
+      - userId is in INTERNAL_USER_IDS allowlist, if that env var is set
+    Loose mode (INTERNAL_USER_IDS unset): any userId resolves.
+    Strict mode (INTERNAL_USER_IDS set): only listed user IDs resolve.
+    """
+    if not isinstance(m, dict):
+        return False
+    if _msg_direction(m) != "outbound":
+        return False
+    uid = m.get("userId")
+    if not uid:
+        return False
+    allow = _internal_user_ids()
+    return (not allow) or (uid in allow)
+
 
 def _set_issue_status(issue_id: int, status: str) -> None:
     conn = db()
@@ -1438,21 +1463,20 @@ async def poll_resolver(request: Request, limit: int = 200):
         out_count = 0
 
         for m in msgs:
-            d = _msg_direction(m)
-            if d == "outbound":
+            if _msg_is_staff_outbound(m):
                 out_count += 1
 
-            if fi is not None and d == "outbound":
-                mts = _msg_ts(m)
-                if mts is None:
-                    continue
-                try:
-                    # compare as UTC
-                    fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
-                    if mts.astimezone(dt.timezone.utc) > fi_utc:
-                        outbound_after = True
-                except Exception:
-                    pass
+                if fi is not None:
+                    mts = _msg_ts(m)
+                    if mts is None:
+                        continue
+                    try:
+                        # compare as UTC
+                        fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
+                        if mts.astimezone(dt.timezone.utc) > fi_utc:
+                            outbound_after = True
+                    except Exception:
+                        pass
 
         conn2 = db()
         prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
@@ -1530,20 +1554,19 @@ async def verify_pending(request: Request, limit: int = 200):
         out_count = 0
 
         for m in msgs:
-            d = _msg_direction(m)
-            if d == "outbound":
+            if _msg_is_staff_outbound(m):
                 out_count += 1
 
-            if fi is not None and d == "outbound":
-                mts = _msg_ts(m)
-                if mts is None:
-                    continue
-                try:
-                    fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
-                    if mts.astimezone(dt.timezone.utc) > fi_utc:
-                        outbound_after = True
-                except Exception:
-                    pass
+                if fi is not None:
+                    mts = _msg_ts(m)
+                    if mts is None:
+                        continue
+                    try:
+                        fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
+                        if mts.astimezone(dt.timezone.utc) > fi_utc:
+                            outbound_after = True
+                    except Exception:
+                        pass
 
         conn2 = db()
 
