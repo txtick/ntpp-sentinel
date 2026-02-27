@@ -225,6 +225,15 @@ _ACK_PHRASES = {
     "cancel", "cancelled", "nevermind", "never mind",
 }
 
+_ACK_REACTION_PREFIXES = (
+    "liked ",
+    "loved ",
+    "disliked ",
+    "laughed at ",
+    "emphasized ",
+    "questioned ",
+)
+
 def _normalize_text_for_match(s: str) -> str:
     t = (s or "").strip().lower()
     t = re.sub(r"[\r\n\t]+", " ", t)
@@ -247,6 +256,9 @@ def _is_ack_closeout(text: Optional[str]) -> bool:
     if not t:
         return False
     if t in _ACK_PHRASES:
+        return True
+    # iMessage-style reaction/tapback text (e.g., "Liked “Sounds good”")
+    if any(t.startswith(p) for p in _ACK_REACTION_PREFIXES):
         return True
     # common short variants
     if t.startswith("fixed it") or t.endswith("fixed it"):
