@@ -1746,11 +1746,10 @@ async def verify_pending(request: Request, limit: int = 200):
 
     conn = db()
     rows = conn.execute("""
-        SELECT id, conversation_id, first_inbound_ts, due_ts, outbound_count
+        SELECT id, contact_id, phone, conversation_id, first_inbound_ts, due_ts, outbound_count
         FROM issues
         WHERE status='PENDING'
           AND issue_type='SMS'
-          AND conversation_id IS NOT NULL
           AND due_ts <= ?
         ORDER BY due_ts ASC
         LIMIT ?
@@ -1780,8 +1779,32 @@ async def verify_pending(request: Request, limit: int = 200):
     for r in rows:
         checked += 1
         issue_id = r["id"]
+        contact_id = r["contact_id"]
+        phone = r["phone"]
         conv_id = r["conversation_id"]
         if not conv_id:
+            try:
+                conv_id = await ghl_find_conversation_id_for_contact(contact_id, phone)
+            except Exception:
+                conv_id = None
+
+        if not conv_id:
+            conn2 = db()
+            conn2.execute("""
+                UPDATE issues
+                SET status='OPEN'
+                WHERE id=? AND status='PENDING'
+            """, (issue_id,))
+            conn2.commit()
+            conn2.close()
+            promoted += 1
+            _flow_log(
+                "sms.promoted_open",
+                issue_id=issue_id,
+                contact_id=contact_id,
+                conversation_id=None,
+                via="verify_pending_no_conversation",
+            )
             continue
 
         try:
@@ -1822,6 +1845,9 @@ async def verify_pending(request: Request, limit: int = 200):
                         pass
 
         conn2 = db()
+        if conv_id != r["conversation_id"]:
+            conn2.execute("UPDATE issues SET conversation_id=? WHERE id=?", (conv_id, issue_id))
+            conn2.commit()
 
         prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
         if out_count != prev_out:
