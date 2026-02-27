@@ -14,7 +14,6 @@ TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
 GHL_APP_BASE = os.getenv("GHL_APP_BASE", "https://app.gohighlevel.com")
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "")
-GHL_CONVERSATION_LINK_TEMPLATE = os.getenv("GHL_CONVERSATION_LINK_TEMPLATE", "").strip()
 
 def _parse_hhmm(value: str, fallback_hour: int, fallback_minute: int) -> Tuple[int, int]:
     s = (value or "").strip()
@@ -401,18 +400,7 @@ def _fmt_as_of_local(d: dt.datetime) -> str:
     return d.strftime("%-I:%M%p").lower() + " CT"  # e.g. "1:01p CT"
 
 def ghl_conversation_link(conversation_id: Optional[str]) -> Optional[str]:
-    if not conversation_id:
-        return None
-    if GHL_CONVERSATION_LINK_TEMPLATE:
-        try:
-            return GHL_CONVERSATION_LINK_TEMPLATE.format(
-                conversation_id=conversation_id,
-                location_id=GHL_LOCATION_ID or "",
-            )
-        except Exception:
-            # fall through to web URL if template is invalid
-            pass
-    if not GHL_LOCATION_ID:
+    if not conversation_id or not GHL_LOCATION_ID:
         return None
     return f"{GHL_APP_BASE}/v2/location/{GHL_LOCATION_ID}/conversations/conversations/{conversation_id}"
 
