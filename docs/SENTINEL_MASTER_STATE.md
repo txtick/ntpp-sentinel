@@ -1,371 +1,225 @@
-Sentinel Master State — NTX Pool Pros
+## Sentinel Master State — NTX Pool Pros (Updated February 2026)
 
-Repo: https://github.com/txtick/ntpp-sentinel
+Repo: `https://github.com/txtick/ntpp-sentinel`  
+Public URL: `https://sentinel.northtexaspoolpros.com`  
+Timezone: `America/Chicago`
 
-Public URL: https://sentinel.northtexaspoolpros.com
+### 1. Purpose
 
-Timezone: America/Chicago
-Stack: FastAPI + Uvicorn + Docker Compose + Caddy + SQLite + in-container cron
+Sentinel ingests GoHighLevel webhooks and maintains deterministic issue tracking for customer communication follow-up.
 
-1. Purpose
+Core outcomes:
+- Tracks `SMS` and `CALL` issues.
+- Applies business-hour SLA timing.
+- Auto-resolves when valid employee response is detected.
+- Sends manager summaries.
+- Sends one-time real-time SLA breach alerts.
 
-Sentinel is an automation/orchestration service for NTX Pool Pros.
+### 2. Runtime Architecture
 
-It ingests GoHighLevel (GHL) webhooks and produces:
+- App: FastAPI + Uvicorn in container `ntpp-sentinel`
+- Reverse proxy: Caddy in container `ntpp-caddy`
+- Data: SQLite at `/data/sentinel.db` (host mount `./data`)
+- Logs: `/logs/cron.log` (host mount `./logs`)
+- Scheduler: in-container cron, generated from `.env` at startup
 
-• Deterministic CALL + SMS issues
-• SLA tracking (business hours aware)
-• Automated resolution detection
-• Manager summary SMS notifications
-• Watermark-based “resolved since last summary” tracking
+### 3. Key Endpoints
 
-The system is deterministic by design. No AI logic is required for core issue tracking.
+Webhooks:
+- `POST /webhook/ghl`
+- `POST /webhook/ghl/inbound_sms`
+- `POST /webhook/ghl/unanswered_call`
 
-2. Deployment Architecture
+Jobs:
+- `POST /jobs/poll_resolver`
+- `POST /jobs/verify_pending`
+- `POST /jobs/send_summary?slot=morning|midday|afternoon&dry_run=0|1`
+- `POST /jobs/escalations?dry_run=0|1&limit=200`
 
-Docker Compose runs two services:
+Health:
+- `GET /health`
 
-sentinel
+Auth for all protected routes:
+- Header `X-NTPP-Secret: <WEBHOOK_SECRET>` (or `?secret=` fallback)
 
-FastAPI app
+### 4. Issue Lifecycle (Current)
 
-Exposes port 8000 internally
+Statuses:
+- `PENDING`
+- `OPEN`
+- `RESOLVED`
+- `SPAM`
 
-Runs cron inside container
+SMS flow:
+- Customer inbound generally creates/updates `PENDING`.
+- `verify_pending` processes due `PENDING SMS`:
+  - Resolves if staff outbound exists after first inbound, or
+  - Resolves if ack-closeout is detected after staff reply, or
+  - Resolves if optional AI gate confidently says no follow-up needed, or
+  - Promotes to `OPEN`.
+- If `conversation_id` is missing for due `PENDING SMS`, verifier re-attempts lookup. If still missing, it promotes to `OPEN` (no stuck pending).
 
-caddy
+CALL flow:
+- Controlled signal: `voicemail_route=tech_sentinel`.
+- Creates `PENDING CALL` with `due_ts`.
+- `verify_pending` resolves if valid staff outbound is detected after creation, else promotes to `OPEN`.
 
-Reverse proxy
+### 5. Auto-Resolve Rules
 
-Terminates TLS
+Staff reply detection is strict:
+- Outbound message must include `userId`.
+- `userId` must be in `INTERNAL_USER_IDS`.
+- Automation messages without `userId` do not resolve issues.
 
-Routes sentinel.northtexaspoolpros.com → sentinel:8000
+### 6. False-Positive Controls
 
-Ports 80 and 443 exposed publicly
+Internal-thread suppression:
+- `INTERNAL_REPLY_GRACE_HOURS` suppresses customer replies after internal-initiated outbound thread activity.
 
-Volumes:
+Ack-closeout suppression:
+- Detects short acknowledgement/fixed-it style customer replies.
+- Includes tapback/reaction prefixes like `liked`, `loved`, `laughed at`, etc.
+- Configurable by:
+  - `ACK_CLOSE_ENABLED`
+  - `ACK_CLOSE_WINDOW_MODE` (`eod` or `hours`)
+  - `ACK_CLOSE_WINDOW_HOURS`
+  - `ACK_CLOSE_MAX_LEN`
 
-./data → /data (SQLite database)
-./logs → /logs (cron logs)
+### 7. Optional AI Follow-Up Gate
 
-Database file:
-data/sentinel.db
+AI gate is optional and disabled by default (`AI_GATE_ENABLED=0`).
 
-3. Environment Variables (.env)
+When enabled, for due `PENDING SMS` not already resolved by deterministic rules:
+- Classifies whether follow-up is needed.
+- Suppresses escalation only for confident `NO` (`AI_GATE_SUPPRESS_NO_CONFIDENCE` threshold).
+- Fail-open behavior on errors (defaults to follow-up needed).
 
-Required:
+Operational safeguards:
+- Per-run AI budget and cap:
+  - `AI_GATE_MAX_ISSUES_PER_RUN`
+  - `AI_GATE_RUN_BUDGET_SECONDS`
+- Request timeout:
+  - `AI_GATE_TIMEOUT_SECONDS`
+- PII redaction in AI transcript:
+  - `AI_GATE_REDACT_PII`
+- Caches AI decisions by conversation message watermark in `conversation_ai_gate`.
+- Writes AI suppression audit fields into issue `meta`.
 
-WEBHOOK_SECRET=shared_secret_value
-GHL_TOKEN=leadconnector_private_token
-GHL_VERSION=2021-07-28
-MANAGER_CONTACT_IDS=id1,id2,id3
+### 8. Summaries and Escalations
 
-Recommended:
+Scheduled summaries:
+- Morning, Midday, Afternoon slots.
+- Includes overdue calls/texts and "Resolved since last summary".
+- Resolved section display capped to 5 items.
+- Watermark now uses global key `last_summary_ts` (with slot-key fallback compatibility).
 
-GHL_BASE_URL=https://services.leadconnectorhq.com
+Real-time escalations:
+- `jobs/escalations` sends one-time alert for newly breached `OPEN` issues (`due_ts <= now` and `breach_notified_ts IS NULL`).
+- Marks `breach_notified_ts` after successful send.
+- Breached issues still appear in regular summary until resolved.
 
-TIMEZONE=America/Chicago
-DB_PATH=/data/sentinel.db
-SUMMARY_MAX_ITEMS_PER_SECTION=8
+### 9. Environment Variables (Current)
 
-Important:
-MANAGER_CONTACT_IDS must be a comma-separated list of valid GHL contact IDs or summary SMS will not send.
+Primary:
+- `WEBHOOK_SECRET`
+- `GHL_TOKEN`
+- `GHL_LOCATION_ID`
+- `MANAGER_CONTACT_IDS`
+- `INTERNAL_CONTACT_IDS`
+- `INTERNAL_USER_IDS`
 
-4. Authentication
-
-All webhooks and job endpoints require authentication.
-
-Either:
-
-Header:
-X-NTPP-Secret: <WEBHOOK_SECRET>
-
-OR
-
-Query param:
-?secret=<WEBHOOK_SECRET>
-
-5. Webhooks
-Inbound SMS
-
-POST /webhook/ghl/inbound_sms
+Timing:
+- `TIMEZONE`
+- `BUSINESS_HOURS_START`
+- `BUSINESS_HOURS_END`
+- `SMS_SLA_HOURS`
+- `CALL_SLA_HOURS`
 
 Behavior:
+- `INTERNAL_REPLY_GRACE_HOURS`
+- `ACK_CLOSE_*`
+- `FLOW_LOG_ENABLED`
 
-• Ignores outbound messages
-• If inbound from customer:
+AI:
+- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
+- `AI_GATE_*`
 
-Creates OPEN SMS issue if none exists for conversation
+Cron schedule generation:
+- `CRON_DOW`
+- `CRON_MORNING_HOUR`
+- `CRON_MIDDAY_HOUR`
+- `CRON_AFTERNOON_HOUR`
+- `CRON_BUSINESS_HOURS`
+- `CRON_BUSINESS_END_HOUR`
+- `CRON_ESCALATIONS_EVERY_MINUTES`
+- `CRON_POLL_RESOLVER_EVERY_MINUTES`
+- `CRON_VERIFY_PENDING_EVERY_MINUTES`
 
-SLA = 2 business hours
+### 10. Cron Model (Now Env-Driven)
 
-Stores:
-contact_id
-phone
-conversation_id
-first_inbound_ts
-last_inbound_ts
-inbound_count
-meta.contact_name (if available)
+Static `app/cron/crontab` is no longer authoritative at runtime.
 
-Subsequent inbound messages:
-update inbound_count + last_inbound_ts
-DO NOT reset due_ts
+Runtime flow:
+- `/app/start.sh` runs on container start.
+- `/app/cron/render-crontab.sh` builds `crontab.generated` from env.
+- Generated crontab is installed (`crontab -l` is source of truth).
 
-• Internal “SENTINEL ” commands:
+### 11. Logging
 
-OPEN
+Raw event storage:
+- Incoming webhook payloads are persisted in `raw_events`.
 
-RESOLVE
+Operational flow logs:
+- `FLOW ...` single-line JSON logs show key transitions (`issue_created`, `promoted_open`, `auto_resolved`, `ignored_*`, `escalations.sent`, `ai_gate.decision`).
+- Toggle: `FLOW_LOG_ENABLED`.
 
-SPAM
+### 12. Database Tables (Important)
 
-NOTE
+- `issues` (core state)
+- `raw_events` (ingested payloads)
+- `spam_phones` (suppression)
+- `conversation_state` (internal outbound markers)
+- `kv_store` (summary watermarks)
+- `conversation_ai_gate` (AI cache)
 
-LIST
+Notable `issues` fields:
+- `status`, `created_ts`, `due_ts`, `resolved_ts`
+- `conversation_id`, `first_inbound_ts`, `last_inbound_ts`
+- `inbound_count`, `outbound_count`
+- `breach_notified_ts`
+- `meta` (includes notes and optional AI suppression audit values)
 
-Unanswered Call
+### 13. Practical Verification Commands
 
-POST /webhook/ghl/unanswered_call
+Current active crontab:
+```bash
+docker exec -it ntpp-sentinel sh -lc 'crontab -l'
+```
 
-Creates deterministic CALL issue only when voicemail_route=tech_sentinel signal is present.
+Tail cron job activity:
+```bash
+tail -f /opt/ntpp-sentinel/logs/cron.log
+```
 
-SLA: 2 business hours.
-
-6. Jobs
-poll_resolver
-
-POST /jobs/poll_resolver
-
-Purpose:
-
-• Looks at open issues
-• Queries GHL conversation history
-• Detects outbound manager replies
-• Marks issue RESOLVED
-• Sets resolved_ts
-
-Manual trigger example:
-
-curl -X POST https://sentinel.northtexaspoolpros.com/jobs/poll_resolver
-
--H "X-NTPP-Secret: <WEBHOOK_SECRET>"
-
-send_summary
-
-POST /jobs/send_summary?slot=morning|midday|afternoon&dry_run=0|1
-
-Slots:
-morning
-midday
-afternoon
-
-Dry run (no SMS sent):
-
-curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1
+List active workload:
+```bash
+sqlite3 -header -column /opt/ntpp-sentinel/data/sentinel.db "
+SELECT id, issue_type, status, contact_name, phone, due_ts
+FROM issues
+WHERE status IN ('PENDING','OPEN')
+ORDER BY due_ts ASC;
 "
--H "X-NTPP-Secret: <WEBHOOK_SECRET>"
-
-Live send:
-
-curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning
-"
--H "X-NTPP-Secret: <WEBHOOK_SECRET>"
-
-Summary format includes:
-
-• Overdue Calls count
-• Overdue Texts count
-• Calls section
-• Texts section
-• “Resolved since last summary” section
-• Reply command footer
-
-Watermark logic ensures resolved items appear only once.
-
-escalations
-
-POST /jobs/escalations
-
-Currently placeholder / future enhancement.
-
-7. Cron
-
-Cron runs inside sentinel container.
-
-Script:
-app/cron/cron.sh
-
-Default schedule:
-
-08:00 → morning summary
-11:00 → midday summary
-15:00 → afternoon summary
-
-poll_resolver runs periodically during business hours.
-
-Cron logs:
-
-Host:
-logs/cron.log
-
-View:
-tail -f logs/cron.log
-
-Cron loads environment from container process environment, not shell profiles.
-
-8. Database Model
-
-Table: issues
-
-Key fields:
-
-id
-issue_type (SMS or CALL)
-contact_id
-phone
-conversation_id
-created_ts
-due_ts
-resolved_ts
-status (OPEN, RESOLVED, SPAM)
-first_inbound_ts
-last_inbound_ts
-inbound_count
-outbound_count
-meta (JSON)
-
-Table: kv_store
-
-Used for watermark tracking per summary slot.
-
-9. Verified GHL Send Contract
-
-Endpoint:
-
-POST /conversations/messages
-
-Payload:
-
-{
-"type": "SMS",
-"message": "text here",
-"conversationId": "conversation_id",
-"contactId": "contact_id"
-}
-
-Headers:
-
-Authorization: Bearer <GHL_TOKEN>
-Version: 2021-07-28
-
-type must be "SMS"
-key must be "message"
-
-10. Smoke Test Checklist
-
-Inbound SMS test:
-
-Send text from customer
-
-Verify OPEN issue created in DB
-
-Resolver test:
-
-Manager replies in GHL
-
-Run poll_resolver
-
-Verify issue marked RESOLVED
-
-Summary test:
-
-Run dry_run=1
-
-Confirm formatted output
-
-Run live send
-
-Confirm SMS delivered
-
-Resolve an issue
-
-Run summary again
-
-Confirm appears in “Resolved since last summary” once
-
-11. Common Failure Causes
-
-No summary SMS received:
-
-• MANAGER_CONTACT_IDS empty
-• dry_run=1 used
-• GHL_TOKEN invalid
-• Cron not firing
-• WEBHOOK_SECRET mismatch
-
-Inbound SMS failing:
-
-• Missing DB connection in handler
-• Invalid auth
-• Unexpected payload shape
-
-Cron error “WEBHOOK_SECRET is not set”:
-
-• cron.sh not loading environment
-• container rebuilt without env
-
-12. Useful DB Queries
-
-Recent issues:
-
-sqlite3 data/sentinel.db "select id, issue_type, status, phone, contact_id from issues order by id desc limit 20;"
-
-Open issues:
-
-sqlite3 data/sentinel.db "select id, issue_type, phone, due_ts from issues where status='OPEN';"
-
-Watermarks:
-
-sqlite3 data/sentinel.db "select * from kv_store;"
-
-13. Deploy Workflow
-
-Local:
-
-git add -A
-git commit -m "message"
-git push origin main
-
-Server deploy:
-
-ssh kevin@sentinel '
-cd /opt/ntpp-sentinel &&
-git checkout main &&
-git pull --ff-only &&
-docker compose up -d --build
-'
-
-14. Current System Status (as of latest session)
-
-• Inbound SMS webhook working
-• contact_name stored in meta
-• Summary display updated to show names
-• Resolver job functioning
-• Cron environment loading fixed
-• Git workflow corrected
-• Live summary send pending verification
-
-15. Next Logical Steps
-
-Confirm manual live summary send works
-
-Confirm cron-delivered summaries arrive on schedule
-
-Add stronger outbound GHL send logging
-
-Optional: backfill contact_name for old issues
-
-Implement escalation policy (e.g., 24 business hours)
-
-Add lightweight admin endpoint for system diagnostics
+```
+
+Force verifier:
+```bash
+curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/verify_pending" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
+
+Dry-run summary:
+```bash
+curl -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
