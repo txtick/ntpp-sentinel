@@ -14,9 +14,9 @@ COPY . /app
 
 RUN mkdir -p /logs /data && touch /logs/cron.log
 
-# Install cron schedule
-RUN chmod +x /app/cron/cron.sh && crontab /app/cron/crontab
+# Install runtime scripts
+RUN chmod +x /app/cron/cron.sh /app/cron/render-crontab.sh /app/start.sh
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["/bin/sh", "-c", "/etc/init.d/cron start && exec uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["/app/start.sh"]

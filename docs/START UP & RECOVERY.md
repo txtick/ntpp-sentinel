@@ -97,6 +97,28 @@ WEBHOOK_SECRET is not set
 - `cron.sh` is not loading environment correctly  
 - Rebuild container.
 
+### Cron Schedule Is Now `.env`-Driven
+
+Cron is generated at container startup from `.env` values.
+
+Key variables:
+
+- `CRON_DOW` (default `1-5`)
+- `CRON_MORNING_HOUR` (default `8`)
+- `CRON_MIDDAY_HOUR` (default `11`)
+- `CRON_AFTERNOON_HOUR` (default `15`)
+- `CRON_BUSINESS_HOURS` (default `8-16`)
+- `CRON_BUSINESS_END_HOUR` (default `17`)
+- `CRON_ESCALATIONS_EVERY_MINUTES` (default `1`)
+- `CRON_POLL_RESOLVER_EVERY_MINUTES` (default `15`)
+- `CRON_VERIFY_PENDING_EVERY_MINUTES` (default `5`)
+
+Verify active schedule inside container:
+
+```bash
+docker exec -it ntpp-sentinel sh -lc 'crontab -l'
+```
+
 ---
 
 ## 4. Manual Job Testing (Always Test Manually First)
