@@ -39,7 +39,7 @@ LIMIT ${LIMIT_ISSUES};
 
 echo
 echo "=== 3) Recent cron activity ==="
-tail -n 120 /opt/ntpp-sentinel/logs/cron.log
+tail -n 60 /opt/ntpp-sentinel/logs/cron.log
 
 echo
 echo "=== 4) Active runtime crontab ==="
