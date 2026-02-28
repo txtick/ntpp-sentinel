@@ -1,16 +1,14 @@
-version: "3.9"
-
 services:
-  app:
+  sentinel:
     build: ./app
-    container_name: ntpp-app
+    container_name: ntpp-sentinel
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: .env
+    expose:
+      - "8000"
     volumes:
-      - ntpp-data:/data
-    ports:
-      - "8000:8000"
+      - ./data:/data
+      - ./logs:/logs
     logging:
       driver: "json-file"
       options:
@@ -26,8 +24,8 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy-data:/data
-      - caddy-config:/config
+      - caddy_data:/data
+      - caddy_config:/config
     logging:
       driver: "json-file"
       options:
@@ -35,6 +33,5 @@ services:
         max-file: "5"
 
 volumes:
-  ntpp-data:
-  caddy-data:
-  caddy-config:
+  caddy_data:
+  caddy_config:
