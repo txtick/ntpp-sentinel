@@ -46,6 +46,19 @@ Expected health:
 
 Use these to check queue health and current state.
 
+Saved trace script (recommended):
+
+```bash
+cd /opt/ntpp-sentinel
+./trace.sh +12146323629
+```
+
+Optional overrides:
+
+```bash
+PHONE=+12146323629 BASE=https://sentinel.northtexaspoolpros.com LOG_TAIL=800 ./trace.sh
+```
+
 All active queue items:
 
 ```bash
