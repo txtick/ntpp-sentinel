@@ -14,7 +14,7 @@ If a call or text goes past the response time limit, Sentinel sends a manager al
 - The same issue can still appear later in summary messages until it is resolved.
 
 ### 2. Scheduled summaries
-You get summary texts on weekdays at:
+You get scheduled summary texts (timing set by admin), typically:
 
 - `8:00am`
 - `11:00am`
@@ -24,7 +24,7 @@ Each summary shows overdue calls/texts and what was resolved since the last summ
 
 ## Response-time window (SLA)
 
-- Business hours are `Monday-Friday, 8:00am-5:00pm` (America/Chicago).
+- Business hours are configured by admin (for example `8:00am-5:00pm`).
 - Response timers run in business hours.
 
 ## When Sentinel auto-resolves an issue

@@ -1,123 +1,77 @@
 # Sentinel Architecture
 
-Sentinel is a deterministic automation layer built on top of GoHighLevel.
+Sentinel is an operations automation service on top of GoHighLevel (GHL) for missed-call/text follow-up control.
 
----
+Reference state doc:
+- `docs/SENTINEL_MASTER_STATE.md` is the canonical source for current runtime behavior.
 
-# 1) System Overview
+## 1) System Overview
 
-External System:
-    GoHighLevel (GHL)
+External system:
+- GoHighLevel (GHL)
 
-Sentinel Responsibilities:
-    - Ingest events
-    - Track issues
-    - Enforce SLA timing
-    - Detect resolution
-    - Notify managers
+Sentinel responsibilities:
+- Ingest webhook events
+- Create/update issue records
+- Apply business-hour SLA timing
+- Detect valid response activity
+- Send manager alerts/summaries
 
----
+## 2) Runtime Components
 
-# 2) Event Flow
+- FastAPI app (`ntpp-sentinel`)
+- SQLite database (`/data/sentinel.db`)
+- Caddy reverse proxy (`ntpp-caddy`)
+- In-container cron (schedule generated from `.env` at startup)
 
-Customer SMS → GHL → Webhook → Sentinel
+## 3) Core Event Flow
 
-Sentinel:
-    - Creates issue
-    - Assigns due_ts
-    - Stores event
+Inbound SMS:
+- `POST /webhook/ghl/inbound_sms`
+- Creates/updates `PENDING` SMS issues
+- Suppresses known false-positive patterns (internal-thread + ack closeout)
 
-Manager reply → GHL
-Sentinel poll_resolver:
-    - Detects outbound reply
-    - Marks issue RESOLVED
+Missed/unanswered call:
+- `POST /webhook/ghl/unanswered_call`
+- Controlled by `voicemail_route=tech_sentinel`
+- Creates `PENDING` CALL issues
 
-Scheduled job:
-    - send_summary
-    - Sends manager summary SMS
+Verification/resolution:
+- `POST /jobs/poll_resolver`
+- `POST /jobs/verify_pending`
+- Detects employee outbound and promotes/resolves issues
 
----
+Notifications:
+- `POST /jobs/escalations` (one-time breach alerts)
+- `POST /jobs/send_summary` (manager rollups)
 
-# 3) Core Tables
+## 4) Data Model (Key Tables)
 
-## issues
+`issues`:
+- `id`, `issue_type`, `status`
+- `contact_id`, `phone`, `conversation_id`
+- `created_ts`, `due_ts`, `resolved_ts`
+- `first_inbound_ts`, `last_inbound_ts`
+- `inbound_count`, `outbound_count`
+- `breach_notified_ts`
+- `meta`
 
-Tracks open and resolved issues.
+`raw_events`:
+- Inbound payload archive for debugging/audit
 
-Fields:
-- id
-- type (SMS / CALL)
-- contact_id
-- conversation_id
-- state (OPEN / RESOLVED)
-- created_ts
-- due_ts
-- resolved_ts
+`conversation_state`:
+- Internal outbound markers used by suppression logic
 
----
+`kv_store`:
+- Summary watermarks (`last_summary_ts`, etc.)
 
-## kv_store
+`conversation_ai_gate`:
+- Optional AI gate cache by conversation watermark
 
-Stores watermarks and runtime state.
+## 5) Design Principles
 
-Examples:
-- last_summary_ts_morning
-- last_summary_ts_midday
-- last_summary_ts_afternoon
-
----
-
-## raw_events
-
-Stores inbound webhook payloads for debugging.
-
----
-
-# 4) API Endpoints
-
-Inbound:
-
-    POST /webhook/ghl
-    POST /webhook/ghl/unanswered_call
-
-Internal jobs:
-
-    POST /jobs/poll_resolver
-    POST /jobs/send_summary
-
----
-
-# 5) Design Principles
-
-Sentinel must be:
-
-- Deterministic
-- Idempotent
-- Observable
-- Testable via curl
-- Safe to re-run
-
-Jobs must not cause duplicate actions when retried.
-
----
-
-# 6) Failure Modes
-
-If GHL API fails:
-    - Log error
-    - Do not advance watermark
-    - Allow retry
-
-If database write fails:
-    - Fail fast
-    - Return non-200 response
-
----
-
-# 7) Future Enhancements
-
-- Business-hour SLA logic
-- Per-manager routing
-- Voicemail transcript ingestion
-- Escalation ladder (tiered)
-- Structured logging
+- Deterministic first
+- Fail-open for AI gate (do not suppress on uncertainty)
+- Idempotent/retry-safe jobs
+- Low-noise operator UX
+- Operational observability via concise flow logs

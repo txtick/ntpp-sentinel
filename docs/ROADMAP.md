@@ -2,32 +2,31 @@
 
 ---
 
-# v0.1.x – Stabilization Phase
+# Current State (v0.1.x complete)
 
-Goal:
-Reliable issue creation, resolution detection, and summary sending.
-
-Features:
-- SMS issue creation
-- CALL issue creation
-- poll_resolver job
-- send_summary job
-- Cron scheduling
-- Basic escalation logic
+Delivered:
+- SMS + CALL issue lifecycle with `PENDING/OPEN/RESOLVED/SPAM`
+- Business-hour SLA timing
+- Deterministic resolver jobs (`poll_resolver`, `verify_pending`)
+- Real-time one-time SLA breach alerts
+- Manager summaries with resolved watermark logic
+- False-positive controls (internal-thread suppression + ack closeout)
+- Optional AI follow-up gate with fail-open safeguards
+- Env-driven cron scheduling
 
 ---
 
-# v0.2.x – Operational Intelligence
+# v0.2.x – Operational Hardening
 
 Goal:
-Business-aware SLA handling.
+Increase reliability and observability under real-world traffic.
 
 Planned:
-- Business hours support
-- Weekend exclusion logic
-- Escalation tiers
-- Per-manager routing rules
-- Better SMS summary formatting
+- Modularize `main.py` into focused modules
+- Add tests for parser/ack/verify edge cases
+- Add retry/error-classification policy for GHL/API calls
+- Improve operational dashboards/metrics
+- Add explicit runbook checks for AI gate behavior
 
 ---
 
@@ -38,8 +37,8 @@ AI-assisted decision logic.
 
 Planned:
 - Call transcript parsing
-- SMS intent classification
-- Auto-categorization of issues
+- Better SMS intent classification
+- Auto-categorization/routing hints
 - Priority scoring
 - Suggested reply generation
 
@@ -51,10 +50,10 @@ Goal:
 Fully integrated operational control layer.
 
 Includes:
-- Observability dashboard
-- Structured logs
-- Retry framework
-- Error classification
+- Observability dashboard and alerting
+- Structured event pipeline
+- Hardened retry framework
+- Formal error classification
 - Versioned configuration
 - Multi-location support
 
