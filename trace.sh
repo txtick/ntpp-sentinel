@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Load .env from repo root by default so WEBHOOK_SECRET and other vars
+# are available without manual export.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
 # Usage:
 #   ./trace.sh +12146323629
 #   PHONE=+12146323629 ./trace.sh
@@ -16,6 +27,9 @@ DB="${DB:-/opt/ntpp-sentinel/data/sentinel.db}"
 LIMIT_EVENTS="${LIMIT_EVENTS:-50}"
 LIMIT_ISSUES="${LIMIT_ISSUES:-30}"
 LOG_TAIL="${LOG_TAIL:-500}"
+if [[ -z "${WEBHOOK_SECRET:-}" ]]; then
+  echo "Warning: WEBHOOK_SECRET is empty (set it in .env or export it)."
+fi
 
 echo "=== 1) Raw webhook events for ${PHONE} ==="
 sqlite3 -header -column "$DB" "
