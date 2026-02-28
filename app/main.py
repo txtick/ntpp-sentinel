@@ -38,6 +38,18 @@ if _bh_end_total <= _bh_start_total:
 GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com")
 GHL_TOKEN = os.getenv("GHL_TOKEN", "")  # Private Integration token (Bearer)
 GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28")
+# OpenAI (AI follow-up gate; optional)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+AI_GATE_ENABLED = os.getenv("AI_GATE_ENABLED", "0").lower() in ("1","true","yes","on")
+AI_GATE_MODEL = os.getenv("AI_GATE_MODEL", "gpt-5-mini")
+AI_GATE_SUPPRESS_NO_CONFIDENCE = float(os.getenv("AI_GATE_SUPPRESS_NO_CONFIDENCE", "0.90"))
+AI_GATE_MAX_MESSAGES = int(os.getenv("AI_GATE_MAX_MESSAGES", "10"))
+AI_GATE_GAP_HOURS = float(os.getenv("AI_GATE_GAP_HOURS", "4"))
+AI_GATE_MAX_ISSUES_PER_RUN = int(os.getenv("AI_GATE_MAX_ISSUES_PER_RUN", "20"))
+AI_GATE_RUN_BUDGET_SECONDS = float(os.getenv("AI_GATE_RUN_BUDGET_SECONDS", "20"))
+AI_GATE_TIMEOUT_SECONDS = float(os.getenv("AI_GATE_TIMEOUT_SECONDS", "4"))
+AI_GATE_REDACT_PII = os.getenv("AI_GATE_REDACT_PII", "1").lower() in ("1","true","yes","on")
 
 # Summary recipients (managers only, v1)
 MANAGER_CONTACT_IDS = [
@@ -120,6 +132,23 @@ def ensure_schema() -> None:
         """
     )
 
+    
+
+
+    # AI follow-up gate cache (optional)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_ai_gate (
+            conversation_id TEXT PRIMARY KEY,
+            last_msg_ts TEXT NOT NULL,
+            needs_follow_up TEXT NOT NULL CHECK(needs_follow_up IN ('YES','NO')),
+            confidence REAL NOT NULL,
+            evidence_json TEXT NOT NULL,
+            model TEXT NOT NULL,
+            created_ts TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -173,6 +202,20 @@ def init_db() -> None:
       CREATE TABLE IF NOT EXISTS kv_store (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      )
+    """)
+
+
+    # AI follow-up gate cache (optional)
+    cur.execute("""
+      CREATE TABLE IF NOT EXISTS conversation_ai_gate (
+        conversation_id TEXT PRIMARY KEY,
+        last_msg_ts TEXT NOT NULL,
+        needs_follow_up TEXT NOT NULL CHECK(needs_follow_up IN ('YES','NO')),
+        confidence REAL NOT NULL,
+        evidence_json TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_ts TEXT NOT NULL
       )
     """)
 
@@ -696,6 +739,21 @@ def kv_get(key: str) -> Optional[str]:
 def kv_set(key: str, value: str) -> None:
     conn = db()
     conn.execute("INSERT INTO kv_store(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    conn.commit()
+    conn.close()
+
+def _update_issue_meta(issue_id: int, updates: Dict[str, Any]) -> None:
+    conn = db()
+    row = conn.execute("SELECT meta FROM issues WHERE id=?", (issue_id,)).fetchone()
+    if not row:
+        conn.close()
+        return
+    try:
+        meta = json.loads(row["meta"] or "{}")
+    except Exception:
+        meta = {}
+    meta.update(updates or {})
+    conn.execute("UPDATE issues SET meta=? WHERE id=?", (json.dumps(meta), issue_id))
     conn.commit()
     conn.close()
 
@@ -1678,8 +1736,6 @@ async def poll_resolver(request: Request, limit: int = 200):
         out_count = 0
         latest_staff_ts: Optional[dt.datetime] = None
         latest_staff_uid: Optional[str] = None
-        latest_customer_inbound_ts: Optional[dt.datetime] = None
-        latest_customer_inbound_text: str = ""
 
         for m in msgs:
             if _msg_is_staff_outbound(m):
@@ -1702,16 +1758,6 @@ async def poll_resolver(request: Request, limit: int = 200):
                             outbound_after = True
                     except Exception:
                         pass
-
-        if latest_staff_ts is not None:
-            try:
-                set_last_internal_outbound(
-                    conv_id,
-                    latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
-                    latest_staff_uid or None,
-                )
-            except Exception:
-                pass
 
         if latest_staff_ts is not None:
             try:
@@ -1749,6 +1795,245 @@ async def poll_resolver(request: Request, limit: int = 200):
         conn2.close()
 
     return {"job": "poll_resolver", "checked": checked, "resolved": resolved, "updated_counts": updated_counts}
+
+
+
+# ==========================
+# AI follow-up gate helpers (optional)
+# ==========================
+_AI_GATE_SCHEMA = {
+    "name": "follow_up_gate",
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "needs_follow_up": {"type": "string", "enum": ["YES", "NO"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "evidence": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 3
+            },
+        },
+        "required": ["needs_follow_up", "confidence", "evidence"],
+    },
+}
+
+def _ai_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+def _ai_gate_db_get(conversation_id: str) -> Optional[sqlite3.Row]:
+    conn = db()
+    row = conn.execute(
+        "SELECT * FROM conversation_ai_gate WHERE conversation_id=?",
+        (conversation_id,),
+    ).fetchone()
+    conn.close()
+    return row
+
+def _ai_gate_db_put(conversation_id: str, last_msg_ts: str, result: Dict[str, Any]) -> None:
+    conn = db()
+    conn.execute(
+        '''
+        INSERT INTO conversation_ai_gate
+          (conversation_id, last_msg_ts, needs_follow_up, confidence, evidence_json, model, created_ts)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conversation_id) DO UPDATE SET
+          last_msg_ts=excluded.last_msg_ts,
+          needs_follow_up=excluded.needs_follow_up,
+          confidence=excluded.confidence,
+          evidence_json=excluded.evidence_json,
+          model=excluded.model,
+          created_ts=excluded.created_ts
+        ''',
+        (
+            conversation_id,
+            last_msg_ts,
+            str(result.get("needs_follow_up") or "YES"),
+            float(result.get("confidence") or 0.0),
+            json.dumps(result.get("evidence") or []),
+            AI_GATE_MODEL,
+            _now_local().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+def _select_context_window(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    '''
+    Choose a small, recent slice to avoid mixing multiple mini-conversations.
+
+    Strategy (deterministic):
+      - Walk backwards from newest message
+      - Stop if we hit a long silence gap (AI_GATE_GAP_HOURS)
+      - Also stop once we've included the most recent staff outbound (boundary) AND
+        there is at least one newer message after it (i.e., the customer replied)
+      - Always cap at AI_GATE_MAX_MESSAGES
+    '''
+    items: List[Tuple[dt.datetime, Dict[str, Any]]] = []
+    for m in msgs or []:
+        ts = _msg_ts(m)
+        if ts is None:
+            continue
+        items.append((ts, m))
+    items.sort(key=lambda x: x[0])
+    if not items:
+        return []
+
+    selected: List[Tuple[dt.datetime, Dict[str, Any]]] = []
+    last_ts: Optional[dt.datetime] = None
+    saw_newer_than_staff = False
+
+    for ts, m in reversed(items):
+        if last_ts is not None:
+            gap = (last_ts - ts).total_seconds()
+            if gap >= (AI_GATE_GAP_HOURS * 3600.0):
+                break
+
+        selected.append((ts, m))
+        last_ts = ts
+
+        # boundary: include most recent staff outbound, then stop
+        if _msg_is_staff_outbound(m):
+            if saw_newer_than_staff:
+                break
+        else:
+            saw_newer_than_staff = True
+
+        if len(selected) >= AI_GATE_MAX_MESSAGES:
+            break
+
+    selected.reverse()
+    return [m for _, m in selected]
+
+def _build_ai_transcript(window: List[Dict[str, Any]]) -> str:
+    def _redact_pii(s: str) -> str:
+        t = s or ""
+        if not AI_GATE_REDACT_PII:
+            return t
+        t = re.sub(r"\b[\w.\-+%]+@[\w.\-]+\.[A-Za-z]{2,}\b", "[EMAIL]", t)
+        t = re.sub(r"https?://\S+", "[URL]", t)
+        # lenient phone-like matcher (supports +1, spaces, dashes, parens)
+        t = re.sub(r"\+?\d[\d\-\(\) ]{7,}\d", "[PHONE]", t)
+        return t
+
+    lines: List[str] = []
+    for m in window or []:
+        role = "INTERNAL" if _msg_is_staff_outbound(m) else "CUSTOMER"
+        txt = (_msg_text(m) or "").replace("\n", " ").strip()
+        if not txt:
+            continue
+        txt = _redact_pii(txt)
+        if len(txt) > 500:
+            txt = txt[:500] + "…"
+        lines.append(f"[{role}] {txt}")
+    return "\n".join(lines)
+
+async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    '''
+    Returns {"needs_follow_up":"YES|NO","confidence":float,"evidence":[...]}.
+
+    Fail-open behavior:
+      - If anything goes wrong (missing key, API failure, JSON parse), return YES with low confidence.
+      - We only suppress escalation when we get a confident NO.
+    '''
+    if not AI_GATE_ENABLED:
+        return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["ai gate disabled"]}
+
+    if not OPENAI_API_KEY:
+        return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["missing OPENAI_API_KEY"]}
+
+    window = _select_context_window(msgs)
+    if not window:
+        return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["no messages available"]}
+
+    last_dt = _msg_ts(window[-1])
+    last_msg_ts = last_dt.astimezone(dt.timezone.utc).isoformat() if last_dt else _now_local().astimezone(dt.timezone.utc).isoformat()
+
+    cached = _ai_gate_db_get(conversation_id)
+    if cached and str(cached["last_msg_ts"]) == last_msg_ts:
+        try:
+            return {
+                "needs_follow_up": str(cached["needs_follow_up"]),
+                "confidence": float(cached["confidence"]),
+                "evidence": json.loads(cached["evidence_json"] or "[]"),
+                "cached": True,
+            }
+        except Exception:
+            pass
+
+    transcript = _build_ai_transcript(window)
+    if not (transcript or "").strip():
+        return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["empty transcript"]}
+    sys = (
+        "You are a classifier for a pool service business SMS thread. "
+        "Decide if the business owes a follow-up to the customer. "
+        "Bias toward YES if uncertain (missing a waiting customer is worse than a false alarm). "
+        "Return only valid JSON matching the schema."
+    )
+    user = (
+        "Definitions:\n"
+        "- FOLLOW-UP NEEDED means the customer is waiting on us for an answer, action, or scheduling.\n"
+        "- FOLLOW-UP NOT NEEDED means the thread is resolved or the customer is only acknowledging (thanks/ok/fixed it).\n\n"
+        "Messages (most recent last):\n"
+        f"{transcript}"
+    )
+
+    payload = {
+        "model": AI_GATE_MODEL,
+        "input": [
+            {"role": "system", "content": sys},
+            {"role": "user", "content": user},
+        ],
+        "text": {"format": {"type": "json_schema", "json_schema": _AI_GATE_SCHEMA}},
+        "store": False,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=AI_GATE_TIMEOUT_SECONDS) as client:
+            r = await client.post(f"{OPENAI_BASE_URL}/responses", headers=_ai_headers(), json=payload)
+            if r.status_code >= 400:
+                return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": [f"ai error {r.status_code}"]}
+            data = r.json()
+
+        txt = (data.get("output_text") or "").strip()
+        if not txt:
+            for item in (data.get("output") or []):
+                if item.get("type") == "message":
+                    for part in (item.get("content") or []):
+                        if part.get("type") == "output_text" and part.get("text"):
+                            txt = str(part.get("text") or "").strip()
+                            break
+                if txt:
+                    break
+        if not txt:
+            return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["ai empty response"]}
+
+        result = json.loads(txt)
+        nf = str(result.get("needs_follow_up") or "YES").upper()
+        if nf not in ("YES", "NO"):
+            nf = "YES"
+        conf = float(result.get("confidence") or 0.0)
+        conf = max(0.0, min(1.0, conf))
+        evidence = result.get("evidence") or []
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)]
+        evidence = [str(x)[:200] for x in evidence if str(x).strip()][:3]
+        if not evidence:
+            evidence = ["no evidence"]
+
+        out = {"needs_follow_up": nf, "confidence": conf, "evidence": evidence}
+        try:
+            _ai_gate_db_put(conversation_id, last_msg_ts, out)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["ai exception"]}
 
 
 @app.post("/jobs/verify_pending")
@@ -1798,6 +2083,10 @@ async def verify_pending(request: Request, limit: int = 200):
     call_auto_resolved = 0
     call_updated_counts = 0
     call_errors = 0
+    ai_checked = 0
+    ai_suppressed = 0
+    ai_skipped_budget = 0
+    ai_run_started = dt.datetime.now(tz=dt.timezone.utc)
 
     for r in rows:
         checked += 1
@@ -1895,7 +2184,38 @@ async def verify_pending(request: Request, limit: int = 200):
                     ack_closeout_after_staff = 0 <= delta.total_seconds() <= (ACK_CLOSE_WINDOW_HOURS * 3600.0)
             except Exception:
                 ack_closeout_after_staff = False
+        # AI follow-up gate (optional): run only if deterministic checks did not already resolve
+        ai_suppress = False
+        ai_gate = None
+        if not (outbound_after or ack_closeout_after_staff):
+            elapsed = (dt.datetime.now(tz=dt.timezone.utc) - ai_run_started).total_seconds()
+            if ai_checked >= AI_GATE_MAX_ISSUES_PER_RUN or elapsed >= AI_GATE_RUN_BUDGET_SECONDS:
+                ai_skipped_budget += 1
+            else:
+                ai_checked += 1
+                try:
+                    ai_gate = await ai_gate_classify(conv_id, msgs)
+                    if (
+                        ai_gate.get("needs_follow_up") == "NO"
+                        and float(ai_gate.get("confidence") or 0.0) >= AI_GATE_SUPPRESS_NO_CONFIDENCE
+                    ):
+                        ai_suppress = True
+                        ai_suppressed += 1
+                except Exception:
+                    ai_suppress = False
 
+        if ai_gate is not None:
+            try:
+                _flow_log(
+                    "ai_gate.decision",
+                    issue_id=issue_id,
+                    conversation_id=conv_id,
+                    needs_follow_up=str(ai_gate.get("needs_follow_up")),
+                    confidence=float(ai_gate.get("confidence") or 0.0),
+                    suppressed=bool(ai_suppress),
+                )
+            except Exception:
+                pass
         conn2 = db()
         if conv_id != r["conversation_id"]:
             conn2.execute("UPDATE issues SET conversation_id=? WHERE id=?", (conv_id, issue_id))
@@ -1907,7 +2227,7 @@ async def verify_pending(request: Request, limit: int = 200):
             conn2.commit()
             updated_counts += 1
 
-        if outbound_after or ack_closeout_after_staff:
+        if outbound_after or ack_closeout_after_staff or ai_suppress:
             conn2.execute("""
                 UPDATE issues
                 SET status='RESOLVED', resolved_ts=?
@@ -1915,11 +2235,25 @@ async def verify_pending(request: Request, limit: int = 200):
             """, (now_iso, issue_id))
             conn2.commit()
             auto_resolved += 1
+            if ai_suppress and ai_gate is not None:
+                try:
+                    _update_issue_meta(
+                        issue_id,
+                        {
+                            "ai_gate_needs_follow_up": str(ai_gate.get("needs_follow_up")),
+                            "ai_gate_confidence": float(ai_gate.get("confidence") or 0.0),
+                            "ai_gate_evidence": ai_gate.get("evidence") or [],
+                            "ai_gate_model": AI_GATE_MODEL,
+                            "ai_gate_ts": now_iso,
+                        },
+                    )
+                except Exception:
+                    pass
             _flow_log(
                 "sms.auto_resolved",
                 issue_id=issue_id,
                 conversation_id=conv_id,
-                via=("verify_pending_ack_closeout" if ack_closeout_after_staff else "verify_pending"),
+                via=("verify_pending_ai_gate" if ai_suppress else ("verify_pending_ack_closeout" if ack_closeout_after_staff else "verify_pending")),
             )
             conn2.close()
             continue
@@ -2056,6 +2390,9 @@ async def verify_pending(request: Request, limit: int = 200):
         "call_auto_resolved": call_auto_resolved,
         "call_updated_counts": call_updated_counts,
         "call_errors": call_errors,
+        "ai_checked": ai_checked,
+        "ai_suppressed": ai_suppressed,
+        "ai_skipped_budget": ai_skipped_budget,
     }
 
 
