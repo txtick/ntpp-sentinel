@@ -1736,6 +1736,8 @@ async def poll_resolver(request: Request, limit: int = 200):
         out_count = 0
         latest_staff_ts: Optional[dt.datetime] = None
         latest_staff_uid: Optional[str] = None
+        latest_customer_inbound_ts: Optional[dt.datetime] = None
+        latest_customer_inbound_text: str = ""
 
         for m in msgs:
             if _msg_is_staff_outbound(m):
@@ -2312,6 +2314,11 @@ async def verify_pending(request: Request, limit: int = 200):
         for m in msgs:
             if _msg_is_staff_outbound(m):
                 out_count += 1
+                mts0 = _msg_ts(m)
+                if mts0 is not None:
+                    if latest_staff_ts is None or mts0 > latest_staff_ts:
+                        latest_staff_ts = mts0
+                        latest_staff_uid = str(m.get("userId") or "")
                 if created_utc is None:
                     continue
                 mts = _msg_ts(m)

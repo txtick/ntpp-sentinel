@@ -93,9 +93,9 @@ Recent webhook events for a phone:
 
 ```bash
 sqlite3 -header -column /opt/ntpp-sentinel/data/sentinel.db "
-SELECT id, event_ts, event_type
+SELECT id, received_ts, source
 FROM raw_events
-WHERE body LIKE '%+19403899207%'
+WHERE payload LIKE '%+19403899207%'
 ORDER BY id DESC
 LIMIT 20;
 "
