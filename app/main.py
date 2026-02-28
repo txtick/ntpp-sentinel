@@ -2136,6 +2136,8 @@ async def verify_pending(request: Request, limit: int = 200):
         out_count = 0
         latest_staff_ts: Optional[dt.datetime] = None
         latest_staff_uid: Optional[str] = None
+        latest_customer_inbound_ts: Optional[dt.datetime] = None
+        latest_customer_inbound_text: str = ""
 
         for m in msgs:
             if _msg_is_staff_outbound(m):
