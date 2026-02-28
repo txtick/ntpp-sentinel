@@ -12,14 +12,19 @@ This is the single deploy, startup, recovery, and verification guide.
 
 ## 1. Normal Deploy
 
+Preferred (from server):
+
+```bash
+cd /opt/ntpp-sentinel
+./deploy.sh
+```
+
 From laptop:
 
 ```bash
 ssh kevin@sentinel '
   cd /opt/ntpp-sentinel &&
-  git checkout main &&
-  git pull --ff-only &&
-  docker compose up -d --build
+  ./deploy.sh
 '
 ```
 
