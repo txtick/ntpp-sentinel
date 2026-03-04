@@ -130,6 +130,14 @@ curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/poll_resolver" \
 
 curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/escalations" \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+
+# Raw event retention cleanup (dry-run by default)
+curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/cleanup_raw_events?dry_run=1" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+
+# Execute cleanup (example: keep 30 days)
+curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/cleanup_raw_events?days=30&dry_run=0" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
 Summary test:

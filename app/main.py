@@ -4,11 +4,11 @@ from typing import Any, Dict, Optional, List, Tuple
 import httpx # type: ignore
 import re
 from zoneinfo import ZoneInfo
+from db import db, init_db, ensure_schema, purge_raw_events
 
 # ==========================
 # Config
 # ==========================
-DB_PATH = os.getenv("DB_PATH", "/data/sentinel.db")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
@@ -76,6 +76,7 @@ ACK_CLOSE_MAX_LEN = int(os.getenv("ACK_CLOSE_MAX_LEN", "80"))
 SUMMARY_MAX_ITEMS_PER_SECTION = int(os.getenv("SUMMARY_MAX_ITEMS_PER_SECTION", "8"))
 RESOLVED_SINCE_MAX_ITEMS = 5
 FLOW_LOG_ENABLED = os.getenv("FLOW_LOG_ENABLED", "1").lower() in ("1", "true", "yes", "on")
+RAW_EVENTS_RETENTION_DAYS = int(os.getenv("RAW_EVENTS_RETENTION_DAYS", "30"))
 
 # SLA for customer SMS and CALL response before it is considered an issue (hours)
 SMS_SLA_HOURS = float(os.getenv("SMS_SLA_HOURS", "2"))
@@ -88,147 +89,6 @@ CALL_MISSED_MARKER_KEYS = [
 ]
 
 app = FastAPI()
-
-
-# ==========================
-# DB helpers + migrations
-# ==========================
-def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def _col_exists(conn: sqlite3.Connection, table: str, col: str) -> bool:
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return any(r["name"] == col for r in rows)
-
-def _ensure_columns(conn: sqlite3.Connection, table: str, cols: List[tuple]) -> None:
-    for name, ddl in cols:
-        if not _col_exists(conn, table, name):
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
-
-def ensure_schema() -> None:
-    conn = db()
-
-    # Existing column migrations on issues
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(issues)").fetchall()}
-
-    # Newer columns that may not exist on older DBs
-    if "contact_name" not in cols:
-        conn.execute("ALTER TABLE issues ADD COLUMN contact_name TEXT")
-
-    # Ensure v1 issue fields exist even if init_db didn't run on an older DB
-    for col, ddl in [
-        ("first_inbound_ts", "ALTER TABLE issues ADD COLUMN first_inbound_ts TEXT"),
-        ("last_inbound_ts", "ALTER TABLE issues ADD COLUMN last_inbound_ts TEXT"),
-        ("inbound_count", "ALTER TABLE issues ADD COLUMN inbound_count INTEGER DEFAULT 0"),
-        ("outbound_count", "ALTER TABLE issues ADD COLUMN outbound_count INTEGER DEFAULT 0"),
-        ("conversation_id", "ALTER TABLE issues ADD COLUMN conversation_id TEXT"),
-        ("breach_notified_ts", "ALTER TABLE issues ADD COLUMN breach_notified_ts TEXT"),
-    ]:
-        if col not in cols:
-            conn.execute(ddl)
-
-    # Conversation-level state for internal-initiated threads
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversation_state (
-            conversation_id TEXT PRIMARY KEY,
-            last_internal_outbound_ts TEXT,
-            last_internal_outbound_contact_id TEXT
-        )
-        """
-    )
-
-    
-
-
-    # AI follow-up gate cache (optional)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS conversation_ai_gate (
-            conversation_id TEXT PRIMARY KEY,
-            last_msg_ts TEXT NOT NULL,
-            needs_follow_up TEXT NOT NULL CHECK(needs_follow_up IN ('YES','NO')),
-            confidence REAL NOT NULL,
-            evidence_json TEXT NOT NULL,
-            model TEXT NOT NULL,
-            created_ts TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
-
-def init_db() -> None:
-    conn = db()
-    cur = conn.cursor()
-
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS raw_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        received_ts TEXT NOT NULL,
-        source TEXT NOT NULL,
-        payload TEXT NOT NULL
-      )
-    """)
-
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS issues (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        issue_type TEXT NOT NULL,             -- 'SMS' | 'CALL'
-        owner_id TEXT,
-        contact_id TEXT,
-        phone TEXT,
-        created_ts TEXT NOT NULL,
-        due_ts TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'OPEN',  -- OPEN | RESOLVED | SPAM
-        resolved_ts TEXT,
-        meta TEXT
-      )
-    """)
-
-    # Sentinel v1 issue fields
-    _ensure_columns(conn, "issues", [
-        ("first_inbound_ts", "TEXT"),
-        ("last_inbound_ts", "TEXT"),
-        ("inbound_count", "INTEGER DEFAULT 0"),
-        ("outbound_count", "INTEGER DEFAULT 0"),
-        ("conversation_id", "TEXT"),
-        ("breach_notified_ts", "TEXT"),
-    ])
-
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS spam_phones (
-        phone TEXT PRIMARY KEY,
-        created_ts TEXT NOT NULL
-      )
-    """)
-
-    # For "resolved since last summary" dopamine
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS kv_store (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-    """)
-
-
-    # AI follow-up gate cache (optional)
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS conversation_ai_gate (
-        conversation_id TEXT PRIMARY KEY,
-        last_msg_ts TEXT NOT NULL,
-        needs_follow_up TEXT NOT NULL CHECK(needs_follow_up IN ('YES','NO')),
-        confidence REAL NOT NULL,
-        evidence_json TEXT NOT NULL,
-        model TEXT NOT NULL,
-        created_ts TEXT NOT NULL
-      )
-    """)
-
-    conn.commit()
-    conn.close()
 
 
 def set_last_internal_outbound(
@@ -2684,6 +2544,29 @@ async def verify_pending(request: Request, limit: int = 200):
         "ai_checked": ai_checked,
         "ai_suppressed": ai_suppressed,
         "ai_skipped_budget": ai_skipped_budget,
+    }
+
+
+@app.post("/jobs/cleanup_raw_events")
+async def cleanup_raw_events(request: Request, days: Optional[int] = None, source: Optional[str] = None, dry_run: int = 1):
+    """
+    Retention cleanup for raw webhook events.
+    Default is dry-run to prevent accidental data loss.
+    """
+    _auth_or_401(request)
+    keep_days = int(days if days is not None else RAW_EVENTS_RETENTION_DAYS)
+    result = purge_raw_events(
+        retention_days=keep_days,
+        source=(source.strip() if isinstance(source, str) and source.strip() else None),
+        dry_run=bool(dry_run),
+    )
+    return {
+        "job": "cleanup_raw_events",
+        "retention_days": keep_days,
+        "source": source if source else None,
+        "dry_run": bool(dry_run),
+        "eligible": int(result.get("eligible", 0)),
+        "deleted": int(result.get("deleted", 0)),
     }
 
 
