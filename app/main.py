@@ -81,6 +81,7 @@ FLOW_LOG_ENABLED = os.getenv("FLOW_LOG_ENABLED", "1").lower() in ("1", "true", "
 SMS_SLA_HOURS = float(os.getenv("SMS_SLA_HOURS", "2"))
 CALL_SLA_HOURS = float(os.getenv("CALL_SLA_HOURS", "2"))
 CALL_DEDUPE_WINDOW_MINUTES = int(os.getenv("CALL_DEDUPE_WINDOW_MINUTES", "240"))
+CALL_RESOLVE_LOOKBACK_MINUTES = float(os.getenv("CALL_RESOLVE_LOOKBACK_MINUTES", "15"))
 CALL_REQUIRE_MISSED_MARKER = os.getenv("CALL_REQUIRE_MISSED_MARKER", "1").lower() in ("1", "true", "yes", "on")
 CALL_MISSED_MARKER_KEYS = [
     s.strip() for s in os.getenv("CALL_MISSED_MARKER_KEYS", "sentinel_missed_call,missed_call,is_missed_call").split(",") if s.strip()
@@ -1955,13 +1956,16 @@ async def poll_resolver(request: Request, limit: int = 200):
 
         created = _parse_iso_dt(r["created_ts"])
         created_utc: Optional[dt.datetime] = None
+        cutoff_utc: Optional[dt.datetime] = None
         if created is not None:
             try:
                 created_utc = created.astimezone(dt.timezone.utc) if created.tzinfo else created.replace(
                     tzinfo=ZoneInfo(TZ_NAME)
                 ).astimezone(dt.timezone.utc)
+                cutoff_utc = created_utc - dt.timedelta(minutes=max(0.0, CALL_RESOLVE_LOOKBACK_MINUTES))
             except Exception:
                 created_utc = None
+                cutoff_utc = None
 
         outbound_after = False
         out_count = 0
@@ -1976,13 +1980,13 @@ async def poll_resolver(request: Request, limit: int = 200):
                     if latest_staff_ts is None or mts0 > latest_staff_ts:
                         latest_staff_ts = mts0
                         latest_staff_uid = str(m.get("userId") or "")
-                if created_utc is None:
+                if cutoff_utc is None:
                     continue
                 mts = _msg_ts(m)
                 if mts is None:
                     continue
                 try:
-                    if mts.astimezone(dt.timezone.utc) > created_utc:
+                    if mts.astimezone(dt.timezone.utc) > cutoff_utc:
                         outbound_after = True
                 except Exception:
                     pass
@@ -2555,13 +2559,16 @@ async def verify_pending(request: Request, limit: int = 200):
 
         created = _parse_iso_dt(r["created_ts"])
         created_utc: Optional[dt.datetime] = None
+        cutoff_utc: Optional[dt.datetime] = None
         if created is not None:
             try:
                 created_utc = created.astimezone(dt.timezone.utc) if created.tzinfo else created.replace(
                     tzinfo=ZoneInfo(TZ_NAME)
                 ).astimezone(dt.timezone.utc)
+                cutoff_utc = created_utc - dt.timedelta(minutes=max(0.0, CALL_RESOLVE_LOOKBACK_MINUTES))
             except Exception:
                 created_utc = None
+                cutoff_utc = None
 
         outbound_after = False
         out_count = 0
@@ -2576,13 +2583,13 @@ async def verify_pending(request: Request, limit: int = 200):
                     if latest_staff_ts is None or mts0 > latest_staff_ts:
                         latest_staff_ts = mts0
                         latest_staff_uid = str(m.get("userId") or "")
-                if created_utc is None:
+                if cutoff_utc is None:
                     continue
                 mts = _msg_ts(m)
                 if mts is None:
                     continue
                 try:
-                    if mts.astimezone(dt.timezone.utc) > created_utc:
+                    if mts.astimezone(dt.timezone.utc) > cutoff_utc:
                         outbound_after = True
                 except Exception:
                     pass
