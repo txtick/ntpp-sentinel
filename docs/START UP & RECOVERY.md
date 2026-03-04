@@ -64,6 +64,15 @@ Optional overrides:
 PHONE=+12146323629 BASE=https://sentinel.northtexaspoolpros.com LOG_TAIL=800 ./trace.sh
 ```
 
+Authenticated job helper (recommended):
+
+```bash
+cd /opt/ntpp-sentinel
+./curl_job.sh /jobs/verify_pending
+./curl_job.sh /jobs/poll_resolver
+./curl_job.sh "/jobs/cleanup_raw_events?dry_run=1"
+```
+
 All active queue items:
 
 ```bash
