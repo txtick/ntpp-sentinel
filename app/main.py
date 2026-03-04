@@ -1825,6 +1825,10 @@ async def poll_resolver(request: Request, limit: int = 200):
     For each OPEN SMS issue:
       Fetch messages for conversation_id
       Resolve if ANY outbound where dateAdded > first_inbound_ts
+
+    For each OPEN CALL issue:
+      Fetch messages for conversation_id
+      Resolve if ANY staff outbound where dateAdded > created_ts
     """
     _auth_or_401(request)
 
@@ -1838,11 +1842,23 @@ async def poll_resolver(request: Request, limit: int = 200):
         ORDER BY due_ts ASC
         LIMIT ?
     """, (limit,)).fetchall()
+    call_rows = conn.execute("""
+        SELECT id, conversation_id, created_ts, outbound_count
+        FROM issues
+        WHERE status='OPEN'
+          AND issue_type='CALL'
+          AND conversation_id IS NOT NULL
+        ORDER BY due_ts ASC
+        LIMIT ?
+    """, (limit,)).fetchall()
     conn.close()
 
     checked = 0
     resolved = 0
     updated_counts = 0
+    call_checked = 0
+    call_resolved = 0
+    call_updated_counts = 0
 
     for r in rows:
         checked += 1
@@ -1925,7 +1941,96 @@ async def poll_resolver(request: Request, limit: int = 200):
 
         conn2.close()
 
-    return {"job": "poll_resolver", "checked": checked, "resolved": resolved, "updated_counts": updated_counts}
+    for r in call_rows:
+        call_checked += 1
+        issue_id = r["id"]
+        conv_id = r["conversation_id"]
+        if not conv_id:
+            continue
+
+        try:
+            msgs = await ghl_list_messages(conv_id, limit=50)
+        except HTTPException:
+            continue
+
+        created = _parse_iso_dt(r["created_ts"])
+        created_utc: Optional[dt.datetime] = None
+        if created is not None:
+            try:
+                created_utc = created.astimezone(dt.timezone.utc) if created.tzinfo else created.replace(
+                    tzinfo=ZoneInfo(TZ_NAME)
+                ).astimezone(dt.timezone.utc)
+            except Exception:
+                created_utc = None
+
+        outbound_after = False
+        out_count = 0
+        latest_staff_ts: Optional[dt.datetime] = None
+        latest_staff_uid: Optional[str] = None
+
+        for m in msgs:
+            if _msg_is_staff_outbound(m):
+                out_count += 1
+                mts0 = _msg_ts(m)
+                if mts0 is not None:
+                    if latest_staff_ts is None or mts0 > latest_staff_ts:
+                        latest_staff_ts = mts0
+                        latest_staff_uid = str(m.get("userId") or "")
+                if created_utc is None:
+                    continue
+                mts = _msg_ts(m)
+                if mts is None:
+                    continue
+                try:
+                    if mts.astimezone(dt.timezone.utc) > created_utc:
+                        outbound_after = True
+                except Exception:
+                    pass
+
+        if latest_staff_ts is not None:
+            try:
+                set_last_internal_outbound(
+                    conv_id,
+                    latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
+                    latest_staff_uid or None,
+                )
+            except Exception:
+                pass
+
+        conn2 = db()
+        prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
+        if out_count != prev_out:
+            conn2.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
+            conn2.commit()
+            call_updated_counts += 1
+
+        if outbound_after:
+            now = _now_local().isoformat()
+            conn2.execute("""
+                UPDATE issues
+                SET status='RESOLVED', resolved_ts=?
+                WHERE id=? AND status='OPEN'
+            """, (now, issue_id))
+            conn2.commit()
+            call_resolved += 1
+            _flow_log(
+                "call.auto_resolved",
+                issue_id=issue_id,
+                conversation_id=conv_id,
+                via="poll_resolver",
+            )
+
+        conn2.close()
+
+    return {
+        "job": "poll_resolver",
+        "checked": checked,
+        "resolved": resolved,
+        "updated_counts": updated_counts,
+        "call_checked": call_checked,
+        "call_resolved": call_resolved,
+        "call_updated_counts": call_updated_counts,
+    }
 
 
 
