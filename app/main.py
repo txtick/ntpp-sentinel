@@ -78,6 +78,11 @@ FLOW_LOG_ENABLED = os.getenv("FLOW_LOG_ENABLED", "1").lower() in ("1", "true", "
 # SLA for customer SMS and CALL response before it is considered an issue (hours)
 SMS_SLA_HOURS = float(os.getenv("SMS_SLA_HOURS", "2"))
 CALL_SLA_HOURS = float(os.getenv("CALL_SLA_HOURS", "2"))
+CALL_DEDUPE_WINDOW_MINUTES = int(os.getenv("CALL_DEDUPE_WINDOW_MINUTES", "240"))
+CALL_REQUIRE_MISSED_MARKER = os.getenv("CALL_REQUIRE_MISSED_MARKER", "1").lower() in ("1", "true", "yes", "on")
+CALL_MISSED_MARKER_KEYS = [
+    s.strip() for s in os.getenv("CALL_MISSED_MARKER_KEYS", "sentinel_missed_call,missed_call,is_missed_call").split(",") if s.strip()
+]
 
 app = FastAPI()
 
@@ -708,6 +713,38 @@ def _extract_contact_name(payload: Dict[str, Any]) -> Optional[str]:
                     return v.strip()
 
     return None
+
+def _truthy_value(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return float(v) != 0.0
+    if isinstance(v, str):
+        t = v.strip().lower()
+        return t in ("1", "true", "yes", "on", "missed", "no-answer", "no answer", "busy", "canceled", "cancelled")
+    return False
+
+def _find_key_values(payload: Any, key: str) -> List[Any]:
+    out: List[Any] = []
+    if isinstance(payload, dict):
+        for k, v in payload.items():
+            if str(k) == key:
+                out.append(v)
+            out.extend(_find_key_values(v, key))
+    elif isinstance(payload, list):
+        for item in payload:
+            out.extend(_find_key_values(item, key))
+    return out
+
+def _has_missed_call_marker(payload: Dict[str, Any]) -> bool:
+    if not CALL_MISSED_MARKER_KEYS:
+        return False
+    for key in CALL_MISSED_MARKER_KEYS:
+        vals = _find_key_values(payload, key)
+        for v in vals:
+            if _truthy_value(v):
+                return True
+    return False
 
 
 # ==========================
@@ -1545,6 +1582,13 @@ async def unanswered_call(request: Request):
     payload = await _parse_request_payload(request)
     _log_raw_event("unanswered_call", payload)
 
+    if CALL_REQUIRE_MISSED_MARKER and not _has_missed_call_marker(payload):
+        _flow_log(
+            "call.ignored_missing_missed_marker",
+            required_keys=",".join(CALL_MISSED_MARKER_KEYS),
+        )
+        return {"received": True, "ignored": "missing_missed_call_marker"}
+
     vr = payload.get("voicemail_route")
     if isinstance(vr, list):
         routes = [str(x) for x in vr]
@@ -1580,6 +1624,58 @@ async def unanswered_call(request: Request):
     now_local = _now_local()
     created_ts = now_local.isoformat()
     due_ts = add_business_hours(now_local, CALL_SLA_HOURS).isoformat()
+
+    # Defensive dedupe: suppress repeated CALL issue creation when upstream workflow
+    # emits duplicate webhook events for the same thread/contact in a short window.
+    latest_call = None
+    if conversation_id:
+        latest_call = conn.execute(
+            """
+            SELECT id, created_ts, status
+            FROM issues
+            WHERE issue_type='CALL'
+              AND conversation_id=?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id,),
+        ).fetchone()
+    if latest_call is None and contact_id:
+        latest_call = conn.execute(
+            """
+            SELECT id, created_ts, status
+            FROM issues
+            WHERE issue_type='CALL'
+              AND contact_id=?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (contact_id,),
+        ).fetchone()
+    if latest_call is None and from_phone:
+        latest_call = conn.execute(
+            """
+            SELECT id, created_ts, status
+            FROM issues
+            WHERE issue_type='CALL'
+              AND phone=?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (from_phone,),
+        ).fetchone()
+
+    if latest_call and _is_recent(latest_call["created_ts"], now_local, CALL_DEDUPE_WINDOW_MINUTES):
+        conn.close()
+        _flow_log(
+            "call.ignored_recent_duplicate",
+            who=who,
+            contact_id=contact_id,
+            conversation_id=conversation_id,
+            duplicate_of_issue_id=latest_call["id"],
+            dedupe_window_minutes=CALL_DEDUPE_WINDOW_MINUTES,
+        )
+        return {"received": True, "ignored": "recent_duplicate_call_webhook"}
 
     meta = {"source": "voicemail_route=tech_sentinel"}
     if contact_name:
@@ -2425,6 +2521,20 @@ def _parse_iso(ts: Optional[str]) -> Optional[dt.datetime]:
         return dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except Exception:
         return None
+
+def _is_recent(ts: Optional[str], now_local: dt.datetime, window_minutes: int) -> bool:
+    if not ts:
+        return False
+    parsed = _parse_iso(ts)
+    if parsed is None:
+        return False
+    try:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo(TZ_NAME))
+        delta = now_local - parsed.astimezone(ZoneInfo(TZ_NAME))
+        return 0 <= delta.total_seconds() <= (max(0, window_minutes) * 60.0)
+    except Exception:
+        return False
 
 def _is_escalated(issue_type: str, first_inbound_ts: Optional[str], created_ts: str, now_local: dt.datetime) -> bool:
     """
