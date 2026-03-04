@@ -50,6 +50,8 @@ AI_GATE_MAX_ISSUES_PER_RUN = int(os.getenv("AI_GATE_MAX_ISSUES_PER_RUN", "20"))
 AI_GATE_RUN_BUDGET_SECONDS = float(os.getenv("AI_GATE_RUN_BUDGET_SECONDS", "20"))
 AI_GATE_TIMEOUT_SECONDS = float(os.getenv("AI_GATE_TIMEOUT_SECONDS", "4"))
 AI_GATE_REDACT_PII = os.getenv("AI_GATE_REDACT_PII", "1").lower() in ("1","true","yes","on")
+AI_GATE_ON_EVERY_INBOUND = os.getenv("AI_GATE_ON_EVERY_INBOUND", "0").lower() in ("1","true","yes","on")
+AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE = float(os.getenv("AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE", "0.80"))
 
 # Summary recipients (managers only, v1)
 MANAGER_CONTACT_IDS = [
@@ -1494,6 +1496,20 @@ async def inbound_sms(request: Request):
                 )
                 return {"received": True, "ignored": "ack_closeout_after_staff_reply"}
 
+    ai_suppress, ai_gate = await _ai_inbound_should_suppress(conversation_id)
+    if ai_gate is not None:
+        _flow_log(
+            "ai_gate.inbound_sms",
+            who=who,
+            contact_id=contact_id,
+            conversation_id=conversation_id,
+            needs_follow_up=str(ai_gate.get("needs_follow_up")),
+            confidence=float(ai_gate.get("confidence") or 0.0),
+            suppressed=bool(ai_suppress),
+        )
+    if ai_suppress:
+        return {"received": True, "ignored": "ai_inbound_suppress"}
+
     conn = db()
 
     row = None
@@ -1624,6 +1640,21 @@ async def unanswered_call(request: Request):
     now_local = _now_local()
     created_ts = now_local.isoformat()
     due_ts = add_business_hours(now_local, CALL_SLA_HOURS).isoformat()
+
+    ai_suppress, ai_gate = await _ai_inbound_should_suppress(conversation_id)
+    if ai_gate is not None:
+        _flow_log(
+            "ai_gate.inbound_call",
+            who=who,
+            contact_id=contact_id,
+            conversation_id=conversation_id,
+            needs_follow_up=str(ai_gate.get("needs_follow_up")),
+            confidence=float(ai_gate.get("confidence") or 0.0),
+            suppressed=bool(ai_suppress),
+        )
+    if ai_suppress:
+        conn.close()
+        return {"received": True, "ignored": "ai_inbound_suppress"}
 
     # Defensive dedupe: suppress repeated CALL issue creation when upstream workflow
     # emits duplicate webhook events for the same thread/contact in a short window.
@@ -2134,6 +2165,27 @@ async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> 
         return out
     except Exception:
         return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["ai exception"]}
+
+async def _ai_inbound_should_suppress(conversation_id: Optional[str]) -> Tuple[bool, Optional[Dict[str, Any]]]:
+    """
+    Optional ingest-time AI gate:
+      - Runs only when AI_GATE_ON_EVERY_INBOUND is enabled.
+      - Suppresses issue creation/update only on high-confidence NO.
+    """
+    if not AI_GATE_ON_EVERY_INBOUND:
+        return False, None
+    if not conversation_id:
+        return False, None
+    try:
+        msgs = await ghl_list_messages(conversation_id, limit=50)
+        gate = await ai_gate_classify(conversation_id, msgs)
+        suppress = (
+            str(gate.get("needs_follow_up") or "").upper() == "NO"
+            and float(gate.get("confidence") or 0.0) >= AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE
+        )
+        return suppress, gate
+    except Exception:
+        return False, None
 
 
 @app.post("/jobs/verify_pending")
