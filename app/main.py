@@ -308,6 +308,26 @@ def _is_ack_closeout(text: Optional[str]) -> bool:
         return False
     if t in _ACK_PHRASES:
         return True
+    # Natural mixed acknowledgements such as:
+    # "ok sounds good thanks again", "great thank you", "perfect thanks"
+    has_gratitude = any(x in t for x in ("thanks", "thank you", "thx", "ty"))
+    has_ack_intent = any(
+        x in t
+        for x in (
+            "ok",
+            "okay",
+            "sounds good",
+            "got it",
+            "perfect",
+            "great",
+            "awesome",
+            "all good",
+            "no worries",
+            "no problem",
+        )
+    )
+    if has_gratitude and has_ack_intent:
+        return True
     # iMessage-style reaction/tapback text.
     # Accept both bare reactions ("liked") and quoted variants
     # ("liked sounds good", "laughed at ...").
