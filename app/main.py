@@ -1636,7 +1636,13 @@ async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> 
             {"role": "system", "content": sys},
             {"role": "user", "content": user},
         ],
-        "text": {"format": {"type": "json_schema", "json_schema": _AI_GATE_SCHEMA}},
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": _AI_GATE_SCHEMA["name"],
+                "schema": _AI_GATE_SCHEMA["schema"],
+            }
+        },
         "max_output_tokens": max(16, AI_GATE_MAX_OUTPUT_TOKENS),
         "store": False,
     }
