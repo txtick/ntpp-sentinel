@@ -16,6 +16,7 @@ Sentinel responsibilities:
 - Apply business-hour SLA timing
 - Detect valid response activity
 - Send manager alerts/summaries
+- Attribute resolution source in issue metadata (`meta.resolved_by`)
 
 ## 2) Runtime Components
 
@@ -40,6 +41,7 @@ Verification/resolution:
 - `POST /jobs/poll_resolver`
 - `POST /jobs/verify_pending`
 - Detects employee outbound and promotes/resolves issues
+- `POST /jobs/cleanup_raw_events` (retention cleanup, dry-run by default)
 
 Notifications:
 - `POST /jobs/escalations` (one-time breach alerts)
@@ -68,9 +70,13 @@ Notifications:
 `conversation_ai_gate`:
 - Optional AI gate cache by conversation watermark
 
+`issues.meta`:
+- resolution attribution (`resolved_by`, `resolved_meta_ts`)
+- AI suppression details (`ai_gate_*`)
+
 ## 5) Design Principles
 
-- Deterministic first
+- Deterministic guardrails + optional AI-primary decision mode
 - Fail-open for AI gate (do not suppress on uncertainty)
 - Idempotent/retry-safe jobs
 - Low-noise operator UX

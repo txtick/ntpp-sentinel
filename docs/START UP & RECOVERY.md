@@ -106,6 +106,25 @@ LIMIT 25;
 "
 ```
 
+Recent resolves with source attribution:
+
+```bash
+sqlite3 -header -column /opt/ntpp-sentinel/data/sentinel.db "
+SELECT
+  id,
+  issue_type,
+  status,
+  resolved_ts,
+  json_extract(meta,'$.resolved_by') AS resolved_by,
+  json_extract(meta,'$.resolved_meta_ts') AS resolved_meta_ts,
+  json_extract(meta,'$.ai_gate_confidence') AS ai_confidence
+FROM issues
+WHERE status='RESOLVED'
+ORDER BY id DESC
+LIMIT 50;
+"
+```
+
 Inspect a specific issue:
 
 ```bash
@@ -169,6 +188,9 @@ docker exec -it ntpp-sentinel sh -lc 'echo "$GHL_LOCATION_ID"'
 docker exec -it ntpp-sentinel sh -lc 'echo "$MANAGER_CONTACT_IDS"'
 docker exec -it ntpp-sentinel sh -lc 'echo "$INTERNAL_CONTACT_IDS"'
 docker exec -it ntpp-sentinel sh -lc 'echo "$INTERNAL_USER_IDS"'
+docker exec -it ntpp-sentinel sh -lc 'echo "$DECISION_MODE"'
+docker exec -it ntpp-sentinel sh -lc 'echo "$AI_GATE_MODEL"'
+docker exec -it ntpp-sentinel sh -lc 'echo "$AI_GATE_TIMEOUT_SECONDS"'
 ```
 
 If missing, update `/opt/ntpp-sentinel/.env` and redeploy.
@@ -202,6 +224,14 @@ Key cron env variables:
 - `CRON_ESCALATIONS_EVERY_MINUTES`
 - `CRON_POLL_RESOLVER_EVERY_MINUTES`
 - `CRON_VERIFY_PENDING_EVERY_MINUTES`
+
+High-impact runtime decision env variables:
+
+- `DECISION_MODE` (`deterministic` or `ai_primary`)
+- `AI_PRIMARY_SUPPRESS_NO_CONFIDENCE`
+- `AI_GATE_ON_EVERY_INBOUND`
+- `AI_GATE_TIMEOUT_SECONDS`
+- `AI_GATE_MAX_OUTPUT_TOKENS`
 
 ---
 

@@ -65,6 +65,9 @@ AI_GATE_TIMEOUT_SECONDS = float(os.getenv("AI_GATE_TIMEOUT_SECONDS", "4"))
 AI_GATE_REDACT_PII = os.getenv("AI_GATE_REDACT_PII", "1").lower() in ("1","true","yes","on")
 AI_GATE_ON_EVERY_INBOUND = os.getenv("AI_GATE_ON_EVERY_INBOUND", "0").lower() in ("1","true","yes","on")
 AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE = float(os.getenv("AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE", "0.80"))
+AI_GATE_MAX_OUTPUT_TOKENS = int(os.getenv("AI_GATE_MAX_OUTPUT_TOKENS", "220"))
+DECISION_MODE = os.getenv("DECISION_MODE", "deterministic").strip().lower()
+AI_PRIMARY_SUPPRESS_NO_CONFIDENCE = float(os.getenv("AI_PRIMARY_SUPPRESS_NO_CONFIDENCE", "0.65"))
 
 # Summary recipients (managers only, v1)
 MANAGER_CONTACT_IDS = [
@@ -507,6 +510,16 @@ def _update_issue_meta(issue_id: int, updates: Dict[str, Any]) -> None:
     conn.close()
 
 
+def _set_resolved_metadata(issue_id: int, resolved_by: str, extra: Optional[Dict[str, Any]] = None) -> None:
+    payload: Dict[str, Any] = {
+        "resolved_by": resolved_by,
+        "resolved_meta_ts": _now_local().isoformat(),
+    }
+    if extra:
+        payload.update(extra)
+    _update_issue_meta(issue_id, payload)
+
+
 # ==========================
 # Raw event ingestion
 # ==========================
@@ -687,6 +700,8 @@ def resolve_by_id(issue_id: int, status: str = "RESOLVED") -> int:
     )
     conn.commit()
     conn.close()
+    if cur.rowcount > 0 and status == "RESOLVED":
+        _set_resolved_metadata(issue_id, "MANUAL_COMMAND_ID")
     return cur.rowcount
 
 def add_note(issue_id: int, note: str) -> bool:
@@ -855,6 +870,7 @@ def _set_issue_contact_name(issue_id: int, name: str) -> None:
 def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
     conn = db()
     now = _now_local().isoformat()
+    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status='OPEN' AND phone=?", (phone,)).fetchall()]
     cur = conn.execute("""
         UPDATE issues
         SET status=?, resolved_ts=?
@@ -862,11 +878,15 @@ def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
     """, (status, now, phone))
     conn.commit()
     conn.close()
+    if status == "RESOLVED":
+        for iid in ids:
+            _set_resolved_metadata(iid, "MANUAL_COMMAND_PHONE", {"resolve_target": phone})
     return cur.rowcount
 
 def resolve_by_contact_id(contact_id: str, status: str = "RESOLVED") -> int:
     conn = db()
     now = _now_local().isoformat()
+    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status='OPEN' AND contact_id=?", (contact_id,)).fetchall()]
     cur = conn.execute("""
         UPDATE issues
         SET status=?, resolved_ts=?
@@ -874,6 +894,9 @@ def resolve_by_contact_id(contact_id: str, status: str = "RESOLVED") -> int:
     """, (status, now, contact_id))
     conn.commit()
     conn.close()
+    if status == "RESOLVED":
+        for iid in ids:
+            _set_resolved_metadata(iid, "MANUAL_COMMAND_CONTACT_ID", {"resolve_target": contact_id})
     return cur.rowcount
 
 def resolve_by_name(name: str, status: str = "RESOLVED") -> int:
@@ -901,6 +924,9 @@ def resolve_by_name(name: str, status: str = "RESOLVED") -> int:
         conn.commit()
 
     conn.close()
+    if status == "RESOLVED":
+        for iid in matched_ids:
+            _set_resolved_metadata(iid, "MANUAL_COMMAND_NAME", {"resolve_target": name})
     return len(matched_ids)
 
 def _looks_like_contact_id(s: str) -> bool:
@@ -987,6 +1013,8 @@ async def unanswered_call(request: Request):
             conversation_id=conversation_id,
             needs_follow_up=str(ai_gate.get("needs_follow_up")),
             confidence=float(ai_gate.get("confidence") or 0.0),
+            decision_mode=str(ai_gate.get("decision_mode") or ""),
+            suppress_threshold=float(ai_gate.get("suppress_threshold") or 0.0),
             suppressed=bool(ai_suppress),
         )
     if ai_suppress:
@@ -1310,6 +1338,7 @@ async def poll_resolver(request: Request, limit: int = 200):
             """, (now, issue_id))
             conn2.commit()
             resolved += 1
+            _set_resolved_metadata(issue_id, "RULE_POLL_RESOLVER_SMS_OUTBOUND")
             _flow_log(
                 "sms.auto_resolved",
                 issue_id=issue_id,
@@ -1394,6 +1423,7 @@ async def poll_resolver(request: Request, limit: int = 200):
             """, (now, issue_id))
             conn2.commit()
             call_resolved += 1
+            _set_resolved_metadata(issue_id, "RULE_POLL_RESOLVER_CALL_OUTBOUND")
             _flow_log(
                 "call.auto_resolved",
                 issue_id=issue_id,
@@ -1607,6 +1637,7 @@ async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> 
             {"role": "user", "content": user},
         ],
         "text": {"format": {"type": "json_schema", "json_schema": _AI_GATE_SCHEMA}},
+        "max_output_tokens": max(16, AI_GATE_MAX_OUTPUT_TOKENS),
         "store": False,
     }
 
@@ -1616,6 +1647,16 @@ async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> 
             if r.status_code >= 400:
                 return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": [f"ai error {r.status_code}"]}
             data = r.json()
+
+        if str(data.get("status") or "").lower() == "incomplete":
+            reason = (
+                (data.get("incomplete_details") or {}).get("reason")
+                if isinstance(data.get("incomplete_details"), dict)
+                else None
+            )
+            if reason:
+                return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": [f"ai incomplete {reason}"]}
+            return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["ai incomplete"]}
 
         txt = (data.get("output_text") or "").strip()
         if not txt:
@@ -1654,21 +1695,27 @@ async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> 
 
 async def _ai_inbound_should_suppress(conversation_id: Optional[str]) -> Tuple[bool, Optional[Dict[str, Any]]]:
     """
-    Optional ingest-time AI gate:
-      - Runs only when AI_GATE_ON_EVERY_INBOUND is enabled.
-      - Suppresses issue creation/update only on high-confidence NO.
+    Ingest-time AI gate:
+      - deterministic mode: runs only when AI_GATE_ON_EVERY_INBOUND is enabled
+      - ai_primary mode: always runs when conversation_id exists
+      - suppresses issue creation/update on NO above selected confidence threshold
     """
-    if not AI_GATE_ON_EVERY_INBOUND:
+    ai_primary = DECISION_MODE == "ai_primary"
+    if not (AI_GATE_ON_EVERY_INBOUND or ai_primary):
         return False, None
     if not conversation_id:
         return False, None
     try:
         msgs = await ghl_list_messages(conversation_id, limit=50)
         gate = await ai_gate_classify(conversation_id, msgs)
+        threshold = AI_PRIMARY_SUPPRESS_NO_CONFIDENCE if ai_primary else AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE
         suppress = (
             str(gate.get("needs_follow_up") or "").upper() == "NO"
-            and float(gate.get("confidence") or 0.0) >= AI_GATE_ON_EVERY_INBOUND_NO_CONFIDENCE
+            and float(gate.get("confidence") or 0.0) >= threshold
         )
+        if isinstance(gate, dict):
+            gate["decision_mode"] = DECISION_MODE
+            gate["suppress_threshold"] = threshold
         return suppress, gate
     except Exception:
         return False, None
@@ -1875,6 +1922,15 @@ async def verify_pending(request: Request, limit: int = 200):
             """, (now_iso, issue_id))
             conn2.commit()
             auto_resolved += 1
+            resolved_by = (
+                "AI_PRIMARY"
+                if ai_suppress and DECISION_MODE == "ai_primary"
+                else (
+                    "AI_GATE"
+                    if ai_suppress
+                    else ("RULE_VERIFY_PENDING_ACK_CLOSEOUT" if ack_closeout_after_staff else "RULE_VERIFY_PENDING_SMS_OUTBOUND")
+                )
+            )
             if ai_suppress and ai_gate is not None:
                 try:
                     _update_issue_meta(
@@ -1889,6 +1945,7 @@ async def verify_pending(request: Request, limit: int = 200):
                     )
                 except Exception:
                     pass
+            _set_resolved_metadata(issue_id, resolved_by)
             _flow_log(
                 "sms.auto_resolved",
                 issue_id=issue_id,
@@ -2000,6 +2057,7 @@ async def verify_pending(request: Request, limit: int = 200):
             """, (now_iso, issue_id))
             conn2.commit()
             call_auto_resolved += 1
+            _set_resolved_metadata(issue_id, "RULE_VERIFY_PENDING_CALL_OUTBOUND")
             _flow_log(
                 "call.auto_resolved",
                 issue_id=issue_id,

@@ -66,10 +66,15 @@ CALL flow:
 
 ### 5. Auto-Resolve Rules
 
-Staff reply detection is strict:
+SMS reply detection:
 - Outbound message must include `userId`.
 - `userId` must be in `INTERNAL_USER_IDS`.
-- Automation messages without `userId` do not resolve issues.
+- Automation messages without `userId` do not resolve SMS issues.
+
+CALL reply detection:
+- Any outbound activity in the same conversation is treated as valid follow-up.
+- This includes outbound call log entries that may not carry `userId`.
+- Call resolver uses `CALL_RESOLVE_LOOKBACK_MINUTES` to avoid race conditions around issue creation timestamps.
 
 ### 6. False-Positive Controls
 
@@ -85,14 +90,19 @@ Ack-closeout suppression:
   - `ACK_CLOSE_WINDOW_HOURS`
   - `ACK_CLOSE_MAX_LEN`
 
-### 7. Optional AI Follow-Up Gate
+### 7. AI Decision Modes
 
-AI gate is optional and disabled by default (`AI_GATE_ENABLED=0`).
+AI support is controlled by `AI_GATE_ENABLED` and `DECISION_MODE`.
 
-When enabled, for due `PENDING SMS` not already resolved by deterministic rules:
-- Classifies whether follow-up is needed.
-- Suppresses escalation only for confident `NO` (`AI_GATE_SUPPRESS_NO_CONFIDENCE` threshold).
-- Fail-open behavior on errors (defaults to follow-up needed).
+Modes:
+- `DECISION_MODE=deterministic` (default): deterministic rules remain primary. AI gate can run in verifier and/or inbound if enabled.
+- `DECISION_MODE=ai_primary`: inbound decisioning runs AI first (with deterministic guardrails still present) and suppresses issue creation/update on confident `NO`.
+
+AI gate behavior:
+- Classifies whether follow-up is needed (`YES|NO`) with confidence and evidence.
+- Suppresses only on confident `NO`.
+- Fail-open on errors/incomplete responses (defaults to follow-up needed).
+- Uses response max tokens (`AI_GATE_MAX_OUTPUT_TOKENS`) and timeout (`AI_GATE_TIMEOUT_SECONDS`) to avoid incomplete outputs.
 
 Operational safeguards:
 - Per-run AI budget and cap:
@@ -100,10 +110,15 @@ Operational safeguards:
   - `AI_GATE_RUN_BUDGET_SECONDS`
 - Request timeout:
   - `AI_GATE_TIMEOUT_SECONDS`
+- Response cap:
+  - `AI_GATE_MAX_OUTPUT_TOKENS`
 - PII redaction in AI transcript:
   - `AI_GATE_REDACT_PII`
 - Caches AI decisions by conversation message watermark in `conversation_ai_gate`.
 - Writes AI suppression audit fields into issue `meta`.
+
+AI-primary threshold:
+- `AI_PRIMARY_SUPPRESS_NO_CONFIDENCE`
 
 ### 8. Summaries and Escalations
 
@@ -139,11 +154,16 @@ Behavior:
 - `INTERNAL_REPLY_GRACE_HOURS`
 - `ACK_CLOSE_*`
 - `FLOW_LOG_ENABLED`
+- `DECISION_MODE`
 
 AI:
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `AI_GATE_*`
+- `AI_PRIMARY_SUPPRESS_NO_CONFIDENCE`
+
+Data retention:
+- `RAW_EVENTS_RETENTION_DAYS`
 
 Cron schedule generation:
 - `CRON_DOW`
@@ -189,6 +209,20 @@ Notable `issues` fields:
 - `inbound_count`, `outbound_count`
 - `breach_notified_ts`
 - `meta` (includes notes and optional AI suppression audit values)
+- `meta.resolved_by` and `meta.resolved_meta_ts` for resolution attribution
+
+Common `resolved_by` values:
+- `AI_PRIMARY`
+- `AI_GATE`
+- `RULE_VERIFY_PENDING_SMS_OUTBOUND`
+- `RULE_VERIFY_PENDING_ACK_CLOSEOUT`
+- `RULE_VERIFY_PENDING_CALL_OUTBOUND`
+- `RULE_POLL_RESOLVER_SMS_OUTBOUND`
+- `RULE_POLL_RESOLVER_CALL_OUTBOUND`
+- `MANUAL_COMMAND_ID`
+- `MANUAL_COMMAND_PHONE`
+- `MANUAL_COMMAND_CONTACT_ID`
+- `MANUAL_COMMAND_NAME`
 
 ### 13. Practical Verification Commands
 

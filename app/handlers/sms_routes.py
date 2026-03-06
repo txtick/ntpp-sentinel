@@ -328,6 +328,8 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                 conversation_id=conversation_id,
                 needs_follow_up=str(ai_gate.get("needs_follow_up")),
                 confidence=float(ai_gate.get("confidence") or 0.0),
+                decision_mode=str(ai_gate.get("decision_mode") or ""),
+                suppress_threshold=float(ai_gate.get("suppress_threshold") or 0.0),
                 suppressed=bool(ai_suppress),
             )
         if ai_suppress:
