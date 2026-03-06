@@ -17,6 +17,7 @@ from handlers.sms import (
     is_internal_sender as _sms_is_internal_sender,
     is_ack_closeout as _sms_is_ack_closeout,
 )
+from handlers.sms_routes import SMSRouteDeps, register_sms_routes
 
 # ==========================
 # Config
@@ -670,185 +671,6 @@ def _render_list_like_summary(issues: list[dict], total_open: int, offset: int, 
 
     return "\n".join(lines)
 
-async def handle_command(text: str, command_contact_id: Optional[str], command_from_phone: Optional[str]) -> Dict[str, Any]:
-    """
-    Manager command parser (internal only, invoked from inbound_sms when contact_type == "internal").
-
-    Supported (case-insensitive; '#' optional; commas allowed):
-      List
-      Open 3
-      Resolve 3 5 6   (or: Resolve 3,5,6)
-      Resolve <phone/contactId/name>   (existing behavior)
-      Spam 7          (marks issue SPAM + adds phone to spam list if present)
-      Spam <phone>    (adds phone to spam list + resolves by phone)
-      Note 3 <text>
-    Optional prefix:
-      Sentinel <command...>
-    """
-
-    raw = (text or "").strip()
-    if not raw:
-        return {"ok": False, "ignored": "empty"}
-
-    # Optional "Sentinel" prefix to reduce friction (not required)
-    raw = re.sub(r"^\s*sentinel\s+", "", raw, flags=re.IGNORECASE)
-
-    # Normalize commas into spaces so "3,5,6" works
-    raw = raw.replace(",", " ")
-
-    parts = raw.split()
-    if not parts:
-        return {"ok": False, "ignored": "empty"}
-
-    cmd = parts[0].strip().lower()
-    args = parts[1:]
-
-    # Only treat known first-words as commands; otherwise ignore (so normal internal texts don't get eaten)
-    known = {"list", "more", "open", "resolve", "spam", "note"}
-    if cmd not in known:
-        return {"ok": False, "ignored": "not_a_command"}
-
-    def _parse_ids(tokens: List[str]) -> List[int]:
-        ids: List[int] = []
-        for t in tokens:
-            tt = t.strip()
-            if tt.startswith("#"):
-                tt = tt[1:]
-            if tt.isdigit():
-                ids.append(int(tt))
-        # de-dupe while preserving order
-        seen = set()
-        out: List[int] = []
-        for i in ids:
-            if i not in seen:
-                out.append(i)
-                seen.add(i)
-        return out
-
-    if cmd == "list":
-        if not command_contact_id:
-            return {"ok": False, "error": "Missing manager contact id"}
-
-        limit = 5
-        offset = 0
-        _MANAGER_LIST_OFFSETS[command_contact_id] = offset
-
-        rows, total = list_open_issues(limit=limit, offset=offset)
-        if total == 0:
-            return {"ok": True, "cmd": "LIST", "text": "No OPEN issues."}
-
-        for r in rows:
-            if not (r.get("contact_name") or "").strip() and r.get("contact_id"):
-                fetched = await ghl_get_contact_name(r["contact_id"])
-                if fetched:
-                    _set_issue_contact_name(r["id"], fetched)
-                    r["contact_name"] = fetched
-
-        body = _render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
-        return {"ok": True, "cmd": "LIST", "text": body}
-
-    if cmd == "more":
-        if not command_contact_id:
-            return {"ok": False, "error": "Missing manager contact id"}
-
-        limit = 5
-        offset = _MANAGER_LIST_OFFSETS.get(command_contact_id, 0) + limit
-        _MANAGER_LIST_OFFSETS[command_contact_id] = offset
-
-        rows, total = list_open_issues(limit=limit, offset=offset)
-        if not rows:
-            _MANAGER_LIST_OFFSETS[command_contact_id] = 0
-            return {"ok": True, "cmd": "MORE", "text": "No more OPEN issues. Reply: List"}
-
-        for r in rows:
-            if not (r.get("contact_name") or "").strip() and r.get("contact_id"):
-                fetched = await ghl_get_contact_name(r["contact_id"])
-                if fetched:
-                    _set_issue_contact_name(r["id"], fetched)
-                    r["contact_name"] = fetched
-
-        body = _render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
-        return {"ok": True, "cmd": "MORE", "text": body}
-
-    if cmd == "open":
-        if not args:
-            return {"ok": False, "error": "Usage: Open <id>"}
-        iid = _parse_issue_id(args[0])
-        if not iid:
-            return {"ok": False, "error": "Invalid issue id"}
-        r = get_issue_by_id(iid)
-        if not r:
-            return {"ok": False, "error": "Issue not found"}
-        name = _display_name(r)
-        link = ghl_conversation_link(r["conversation_id"])
-        txt = f"{name}: {link}" if link else f"{name}: conversation_id={r['conversation_id'] or '-'}"
-        return {"ok": True, "cmd": "OPEN", "id": iid, "text": txt}
-
-    if cmd == "note":
-        if len(args) < 2:
-            return {"ok": False, "error": "Usage: Note <id> <text>"}
-        iid = _parse_issue_id(args[0])
-        if not iid:
-            return {"ok": False, "error": "Invalid issue id"}
-        note_text = " ".join(args[1:]).strip()
-        ok = add_note(iid, note_text)
-        return {"ok": ok, "cmd": "NOTE", "id": iid, "text": ("Noted." if ok else "Issue not found.")}
-
-    if cmd == "resolve":
-        if not args:
-            return {"ok": False, "error": "Usage: Resolve <id...>  OR  Resolve <phone/contactId/name>"}
-
-        ids = _parse_ids(args)
-        if ids:
-            changed: List[int] = []
-            for iid in ids:
-                if resolve_by_id(iid, status="RESOLVED") > 0:
-                    changed.append(iid)
-            if changed:
-                return {"ok": True, "cmd": "RESOLVE", "ids": changed, "text": f"Sentinel: Resolved {', '.join(str(x) for x in changed)}."}
-            return {"ok": True, "cmd": "RESOLVE", "ids": ids, "text": "Sentinel: No matching OPEN issues for those IDs."}
-
-        # fallback: existing target resolver (phone/contactId/name)
-        target = " ".join(args).strip()
-        resolved = resolve_target(target)
-        return {"ok": True, "cmd": "RESOLVE", "resolved": resolved, "target": target, "text": f"Sentinel: Resolved {resolved} issue(s) for '{target}'."}
-
-    if cmd == "spam":
-        if not args:
-            return {"ok": False, "error": "Usage: Spam <id...>  OR  Spam <phone>"}
-
-        ids = _parse_ids(args)
-        if ids:
-            marked: List[int] = []
-            for iid in ids:
-                r = get_issue_by_id(iid)
-                if r and r["phone"]:
-                    try:
-                        mark_spam(r["phone"])
-                    except Exception:
-                        pass
-                if resolve_by_id(iid, status="SPAM") > 0:
-                    marked.append(iid)
-            if marked:
-                return {"ok": True, "cmd": "SPAM", "ids": marked, "text": f"Sentinel: Marked SPAM {', '.join(str(x) for x in marked)}."}
-            return {"ok": True, "cmd": "SPAM", "ids": ids, "text": "Sentinel: No matching OPEN issues for those IDs."}
-
-        # phone spam fallback
-        phone = _normalize_phone(args[0])
-        if not phone:
-            return {"ok": False, "error": "Invalid phone or IDs"}
-        mark_spam(phone)
-        resolve_by_phone(phone, status="SPAM")
-        return {"ok": True, "cmd": "SPAM", "phone": phone, "text": f"Sentinel: Marked SPAM {phone}."}
-
-    return {"ok": False, "error": "Unknown command"}
-
-def _parse_issue_id(token: str) -> Optional[int]:
-    t = (token or "").strip()
-    if t.startswith("#"):
-        t = t[1:]
-    return int(t) if t.isdigit() else None
-
 def get_issue_by_id(issue_id: int) -> Optional[sqlite3.Row]:
     conn = db()
     row = conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -1103,198 +925,6 @@ async def ghl_webhook_raw(request: Request):
     _log_raw_event("ghl_raw", payload)
     return {"received": True}
 
-@app.post("/webhook/ghl/inbound_sms")
-async def inbound_sms(request: Request):
-    """
-    Final SMS Logic (Locked):
-
-    Inbound SMS webhook:
-      - Internal manager SMS:
-          - Recognized command words (list/open/resolve/spam/note/more) are parsed by handle_command
-          - Non-command internal texts are ignored
-      - Customer inbound:
-          - If no OPEN SMS issue for conversation (preferred) -> create issue
-            store first_inbound_ts, conversation_id, inbound_count=1
-            DO NOT reset due_ts later
-          - Else update last_inbound_ts and inbound_count += 1
-
-    conversation_id is looked up via /conversations/search using contact_id (preferred) or phone.
-    """
-    _auth_or_401(request)
-    payload = await _parse_request_payload(request)
-    _log_raw_event("inbound_sms", payload)
-
-    text = _extract_text(payload)
-    contact_id = _extract_contact_id(payload)
-    from_phone = _extract_from_phone(payload)
-    conversation_id = _extract_conversation_id(payload)
-
-    contact_name = _extract_contact_name(payload)
-    if not contact_name and contact_id:
-        try:
-            contact_name = await ghl_get_contact_name(contact_id)
-        except Exception:
-            contact_name = None
-    direction = _extract_direction(payload)
-    contact_type = _extract_contact_type(payload)
-    is_internal = _is_internal_sender(contact_type, contact_id)
-    who = _flow_who(contact_name, from_phone, contact_id)
-
-    now_local = _now_local()
-    created_ts = now_local.isoformat()
-    due_ts = add_business_hours(now_local, SMS_SLA_HOURS).isoformat()
-
-    # If conversation_id wasn't in the payload, resolve via GHL search (do early so grace check can work)
-    if not conversation_id:
-        try:
-            conversation_id = await ghl_find_conversation_id_for_contact(contact_id, from_phone)
-        except Exception:
-            conversation_id = None
-
-    # Track internal activity so customer replies within a grace window don't create false positives
-    if conversation_id and is_internal:
-        set_last_internal_outbound(conversation_id, created_ts, contact_id)
-
-    if direction in ("outbound", "outgoing"):
-        _flow_log("sms.ignored_outbound", who=who, contact_id=contact_id, conversation_id=conversation_id)
-        return {"received": True, "ignored": "outbound"}
-
-    # Internal manager commands (no "SENTINEL" prefix required; handled by handle_command)
-    if is_internal:
-        result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
-
-        # Only respond if it was actually a recognized command
-        if result.get("ok") and result.get("text") and contact_id:
-            try:
-                conv_id = await _manager_conversation_for_contact(contact_id)
-                if conv_id:
-                    await ghl_send_message(conv_id, contact_id, result["text"])
-            except Exception:
-                pass
-            _flow_log("sms.internal_command", who=who, contact_id=contact_id, command=result.get("cmd"))
-            return {"received": True, "command": True, "result": result}
-
-        # internal non-command
-        _flow_log("sms.ignored_internal_non_command", who=who, contact_id=contact_id)
-        return {"received": True, "ignored": "internal_non_command"}
-
-    # Customer "ack/close-out" after a staff reply:
-    # If we have evidence of a recent *staff* outbound in this conversation, suppress low-signal acknowledgements
-    # like "thanks", "👍", "fixed it", etc. This prevents false-positive issues when the customer replies last.
-    if conversation_id and ACK_CLOSE_ENABLED:
-        last_internal_ts = get_last_internal_outbound(conversation_id)
-        last_dt = _parse_iso_dt(last_internal_ts)
-        if last_dt:
-            last_dt_local = last_dt.astimezone(ZoneInfo(TZ_NAME)) if last_dt.tzinfo else last_dt.replace(tzinfo=ZoneInfo(TZ_NAME))
-            if ACK_CLOSE_WINDOW_MODE == "eod":
-                window_end = _business_day_end_for(last_dt_local)
-                within_window = (now_local >= last_dt_local) and (now_local <= window_end)
-            else:
-                delta = now_local - last_dt_local
-                within_window = 0 <= delta.total_seconds() <= (ACK_CLOSE_WINDOW_HOURS * 3600.0)
-
-            if within_window and _is_ack_closeout(text):
-                _flow_log(
-                    "sms.ignored_ack_closeout",
-                    who=who,
-                    contact_id=contact_id,
-                    conversation_id=conversation_id,
-                )
-                return {"received": True, "ignored": "ack_closeout_after_staff_reply"}
-
-    ai_suppress, ai_gate = await _ai_inbound_should_suppress(conversation_id)
-    if ai_gate is not None:
-        _flow_log(
-            "ai_gate.inbound_sms",
-            who=who,
-            contact_id=contact_id,
-            conversation_id=conversation_id,
-            needs_follow_up=str(ai_gate.get("needs_follow_up")),
-            confidence=float(ai_gate.get("confidence") or 0.0),
-            suppressed=bool(ai_suppress),
-        )
-    if ai_suppress:
-        return {"received": True, "ignored": "ai_inbound_suppress"}
-
-    conn = db()
-
-    row = None
-    if conversation_id:
-        row = conn.execute(
-            "SELECT * FROM issues WHERE status IN ('PENDING','OPEN') AND issue_type='SMS' AND conversation_id=? ORDER BY id DESC LIMIT 1",
-            (conversation_id,)
-        ).fetchone()
-
-    if row is None and from_phone:
-        row = conn.execute(
-            "SELECT * FROM issues WHERE status IN ('PENDING','OPEN') AND issue_type='SMS' AND phone=? ORDER BY id DESC LIMIT 1",
-            (from_phone,)
-        ).fetchone()
-
-    if row is None:
-        meta = {
-            "last_text": text[:500],
-            "source": "inbound_sms_webhook",
-        }
-        if contact_name:
-            meta["contact_name"] = contact_name
-        cur = conn.execute("""
-            INSERT INTO issues
-              (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
-               first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
-            VALUES
-              ('SMS', ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, 1, 0, ?)
-        """, (
-            contact_id, from_phone, contact_name or None, created_ts, due_ts, json.dumps(meta),
-            created_ts, created_ts, conversation_id
-        ))
-        _flow_log(
-            "sms.issue_created",
-            issue_id=cur.lastrowid,
-            who=who,
-            contact_id=contact_id,
-            conversation_id=conversation_id,
-            status="PENDING",
-            due_ts=due_ts,
-        )
-    else:
-        meta = {}
-        try:
-            if row["meta"]:
-                meta = json.loads(row["meta"])
-        except Exception:
-            meta = {}
-
-        meta["last_text"] = text[:500]
-        meta["updated_by"] = "inbound_sms_webhook"
-
-        if contact_name and not meta.get("contact_name"):
-            meta["contact_name"] = contact_name
-
-        conn.execute("""
-            UPDATE issues
-            SET last_inbound_ts=?,
-                inbound_count=COALESCE(inbound_count,0)+1,
-                contact_id=COALESCE(contact_id, ?),
-                phone=COALESCE(phone, ?),
-                conversation_id=COALESCE(conversation_id, ?),
-                contact_name=CASE WHEN (contact_name IS NULL OR contact_name='') THEN ? ELSE contact_name END,
-                meta=?
-            WHERE id=?
-        """, (created_ts, contact_id, from_phone, conversation_id, contact_name or None, json.dumps(meta), row["id"]))
-        _flow_log(
-            "sms.issue_updated",
-            issue_id=row["id"],
-            who=who,
-            contact_id=contact_id,
-            conversation_id=conversation_id,
-            status=row["status"],
-        )
-
-    conn.commit()
-    conn.close()
-    return {"received": True, "issue_created_or_updated": True}
-
 @app.post("/webhook/ghl/unanswered_call")
 async def unanswered_call(request: Request):
     """
@@ -1493,6 +1123,37 @@ def _msg_is_staff_outbound(m: Dict[str, Any]) -> bool:
     if not allow:
         return False
     return uid in allow
+
+
+async def _recent_staff_outbound_ts(conversation_id: str) -> Optional[dt.datetime]:
+    try:
+        msgs = await ghl_list_messages(conversation_id, limit=30)
+    except Exception:
+        return None
+
+    latest_staff_ts: Optional[dt.datetime] = None
+    latest_staff_uid: Optional[str] = None
+    for m in msgs:
+        if not _msg_is_staff_outbound(m):
+            continue
+        mts = _msg_ts(m)
+        if mts is None:
+            continue
+        if latest_staff_ts is None or mts > latest_staff_ts:
+            latest_staff_ts = mts
+            latest_staff_uid = str(m.get("userId") or "")
+
+    if latest_staff_ts is not None:
+        try:
+            set_last_internal_outbound(
+                conversation_id,
+                latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
+                latest_staff_uid or None,
+            )
+        except Exception:
+            pass
+
+    return latest_staff_ts
 
 
 def _set_issue_status(issue_id: int, status: str) -> None:
@@ -2445,6 +2106,48 @@ def _is_escalated(issue_type: str, first_inbound_ts: Optional[str], created_ts: 
 async def _manager_conversation_for_contact(contact_id: str) -> Optional[str]:
     # lookup via conversations/search?contactId=...
     return await ghl_find_conversation_id_for_contact(contact_id, None)
+
+
+register_sms_routes(
+    app,
+    SMSRouteDeps(
+        tz_name=TZ_NAME,
+        sms_sla_hours=SMS_SLA_HOURS,
+        ack_close_enabled=ACK_CLOSE_ENABLED,
+        ack_close_window_mode=ACK_CLOSE_WINDOW_MODE,
+        ack_close_window_hours=ACK_CLOSE_WINDOW_HOURS,
+        ack_close_max_len=ACK_CLOSE_MAX_LEN,
+        internal_contact_ids=INTERNAL_CONTACT_IDS,
+        auth_or_401=_auth_or_401,
+        parse_request_payload=_parse_request_payload,
+        log_raw_event=_log_raw_event,
+        flow_who=_flow_who,
+        now_local=_now_local,
+        add_business_hours=add_business_hours,
+        ghl_find_conversation_id_for_contact=ghl_find_conversation_id_for_contact,
+        set_last_internal_outbound=set_last_internal_outbound,
+        manager_conversation_for_contact=_manager_conversation_for_contact,
+        ghl_send_message=ghl_send_message,
+        recent_staff_outbound_ts=_recent_staff_outbound_ts,
+        flow_log=_flow_log,
+        get_last_internal_outbound=get_last_internal_outbound,
+        parse_iso_dt=_parse_iso_dt,
+        business_day_end_for=_business_day_end_for,
+        ai_inbound_should_suppress=_ai_inbound_should_suppress,
+        db=db,
+        ghl_get_contact_name=ghl_get_contact_name,
+        list_open_issues=list_open_issues,
+        set_issue_contact_name=_set_issue_contact_name,
+        render_list_like_summary=_render_list_like_summary,
+        get_issue_by_id=get_issue_by_id,
+        add_note=add_note,
+        resolve_by_id=resolve_by_id,
+        resolve_target=resolve_target,
+        mark_spam=mark_spam,
+        resolve_by_phone=resolve_by_phone,
+        ghl_conversation_link=ghl_conversation_link,
+    ),
+)
 
 def _summary_title(slot: str) -> str:
     s = slot.lower()
