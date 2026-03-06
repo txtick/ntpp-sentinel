@@ -28,6 +28,7 @@ class SMSRouteDeps:
     ack_close_window_mode: str
     ack_close_window_hours: float
     ack_close_max_len: int
+    ack_close_ignore_window_for_pure_ack: bool
     internal_contact_ids: Set[str]
     auth_or_401: Callable[[Request], None]
     parse_request_payload: Callable[[Request], Awaitable[Dict[str, Any]]]
@@ -279,9 +280,10 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
         if conversation_id and deps.ack_close_enabled:
             last_internal_ts = deps.get_last_internal_outbound(conversation_id)
             last_dt = deps.parse_iso_dt(last_internal_ts)
+            ack_like = is_ack_closeout(text, max_len=deps.ack_close_max_len)
             # Fallback: reaction/ack can arrive before periodic jobs update cached internal outbound ts.
             # If payload looks like close-out and cache is empty, probe recent conversation messages.
-            if last_dt is None and is_ack_closeout(text, max_len=deps.ack_close_max_len):
+            if last_dt is None and ack_like:
                 try:
                     last_dt = await deps.recent_staff_outbound_ts(conversation_id)
                 except Exception:
@@ -299,7 +301,16 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                     delta = now_local - last_dt_local
                     within_window = 0 <= delta.total_seconds() <= (deps.ack_close_window_hours * 3600.0)
 
-                if within_window and is_ack_closeout(text, max_len=deps.ack_close_max_len):
+                suppress_for_ack = within_window
+                if (
+                    not suppress_for_ack
+                    and deps.ack_close_ignore_window_for_pure_ack
+                    and ack_like
+                    and now_local >= last_dt_local
+                ):
+                    suppress_for_ack = True
+
+                if suppress_for_ack and ack_like:
                     deps.flow_log(
                         "sms.ignored_ack_closeout",
                         who=who,

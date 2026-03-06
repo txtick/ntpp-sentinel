@@ -84,6 +84,7 @@ ACK_CLOSE_ENABLED = os.getenv("ACK_CLOSE_ENABLED", "1").lower() in ("1","true","
 ACK_CLOSE_WINDOW_MODE = os.getenv("ACK_CLOSE_WINDOW_MODE", "eod").lower()  # 'eod' | 'hours'
 ACK_CLOSE_WINDOW_HOURS = float(os.getenv("ACK_CLOSE_WINDOW_HOURS", str(INTERNAL_REPLY_GRACE_HOURS)))
 ACK_CLOSE_MAX_LEN = int(os.getenv("ACK_CLOSE_MAX_LEN", "80"))
+ACK_CLOSE_IGNORE_WINDOW_FOR_PURE_ACK = os.getenv("ACK_CLOSE_IGNORE_WINDOW_FOR_PURE_ACK", "1").lower() in ("1","true","yes","on")
 
 # Limits to keep SMS short and low-noise
 SUMMARY_MAX_ITEMS_PER_SECTION = int(os.getenv("SUMMARY_MAX_ITEMS_PER_SECTION", "8"))
@@ -1124,6 +1125,16 @@ def _msg_is_staff_outbound(m: Dict[str, Any]) -> bool:
         return False
     return uid in allow
 
+def _msg_is_call_resolution_outbound(m: Dict[str, Any]) -> bool:
+    """
+    CALL issue resolution signal:
+      - any outbound activity in the conversation counts as a follow-up
+    This intentionally includes outbound call log entries that may not carry userId.
+    """
+    if not isinstance(m, dict):
+        return False
+    return _msg_direction(m) == "outbound"
+
 
 async def _recent_staff_outbound_ts(conversation_id: str) -> Optional[dt.datetime]:
     try:
@@ -1339,7 +1350,7 @@ async def poll_resolver(request: Request, limit: int = 200):
         latest_staff_uid: Optional[str] = None
 
         for m in msgs:
-            if _msg_is_staff_outbound(m):
+            if _msg_is_call_resolution_outbound(m):
                 out_count += 1
                 mts0 = _msg_ts(m)
                 if mts0 is not None:
@@ -1942,7 +1953,7 @@ async def verify_pending(request: Request, limit: int = 200):
         latest_staff_uid: Optional[str] = None
 
         for m in msgs:
-            if _msg_is_staff_outbound(m):
+            if _msg_is_call_resolution_outbound(m):
                 out_count += 1
                 mts0 = _msg_ts(m)
                 if mts0 is not None:
@@ -2117,6 +2128,7 @@ register_sms_routes(
         ack_close_window_mode=ACK_CLOSE_WINDOW_MODE,
         ack_close_window_hours=ACK_CLOSE_WINDOW_HOURS,
         ack_close_max_len=ACK_CLOSE_MAX_LEN,
+        ack_close_ignore_window_for_pure_ack=ACK_CLOSE_IGNORE_WINDOW_FOR_PURE_ACK,
         internal_contact_ids=INTERNAL_CONTACT_IDS,
         auth_or_401=_auth_or_401,
         parse_request_payload=_parse_request_payload,
