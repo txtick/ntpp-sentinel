@@ -116,6 +116,50 @@ WHERE payload LIKE '%' || '$PHONE' || '%'
 ORDER BY id DESC
 LIMIT ${LIMIT_EVENTS};
 "
+echo
+echo "=== 6b) Unanswered-call evidence for ${PHONE} ==="
+sqlite3 -header -column "$DB" "
+SELECT
+  id,
+  received_ts,
+  source,
+  COALESCE(
+    json_extract(payload,'$.voicemail_route'),
+    json_extract(payload,'$.data.voicemail_route'),
+    json_extract(payload,'$.message.voicemail_route'),
+    ''
+  ) AS voicemail_route,
+  COALESCE(
+    json_extract(payload,'$.sentinel_missed_call'),
+    json_extract(payload,'$.data.sentinel_missed_call'),
+    json_extract(payload,'$.message.sentinel_missed_call'),
+    ''
+  ) AS sentinel_missed_call,
+  COALESCE(
+    json_extract(payload,'$.missed_call'),
+    json_extract(payload,'$.data.missed_call'),
+    json_extract(payload,'$.message.missed_call'),
+    ''
+  ) AS missed_call,
+  COALESCE(
+    json_extract(payload,'$.is_missed_call'),
+    json_extract(payload,'$.data.is_missed_call'),
+    json_extract(payload,'$.message.is_missed_call'),
+    ''
+  ) AS is_missed_call,
+  COALESCE(
+    json_extract(payload,'$.conversationId'),
+    json_extract(payload,'$.conversation_id'),
+    json_extract(payload,'$.data.conversationId'),
+    json_extract(payload,'$.data.conversation_id'),
+    ''
+  ) AS conversation_id
+FROM raw_events
+WHERE source='unanswered_call'
+  AND payload LIKE '%' || '$PHONE' || '%'
+ORDER BY id DESC
+LIMIT ${LIMIT_EVENTS};
+"
 
 echo
 echo "=== 7) Latest inbound + decision trace (most relevant) ==="
@@ -131,8 +175,8 @@ if command -v rg >/dev/null 2>&1; then
   LOG_CMD="docker compose logs --tail=${LOG_TAIL} sentinel"
 
   echo
-  echo "--- decision events (FLOW + SMS decisions) ---"
-  eval "$LOG_CMD" | rg "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.promoted_open|sms\\.auto_resolved" || true
+  echo "--- decision events (FLOW + SMS/CALL decisions) ---"
+  eval "$LOG_CMD" | rg "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.promoted_open|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
 
   if [[ -n "${EVENT_CONTACT_ID}" ]]; then
     echo
@@ -149,8 +193,8 @@ else
   LOG_CMD="docker compose logs --tail=${LOG_TAIL} sentinel"
 
   echo
-  echo "--- decision events (FLOW + SMS decisions) ---"
-  eval "$LOG_CMD" | grep -E "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.promoted_open|sms\\.auto_resolved" || true
+  echo "--- decision events (FLOW + SMS/CALL decisions) ---"
+  eval "$LOG_CMD" | grep -E "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.promoted_open|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
 
   if [[ -n "${EVENT_CONTACT_ID}" ]]; then
     echo
