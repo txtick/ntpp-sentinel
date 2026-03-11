@@ -117,7 +117,9 @@ echo
 echo "=== 5) Issues for ${PHONE} ==="
 sqlite3 -header -column "$DB" "
 SELECT id, issue_type, status, COALESCE(contact_name,'(no name)') AS name, phone,
-       conversation_id, created_ts, due_ts, resolved_ts, breach_notified_ts
+  conversation_id, created_ts, due_ts, resolved_ts, breach_notified_ts,
+  COALESCE(json_extract(meta,'$.resolved_by'),'') AS resolved_by,
+  COALESCE(json_extract(meta,'$.resolution_signal'),'') AS resolution_signal
 FROM issues
 WHERE phone='$PHONE'
 ORDER BY id DESC
@@ -263,23 +265,31 @@ else
     -H "LocationId: ${GHL_LOC}")"
   if command -v jq >/dev/null 2>&1; then
     printf '%s\n' "$RESP" | jq -r '
-      if (.messages | type) == "array" then
-        (.messages[] | [
-          (.dateAdded // ""),
-          (.direction // ""),
-          (.type // .messageType // ""),
-          (.userId // ""),
-          (.callStatus // .status // ""),
-          ((.body // .message // .text // "") | tostring | gsub("[\\r\\n]+"; " ") | .[0:120])
-        ] | @tsv)
-      else
+      def msg_list:
+        if (.messages | type) == "array" then .messages
+        elif (.messages | type) == "object" and ((.messages.messages | type) == "array") then .messages.messages
+        elif (.data | type) == "array" then .data
+        elif (.data | type) == "object" and ((.data.messages | type) == "array") then .data.messages
+        else []
+        end;
+      msg_list as $msgs
+      | if (($msgs | length) > 0) then
+          ($msgs[] | [
+            (.dateAdded // ""),
+            (.direction // ""),
+            (.type // .messageType // ""),
+            (.userId // ""),
+            (.callStatus // .status // ""),
+            ((.body // .message // .text // "") | tostring | gsub("[\\r\\n]+"; " ") | .[0:120])
+          ] | @tsv)
+        else
         (
-          "No messages array in API response"
+          "No message list found in API response"
           + (if (type == "object") then " | keys=" + ((keys | join(",")) // "") else "" end)
           + (if (.statusCode != null) then " | statusCode=" + (.statusCode|tostring) else "" end)
           + (if (.message != null) then " | message=" + (.message|tostring) else "" end)
         )
-      end'
+        end'
   else
     printf '%s\n' "$RESP"
   fi
