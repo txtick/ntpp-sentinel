@@ -148,18 +148,21 @@ SELECT
   ) AS voicemail_route,
   COALESCE(
     json_extract(payload,'$.sentinel_missed_call'),
+    json_extract(payload,'$.customData.sentinel_missed_call'),
     json_extract(payload,'$.data.sentinel_missed_call'),
     json_extract(payload,'$.message.sentinel_missed_call'),
     ''
   ) AS sentinel_missed_call,
   COALESCE(
     json_extract(payload,'$.missed_call'),
+    json_extract(payload,'$.customData.missed_call'),
     json_extract(payload,'$.data.missed_call'),
     json_extract(payload,'$.message.missed_call'),
     ''
   ) AS missed_call,
   COALESCE(
     json_extract(payload,'$.is_missed_call'),
+    json_extract(payload,'$.customData.is_missed_call'),
     json_extract(payload,'$.data.is_missed_call'),
     json_extract(payload,'$.message.is_missed_call'),
     ''
@@ -270,7 +273,12 @@ else
           ((.body // .message // .text // "") | tostring | gsub("[\\r\\n]+"; " ") | .[0:120])
         ] | @tsv)
       else
-        "No messages array in API response"
+        (
+          "No messages array in API response"
+          + (if (type == "object") then " | keys=" + ((keys | join(",")) // "") else "" end)
+          + (if (.statusCode != null) then " | statusCode=" + (.statusCode|tostring) else "" end)
+          + (if (.message != null) then " | message=" + (.message|tostring) else "" end)
+        )
       end'
   else
     printf '%s\n' "$RESP"

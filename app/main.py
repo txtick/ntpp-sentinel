@@ -106,6 +106,22 @@ SMS_SLA_HOURS = float(os.getenv("SMS_SLA_HOURS", "2"))
 CALL_SLA_HOURS = float(os.getenv("CALL_SLA_HOURS", "2"))
 CALL_DEDUPE_WINDOW_MINUTES = int(os.getenv("CALL_DEDUPE_WINDOW_MINUTES", "240"))
 CALL_RESOLVE_LOOKBACK_MINUTES = float(os.getenv("CALL_RESOLVE_LOOKBACK_MINUTES", "15"))
+CALL_RESOLVE_POSITIVE_STATUSES = [
+    re.sub(r"[^a-z0-9\-]", "", re.sub(r"[\s_]+", "-", s.strip().lower()))
+    for s in os.getenv(
+        "CALL_RESOLVE_POSITIVE_STATUSES",
+        "answered,connected,completed,successful,handled",
+    ).split(",")
+    if s.strip()
+]
+CALL_RESOLVE_NEGATIVE_STATUSES = [
+    re.sub(r"[^a-z0-9\-]", "", re.sub(r"[\s_]+", "-", s.strip().lower()))
+    for s in os.getenv(
+        "CALL_RESOLVE_NEGATIVE_STATUSES",
+        "missed,no-answer,unanswered,busy,failed,canceled,cancelled,voicemail,ringing",
+    ).split(",")
+    if s.strip()
+]
 CALL_REQUIRE_MISSED_MARKER = os.getenv("CALL_REQUIRE_MISSED_MARKER", "1").lower() in ("1", "true", "yes", "on")
 CALL_MISSED_MARKER_KEYS = [
     s.strip() for s in os.getenv("CALL_MISSED_MARKER_KEYS", "sentinel_missed_call,missed_call,is_missed_call").split(",") if s.strip()
@@ -1008,6 +1024,80 @@ def _msg_is_call_resolution_outbound(m: Dict[str, Any]) -> bool:
     return _msg_direction(m) == "outbound"
 
 
+def _normalize_status_token(value: Any) -> str:
+    s = str(value or "").strip().lower()
+    if not s:
+        return ""
+    s = re.sub(r"[\s_]+", "-", s)
+    s = re.sub(r"[^a-z0-9\-]", "", s)
+    return s
+
+
+def _msg_call_status_tokens(m: Dict[str, Any]) -> List[str]:
+    if not isinstance(m, dict):
+        return []
+
+    keys = ("callStatus", "call_status", "status", "callDisposition", "disposition")
+    containers = ("meta", "metadata", "call", "customData", "extra")
+
+    out: List[str] = []
+
+    def _collect(obj: Any) -> None:
+        if not isinstance(obj, dict):
+            return
+        for k in keys:
+            tok = _normalize_status_token(obj.get(k))
+            if tok:
+                out.append(tok)
+
+    _collect(m)
+    for c in containers:
+        _collect(m.get(c))
+
+    deduped: List[str] = []
+    seen = set()
+    for tok in out:
+        if tok not in seen:
+            deduped.append(tok)
+            seen.add(tok)
+    return deduped
+
+
+def _status_matches(token: str, candidates: List[str]) -> bool:
+    if token in candidates:
+        return True
+    return any(token.startswith(f"{c}-") for c in candidates)
+
+
+def _msg_call_resolution_signal(m: Dict[str, Any]) -> Optional[str]:
+    """
+    Returns the resolution signal for CALL issues, if present.
+
+    Signals:
+      - "outbound": legacy behavior, any outbound activity
+      - "call_status_positive": explicit answered/completed call status
+    """
+    if not isinstance(m, dict):
+        return None
+
+    if _msg_is_call_resolution_outbound(m):
+        return "outbound"
+
+    tokens = _msg_call_status_tokens(m)
+    if not tokens:
+        return None
+
+    has_negative = any(_status_matches(t, CALL_RESOLVE_NEGATIVE_STATUSES) for t in tokens)
+    if has_negative:
+        return None
+
+    has_positive = any(_status_matches(t, CALL_RESOLVE_POSITIVE_STATUSES) for t in tokens)
+    if has_positive:
+        return "call_status_positive"
+
+    return None
+
+
 async def _recent_staff_outbound_ts(conversation_id: str) -> Optional[dt.datetime]:
     try:
         msgs = await ghl_list_messages(conversation_id, limit=30)
@@ -1201,7 +1291,13 @@ async def poll_resolver(request: Request, limit: int = 200):
 
         try:
             msgs = await ghl_list_messages(conv_id, limit=50)
-        except HTTPException:
+        except HTTPException as e:
+            _flow_log(
+                "call.resolver_fetch_error",
+                issue_id=issue_id,
+                conversation_id=conv_id,
+                status_code=getattr(e, "status_code", None),
+            )
             continue
 
         created = _parse_iso_dt(r["created_ts"])
@@ -1217,12 +1313,15 @@ async def poll_resolver(request: Request, limit: int = 200):
                 created_utc = None
                 cutoff_utc = None
 
-        outbound_after = False
+        call_resolution_after = False
+        resolution_signal: Optional[str] = None
         out_count = 0
         latest_staff_ts: Optional[dt.datetime] = None
         latest_staff_uid: Optional[str] = None
 
         for m in msgs:
+            signal = _msg_call_resolution_signal(m)
+
             if _msg_is_call_resolution_outbound(m):
                 out_count += 1
                 mts0 = _msg_ts(m)
@@ -1230,16 +1329,21 @@ async def poll_resolver(request: Request, limit: int = 200):
                     if latest_staff_ts is None or mts0 > latest_staff_ts:
                         latest_staff_ts = mts0
                         latest_staff_uid = str(m.get("userId") or "")
-                if cutoff_utc is None:
-                    continue
-                mts = _msg_ts(m)
-                if mts is None:
-                    continue
-                try:
-                    if mts.astimezone(dt.timezone.utc) > cutoff_utc:
-                        outbound_after = True
-                except Exception:
-                    pass
+
+            if signal is None or cutoff_utc is None:
+                continue
+
+            mts = _msg_ts(m)
+            if mts is None:
+                continue
+
+            try:
+                if mts.astimezone(dt.timezone.utc) > cutoff_utc:
+                    call_resolution_after = True
+                    if resolution_signal is None:
+                        resolution_signal = signal
+            except Exception:
+                pass
 
         if latest_staff_ts is not None:
             try:
@@ -1258,7 +1362,7 @@ async def poll_resolver(request: Request, limit: int = 200):
             conn2.commit()
             call_updated_counts += 1
 
-        if outbound_after:
+        if call_resolution_after:
             now = _now_local().isoformat()
             conn2.execute("""
                 UPDATE issues
@@ -1267,12 +1371,22 @@ async def poll_resolver(request: Request, limit: int = 200):
             """, (now, issue_id))
             conn2.commit()
             call_resolved += 1
-            _set_resolved_metadata(issue_id, "RULE_POLL_RESOLVER_CALL_OUTBOUND")
+            resolved_by = (
+                "RULE_POLL_RESOLVER_CALL_OUTBOUND"
+                if resolution_signal == "outbound"
+                else "RULE_POLL_RESOLVER_CALL_ACTIVITY"
+            )
+            _set_resolved_metadata(
+                issue_id,
+                resolved_by,
+                {"resolution_signal": resolution_signal or "unknown"},
+            )
             _flow_log(
                 "call.auto_resolved",
                 issue_id=issue_id,
                 conversation_id=conv_id,
                 via="poll_resolver",
+                signal=resolution_signal or "unknown",
             )
 
         conn2.close()
