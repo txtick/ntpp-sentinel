@@ -358,7 +358,7 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                   (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
                    first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
                 VALUES
-                  ('SMS', ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, 1, 0, ?)
+                  ('SMS', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?)
             """,
                 (
                     contact_id,
@@ -378,7 +378,7 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                 who=who,
                 contact_id=contact_id,
                 conversation_id=conversation_id,
-                status="PENDING",
+                status="OPEN",
                 due_ts=due_ts,
             )
         else:

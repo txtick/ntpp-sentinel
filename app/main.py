@@ -600,7 +600,7 @@ def resolve_by_id(issue_id: int, status: str = "RESOLVED") -> int:
     conn = db()
     now = _now_local().isoformat()
     cur = conn.execute(
-        "UPDATE issues SET status=?, resolved_ts=? WHERE status='OPEN' AND id=?",
+        "UPDATE issues SET status=?, resolved_ts=? WHERE status IN ('OPEN','PENDING') AND id=?",
         (status, now, issue_id),
     )
     conn.commit()
@@ -687,13 +687,13 @@ def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]
     total = conn.execute("""
         SELECT COUNT(*) AS n
         FROM issues
-        WHERE status='OPEN'
+        WHERE status IN ('OPEN','PENDING')
     """).fetchone()["n"]
 
     rows = conn.execute("""
         SELECT id, issue_type, phone, contact_id, contact_name, created_ts, due_ts, inbound_count, last_inbound_ts
         FROM issues
-        WHERE status='OPEN'
+        WHERE status IN ('OPEN','PENDING')
         ORDER BY due_ts ASC
         LIMIT ? OFFSET ?
     """, (limit, offset)).fetchall()
@@ -775,11 +775,11 @@ def _set_issue_contact_name(issue_id: int, name: str) -> None:
 def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
     conn = db()
     now = _now_local().isoformat()
-    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status='OPEN' AND phone=?", (phone,)).fetchall()]
+    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status IN ('OPEN','PENDING') AND phone=?", (phone,)).fetchall()]
     cur = conn.execute("""
         UPDATE issues
         SET status=?, resolved_ts=?
-        WHERE status='OPEN' AND phone=?
+        WHERE status IN ('OPEN','PENDING') AND phone=?
     """, (status, now, phone))
     conn.commit()
     conn.close()
@@ -791,11 +791,11 @@ def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
 def resolve_by_contact_id(contact_id: str, status: str = "RESOLVED") -> int:
     conn = db()
     now = _now_local().isoformat()
-    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status='OPEN' AND contact_id=?", (contact_id,)).fetchall()]
+    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status IN ('OPEN','PENDING') AND contact_id=?", (contact_id,)).fetchall()]
     cur = conn.execute("""
         UPDATE issues
         SET status=?, resolved_ts=?
-        WHERE status='OPEN' AND contact_id=?
+        WHERE status IN ('OPEN','PENDING') AND contact_id=?
     """, (status, now, contact_id))
     conn.commit()
     conn.close()
@@ -810,7 +810,7 @@ def resolve_by_name(name: str, status: str = "RESOLVED") -> int:
         return 0
 
     conn = db()
-    rows = conn.execute("SELECT id, meta FROM issues WHERE status='OPEN'").fetchall()
+    rows = conn.execute("SELECT id, meta FROM issues WHERE status IN ('OPEN','PENDING')").fetchall()
     matched_ids: List[int] = []
 
     for r in rows:
@@ -924,7 +924,7 @@ def _webhook_create_call_issue(
             issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
             conversation_id, first_inbound_ts, last_inbound_ts, inbound_count, outbound_count
         )
-        VALUES ('CALL', ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, 1, 0)
+        VALUES ('CALL', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, 1, 0)
         """,
         (
             contact_id,
@@ -1072,11 +1072,11 @@ def _has_outbound_after(msgs: List[Dict[str, Any]], first_inbound_ts: str) -> bo
 @app.post("/jobs/poll_resolver")
 async def poll_resolver(request: Request, limit: int = 200):
     """
-    For each OPEN SMS issue:
+        For each active SMS issue:
       Fetch messages for conversation_id
       Resolve if ANY outbound where dateAdded > first_inbound_ts
 
-    For each OPEN CALL issue:
+        For each active CALL issue:
       Fetch messages for conversation_id
       Resolve if ANY staff outbound where dateAdded > created_ts
     """
@@ -1095,7 +1095,7 @@ async def poll_resolver(request: Request, limit: int = 200):
     call_rows = conn.execute("""
         SELECT id, conversation_id, created_ts, outbound_count
         FROM issues
-        WHERE status='OPEN'
+        WHERE status IN ('OPEN','PENDING')
           AND issue_type='CALL'
           AND conversation_id IS NOT NULL
         ORDER BY due_ts ASC
@@ -1263,7 +1263,7 @@ async def poll_resolver(request: Request, limit: int = 200):
             conn2.execute("""
                 UPDATE issues
                 SET status='RESOLVED', resolved_ts=?
-                WHERE id=? AND status='OPEN'
+                WHERE id=? AND status IN ('OPEN','PENDING')
             """, (now, issue_id))
             conn2.commit()
             call_resolved += 1
@@ -1613,18 +1613,18 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
 
     conn = db()
 
-    # Overdue = OPEN and now >= due_ts
+        # Overdue = active and now >= due_ts
     overdue_sms = conn.execute("""
       SELECT *
       FROM issues
-      WHERE status='OPEN' AND issue_type='SMS' AND due_ts <= ?
+            WHERE status IN ('OPEN','PENDING') AND issue_type='SMS' AND due_ts <= ?
       ORDER BY due_ts ASC
     """, (now_iso,)).fetchall()
 
     overdue_calls = conn.execute("""
       SELECT *
       FROM issues
-      WHERE status='OPEN' AND issue_type='CALL' AND due_ts <= ?
+            WHERE status IN ('OPEN','PENDING') AND issue_type='CALL' AND due_ts <= ?
       ORDER BY due_ts ASC
     """, (now_iso,)).fetchall()
 
@@ -1655,14 +1655,14 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     overdue_sms = conn.execute("""
       SELECT *
       FROM issues
-      WHERE status='OPEN' AND issue_type='SMS' AND due_ts <= ?
+            WHERE status IN ('OPEN','PENDING') AND issue_type='SMS' AND due_ts <= ?
       ORDER BY due_ts ASC
     """, (now_iso,)).fetchall()
 
     overdue_calls = conn.execute("""
       SELECT *
       FROM issues
-      WHERE status='OPEN' AND issue_type='CALL' AND due_ts <= ?
+            WHERE status IN ('OPEN','PENDING') AND issue_type='CALL' AND due_ts <= ?
       ORDER BY due_ts ASC
     """, (now_iso,)).fetchall()
 
@@ -1790,7 +1790,7 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
     rows = conn.execute("""
       SELECT *
       FROM issues
-      WHERE status='OPEN'
+            WHERE status IN ('OPEN','PENDING')
         AND due_ts <= ?
         AND breach_notified_ts IS NULL
       ORDER BY due_ts ASC
@@ -1811,7 +1811,7 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
     rows = conn.execute("""
       SELECT *
       FROM issues
-      WHERE status='OPEN'
+            WHERE status IN ('OPEN','PENDING')
         AND due_ts <= ?
         AND breach_notified_ts IS NULL
       ORDER BY due_ts ASC

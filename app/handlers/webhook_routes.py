@@ -152,7 +152,7 @@ def register_webhook_routes(app: FastAPI, deps: WebhookRouteDeps) -> None:
             who=who,
             contact_id=contact_id,
             conversation_id=conversation_id,
-            status="PENDING",
+            status="OPEN",
             due_ts=due_ts,
         )
         return {"received": True, "issue_created": True}
