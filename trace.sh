@@ -80,6 +80,17 @@ ORDER BY id DESC
 LIMIT 1;
 ")"
 
+LATEST_UNANSWERED_RAW="$(sqlite3 -noheader -separator '|' "$DB" "
+SELECT
+  id,
+  received_ts
+FROM raw_events
+WHERE source='unanswered_call'
+  AND payload LIKE '%' || '$PHONE' || '%'
+ORDER BY id DESC
+LIMIT 1;
+")"
+
 EVENT_ID=""
 EVENT_TS=""
 EVENT_SOURCE=""
@@ -94,6 +105,12 @@ LATEST_ISSUE_STATUS=""
 LATEST_CONVERSATION_ID=""
 if [[ -n "$LATEST_ISSUE_RAW" ]]; then
   IFS='|' read -r LATEST_ISSUE_ID LATEST_ISSUE_STATUS LATEST_CONVERSATION_ID <<< "$LATEST_ISSUE_RAW"
+fi
+
+LATEST_UNANSWERED_ID=""
+LATEST_UNANSWERED_TS=""
+if [[ -n "$LATEST_UNANSWERED_RAW" ]]; then
+  IFS='|' read -r LATEST_UNANSWERED_ID LATEST_UNANSWERED_TS <<< "$LATEST_UNANSWERED_RAW"
 fi
 
 echo
@@ -162,6 +179,23 @@ LIMIT ${LIMIT_EVENTS};
 "
 
 echo
+echo "=== 6c) Latest unanswered_call payload (full) ==="
+if [[ -n "${LATEST_UNANSWERED_ID}" ]]; then
+  CALL_PAYLOAD="$(sqlite3 -noheader "$DB" "SELECT payload FROM raw_events WHERE id=${LATEST_UNANSWERED_ID} LIMIT 1;")"
+  if [[ -n "$CALL_PAYLOAD" ]]; then
+    if command -v jq >/dev/null 2>&1; then
+      printf '%s\n' "$CALL_PAYLOAD" | jq .
+    else
+      printf '%s\n' "$CALL_PAYLOAD"
+    fi
+  else
+    echo "No payload found for unanswered_call id ${LATEST_UNANSWERED_ID}"
+  fi
+else
+  echo "No unanswered_call payload found for this phone."
+fi
+
+echo
 echo "=== 7) Latest inbound + decision trace (most relevant) ==="
 echo "Latest event id: ${EVENT_ID:-n/a}"
 echo "Latest event ts: ${EVENT_TS:-n/a}"
@@ -206,5 +240,39 @@ else
     echo
     echo "--- filtered by conversation_id ${LATEST_CONVERSATION_ID} ---"
     eval "$LOG_CMD" | grep -F "${LATEST_CONVERSATION_ID}" || true
+  fi
+fi
+
+echo
+echo "=== 8) GHL conversation timeline (for resolver proof) ==="
+if [[ -z "${LATEST_CONVERSATION_ID}" ]]; then
+  echo "Skipped: no conversation_id found on latest issue for this phone."
+elif [[ -z "${GHL_TOKEN:-}" ]]; then
+  echo "Skipped: GHL_TOKEN not set in environment/.env."
+else
+  GHL_API="${GHL_BASE_URL:-https://services.leadconnectorhq.com}"
+  GHL_VER="${GHL_VERSION:-2021-07-28}"
+  GHL_LOC="${GHL_LOCATION_ID:-}"
+  RESP="$(curl -sS --get "${GHL_API%/}/conversations/${LATEST_CONVERSATION_ID}/messages" \
+    --data-urlencode "limit=50" \
+    -H "Authorization: Bearer ${GHL_TOKEN}" \
+    -H "Version: ${GHL_VER}" \
+    -H "LocationId: ${GHL_LOC}")"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$RESP" | jq -r '
+      if (.messages | type) == "array" then
+        (.messages[] | [
+          (.dateAdded // ""),
+          (.direction // ""),
+          (.type // .messageType // ""),
+          (.userId // ""),
+          (.callStatus // .status // ""),
+          ((.body // .message // .text // "") | tostring | gsub("[\\r\\n]+"; " ") | .[0:120])
+        ] | @tsv)
+      else
+        "No messages array in API response"
+      end'
+  else
+    printf '%s\n' "$RESP"
   fi
 fi
