@@ -19,7 +19,7 @@ valid_minute_step() {
 }
 
 # Defaults preserve current behavior.
-CRON_DOW="${CRON_DOW:-1-5}"
+CRON_DOW="${CRON_DOW:-1-6}"
 CRON_MORNING_HOUR="${CRON_MORNING_HOUR:-8}"
 CRON_MIDDAY_HOUR="${CRON_MIDDAY_HOUR:-11}"
 CRON_AFTERNOON_HOUR="${CRON_AFTERNOON_HOUR:-15}"
@@ -42,7 +42,7 @@ if ! printf '%s' "$CRON_BUSINESS_HOURS" | grep -Eq '^[0-9]{1,2}-[0-9]{1,2}$'; th
   CRON_BUSINESS_HOURS="8-16"
 fi
 if ! printf '%s' "$CRON_DOW" | grep -Eq '^[0-9,*/-]+$'; then
-  CRON_DOW="1-5"
+  CRON_DOW="1-6"
 fi
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"

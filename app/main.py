@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException # type: ignore
 import os, json, sqlite3, datetime as dt
 from typing import Any, Dict, Optional, List, Tuple
 import re
-import httpx
+import httpx # type: ignore
 from zoneinfo import ZoneInfo
 from db import db, init_db, ensure_schema, purge_raw_events
 from handlers.sms import (
@@ -166,8 +166,8 @@ def _is_ack_closeout(text: Optional[str]) -> bool:
 
 def _next_business_day(d: dt.datetime) -> dt.datetime:
     cur = d
-    # roll to next weekday if weekend
-    while cur.weekday() >= 5:
+    # roll past Sunday; Saturdays are business days during busy season
+    while cur.weekday() == 6:
         cur = cur + dt.timedelta(days=1)
     return cur
 
@@ -248,8 +248,8 @@ def _parse_ghl_date(value) -> Optional[dt.datetime]:
         return None
 
 def _is_business_time(ts: dt.datetime) -> bool:
-    # Mon-Fri in configured business-hour window.
-    if ts.weekday() >= 5:
+    # Mon-Sat in configured business-hour window.
+    if ts.weekday() == 6:
         return False
     start = ts.replace(hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0)
     end = ts.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
@@ -258,7 +258,7 @@ def _is_business_time(ts: dt.datetime) -> bool:
 def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
     cur = ts
     while True:
-        if cur.weekday() >= 5:
+        if cur.weekday() == 6:
             days_ahead = 7 - cur.weekday()
             cur = (cur + dt.timedelta(days=days_ahead)).replace(
                 hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
@@ -276,7 +276,7 @@ def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
 
 def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
     """
-    Deterministic business-hours adder: Mon-Fri, configured hours local time.
+    Deterministic business-hours adder: Mon-Sat, configured hours local time.
     Adds hours strictly across business windows.
     """
     if start_local.tzinfo is None:
@@ -295,7 +295,7 @@ def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
         cur = (cur + dt.timedelta(days=1)).replace(
             hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
         )
-        while cur.weekday() >= 5:
+        while cur.weekday() == 6:
             cur = (cur + dt.timedelta(days=1)).replace(
                 hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
             )
