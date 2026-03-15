@@ -31,6 +31,7 @@ from services.business_time import (
     fmt_as_of_local,
     fmt_date_local,
     fmt_dt_local,
+    is_escalated,
     is_recent,
     now_local as services_now_local,
     parse_ghl_date,
