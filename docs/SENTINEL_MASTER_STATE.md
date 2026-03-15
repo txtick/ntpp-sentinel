@@ -52,17 +52,15 @@ Statuses:
 
 SMS flow:
 - Customer inbound generally creates/updates `PENDING`.
-- `verify_pending` processes due `PENDING SMS`:
-  - Resolves if staff outbound exists after first inbound, or
-  - Resolves if ack-closeout is detected after staff reply, or
-  - Resolves if optional AI gate confidently says no follow-up needed, or
-  - Promotes to `OPEN`.
-- If `conversation_id` is missing for due `PENDING SMS`, verifier re-attempts lookup. If still missing, it promotes to `OPEN` (no stuck pending).
+- `poll_resolver` processes active `PENDING` and `OPEN` SMS issues:
+  - Resolves if staff outbound exists after first inbound.
+- `verify_pending` is a compatibility wrapper around `poll_resolver` and reports legacy promotion fields as `0`.
 
 CALL flow:
 - Controlled signal: `voicemail_route=tech_sentinel`.
 - Creates `PENDING CALL` with `due_ts`.
-- `verify_pending` resolves if valid staff outbound is detected after creation, else promotes to `OPEN`.
+- `poll_resolver` processes active `PENDING` and `OPEN` CALL issues and resolves when a valid call-resolution signal is found after creation.
+- `verify_pending` is a compatibility wrapper around `poll_resolver` and reports legacy promotion fields as `0`.
 
 ### 5. Auto-Resolve Rules
 
@@ -191,7 +189,7 @@ Raw event storage:
 - Incoming webhook payloads are persisted in `raw_events`.
 
 Operational flow logs:
-- `FLOW ...` single-line JSON logs show key transitions (`issue_created`, `promoted_open`, `auto_resolved`, `ignored_*`, `escalations.sent`, `ai_gate.decision`).
+- `FLOW ...` single-line JSON logs show key transitions (`issue_created`, `auto_resolved`, `ignored_*`, `escalations.sent`, `ai_gate.decision`).
 - Toggle: `FLOW_LOG_ENABLED`.
 
 ### 12. Database Tables (Important)
@@ -214,9 +212,6 @@ Notable `issues` fields:
 Common `resolved_by` values:
 - `AI_PRIMARY`
 - `AI_GATE`
-- `RULE_VERIFY_PENDING_SMS_OUTBOUND`
-- `RULE_VERIFY_PENDING_ACK_CLOSEOUT`
-- `RULE_VERIFY_PENDING_CALL_OUTBOUND`
 - `RULE_POLL_RESOLVER_SMS_OUTBOUND`
 - `RULE_POLL_RESOLVER_CALL_OUTBOUND`
 - `MANUAL_COMMAND_ID`

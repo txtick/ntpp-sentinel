@@ -215,7 +215,7 @@ if command -v rg >/dev/null 2>&1; then
 
   echo
   echo "--- decision events (FLOW + SMS/CALL decisions) ---"
-  eval "$LOG_CMD" | rg "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.promoted_open|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
+  eval "$LOG_CMD" | rg "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
 
   if [[ -n "${EVENT_CONTACT_ID}" ]]; then
     echo
@@ -233,7 +233,7 @@ else
 
   echo
   echo "--- decision events (FLOW + SMS/CALL decisions) ---"
-  eval "$LOG_CMD" | grep -E "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.promoted_open|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
+  eval "$LOG_CMD" | grep -E "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
 
   if [[ -n "${EVENT_CONTACT_ID}" ]]; then
     echo

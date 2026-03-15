@@ -24,6 +24,44 @@ from services.ai_gate import (
     ai_gate_classify as _ai_gate_classify,
     ai_inbound_should_suppress as _ai_inbound_should_suppress_impl,
 )
+from services.business_time import (
+    BusinessTimeConfig,
+    add_business_hours as add_business_hours_for_config,
+    business_day_end_for,
+    fmt_as_of_local,
+    fmt_date_local,
+    fmt_dt_local,
+    is_recent,
+    now_local as services_now_local,
+    parse_ghl_date,
+    parse_hhmm,
+    parse_iso,
+    parse_iso_dt,
+)
+from services.issues import (
+    add_note as issue_add_note,
+    get_issue_by_id as issue_get_issue_by_id,
+    kv_get,
+    kv_set,
+    list_open_issues as issue_list_open_issues,
+    looks_like_contact_id,
+    render_list_like_summary,
+    resolve_by_contact_id as issue_resolve_by_contact_id,
+    resolve_by_id as issue_resolve_by_id,
+    resolve_by_name as issue_resolve_by_name,
+    resolve_by_phone as issue_resolve_by_phone,
+    set_issue_contact_name,
+    set_resolved_metadata as issue_set_resolved_metadata,
+)
+from services.summary import (
+    build_section_lines,
+    display_name,
+    enrich_issues_with_contact_names,
+    fetch_overdue_issues,
+    fetch_resolved_since,
+    fetch_unnotified_breaches,
+    summary_title,
+)
 
 # ==========================
 # Config
@@ -34,24 +72,20 @@ TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 GHL_APP_BASE = os.getenv("GHL_APP_BASE", "https://app.gohighlevel.com")
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "")
 
-def _parse_hhmm(value: str, fallback_hour: int, fallback_minute: int) -> Tuple[int, int]:
-    s = (value or "").strip()
-    m = re.match(r"^(\d{1,2}):(\d{2})$", s)
-    if not m:
-        return fallback_hour, fallback_minute
-    h = int(m.group(1))
-    mm = int(m.group(2))
-    if h < 0 or h > 23 or mm < 0 or mm > 59:
-        return fallback_hour, fallback_minute
-    return h, mm
-
-_bh_start_h, _bh_start_m = _parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
-_bh_end_h, _bh_end_m = _parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
+_bh_start_h, _bh_start_m = parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
+_bh_end_h, _bh_end_m = parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
 _bh_start_total = (_bh_start_h * 60) + _bh_start_m
 _bh_end_total = (_bh_end_h * 60) + _bh_end_m
 if _bh_end_total <= _bh_start_total:
     _bh_start_h, _bh_start_m = 8, 0
     _bh_end_h, _bh_end_m = 17, 0
+BUSINESS_TIME = BusinessTimeConfig(
+    tz_name=TZ_NAME,
+    start_hour=_bh_start_h,
+    start_minute=_bh_start_m,
+    end_hour=_bh_end_h,
+    end_minute=_bh_end_m,
+)
 
 # GoHighLevel / LeadConnector API
 GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com")
@@ -164,28 +198,8 @@ def get_last_internal_outbound(conversation_id: str) -> Optional[str]:
 def _is_ack_closeout(text: Optional[str]) -> bool:
     return _sms_is_ack_closeout(text, max_len=ACK_CLOSE_MAX_LEN)
 
-def _next_business_day(d: dt.datetime) -> dt.datetime:
-    cur = d
-    # roll past Sunday; Saturdays are business days during busy season
-    while cur.weekday() == 6:
-        cur = cur + dt.timedelta(days=1)
-    return cur
-
 def _business_day_end_for(ts_local: dt.datetime) -> dt.datetime:
-    """Returns the business-day end boundary (configured end time) for the day of ts_local.
-    If ts_local is after today's business end, returns next business day's end.
-    """
-    if ts_local.tzinfo is None:
-        ts_local = ts_local.replace(tzinfo=ZoneInfo(TZ_NAME))
-    # normalize to local tz
-    ts_local = ts_local.astimezone(ZoneInfo(TZ_NAME))
-    end_today = ts_local.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
-    base_day = ts_local
-    if ts_local > end_today:
-        base_day = (ts_local + dt.timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
-    base_day = _next_business_day(base_day)
-    end_day = base_day.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
-    return end_day
+    return business_day_end_for(BUSINESS_TIME, ts_local)
 
 
 @app.on_event("startup")
@@ -212,101 +226,23 @@ def _auth_or_401(request: Request) -> None:
 # Time / SLA helpers
 # ==========================
 def _now_local() -> dt.datetime:
-    return dt.datetime.now(tz=ZoneInfo(TZ_NAME))
+    return services_now_local(TZ_NAME)
 
 
 def _parse_iso_dt(value) -> Optional[dt.datetime]:
-    if not value:
-        return None
-    if isinstance(value, dt.datetime):
-        return value
-    s = str(value).strip()
-    if not s:
-        return None
-    try:
-        return dt.datetime.fromisoformat(s)
-    except Exception:
-        try:
-            return dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return None
+    return parse_iso_dt(value)
 
 def _parse_ghl_date(value) -> Optional[dt.datetime]:
-    """Parse a GHL/LeadConnector timestamp (e.g. '2026-02-26T14:00:02.992Z') to a datetime."""
-    if not value:
-        return None
-    if isinstance(value, dt.datetime):
-        return value
-    s = str(value).strip()
-    if not s:
-        return None
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        return dt.datetime.fromisoformat(s)
-    except Exception:
-        return None
-
-def _is_business_time(ts: dt.datetime) -> bool:
-    # Mon-Sat in configured business-hour window.
-    if ts.weekday() == 6:
-        return False
-    start = ts.replace(hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0)
-    end = ts.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
-    return start <= ts <= end
-
-def _roll_to_next_business_open(ts: dt.datetime) -> dt.datetime:
-    cur = ts
-    while True:
-        if cur.weekday() == 6:
-            days_ahead = 7 - cur.weekday()
-            cur = (cur + dt.timedelta(days=days_ahead)).replace(
-                hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
-            )
-            continue
-        cur_mins = (cur.hour * 60) + cur.minute
-        if cur_mins < _bh_start_total:
-            return cur.replace(hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0)
-        if cur_mins >= _bh_end_total:
-            cur = (cur + dt.timedelta(days=1)).replace(
-                hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
-            )
-            continue
-        return cur
+    return parse_ghl_date(value)
 
 def add_business_hours(start_local: dt.datetime, hours: float) -> dt.datetime:
-    """
-    Deterministic business-hours adder: Mon-Sat, configured hours local time.
-    Adds hours strictly across business windows.
-    """
-    if start_local.tzinfo is None:
-        start_local = start_local.replace(tzinfo=ZoneInfo(TZ_NAME))
-
-    remaining = hours * 3600.0
-    cur = _roll_to_next_business_open(start_local)
-
-    while remaining > 0:
-        day_end = cur.replace(hour=_bh_end_h, minute=_bh_end_m, second=0, microsecond=0)
-        available = (day_end - cur).total_seconds()
-        if remaining <= available:
-            return cur + dt.timedelta(seconds=remaining)
-
-        remaining -= available
-        cur = (cur + dt.timedelta(days=1)).replace(
-            hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
-        )
-        while cur.weekday() == 6:
-            cur = (cur + dt.timedelta(days=1)).replace(
-                hour=_bh_start_h, minute=_bh_start_m, second=0, microsecond=0
-            )
-
-    return cur
+    return add_business_hours_for_config(BUSINESS_TIME, start_local, hours)
 
 def _fmt_date_local(d: dt.datetime) -> str:
-    return d.strftime("%b %-d")  # e.g. "Feb 25"
+    return fmt_date_local(d)
 
 def _fmt_as_of_local(d: dt.datetime) -> str:
-    return d.strftime("%-I:%M%p").lower() + " CT"  # e.g. "1:01p CT"
+    return fmt_as_of_local(d)
 
 def ghl_conversation_link(conversation_id: Optional[str]) -> Optional[str]:
     if not conversation_id or not GHL_LOCATION_ID:
@@ -501,45 +437,8 @@ def mark_spam(phone: str) -> None:
     conn.close()
 
 
-# ==========================
-# KV store helpers
-# ==========================
-def kv_get(key: str) -> Optional[str]:
-    conn = db()
-    row = conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
-    conn.close()
-    return row["value"] if row else None
-
-def kv_set(key: str, value: str) -> None:
-    conn = db()
-    conn.execute("INSERT INTO kv_store(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
-    conn.commit()
-    conn.close()
-
-def _update_issue_meta(issue_id: int, updates: Dict[str, Any]) -> None:
-    conn = db()
-    row = conn.execute("SELECT meta FROM issues WHERE id=?", (issue_id,)).fetchone()
-    if not row:
-        conn.close()
-        return
-    try:
-        meta = json.loads(row["meta"] or "{}")
-    except Exception:
-        meta = {}
-    meta.update(updates or {})
-    conn.execute("UPDATE issues SET meta=? WHERE id=?", (json.dumps(meta), issue_id))
-    conn.commit()
-    conn.close()
-
-
 def _set_resolved_metadata(issue_id: int, resolved_by: str, extra: Optional[Dict[str, Any]] = None) -> None:
-    payload: Dict[str, Any] = {
-        "resolved_by": resolved_by,
-        "resolved_meta_ts": _now_local().isoformat(),
-    }
-    if extra:
-        payload.update(extra)
-    _update_issue_meta(issue_id, payload)
+    issue_set_resolved_metadata(issue_id, resolved_by, _now_local, extra)
 
 
 # ==========================
@@ -607,260 +506,62 @@ def _flow_log(event: str, **fields: Any) -> None:
 
 
 def get_issue_by_id(issue_id: int) -> Optional[sqlite3.Row]:
-    conn = db()
-    row = conn.execute("SELECT * FROM issues WHERE id=?", (issue_id,)).fetchone()
-    conn.close()
-    return row
+    return issue_get_issue_by_id(issue_id)
 
 def resolve_by_id(issue_id: int, status: str = "RESOLVED") -> int:
-    conn = db()
-    now = _now_local().isoformat()
-    cur = conn.execute(
-        "UPDATE issues SET status=?, resolved_ts=? WHERE status IN ('OPEN','PENDING') AND id=?",
-        (status, now, issue_id),
-    )
-    conn.commit()
-    conn.close()
-    if cur.rowcount > 0 and status == "RESOLVED":
+    changed = issue_resolve_by_id(issue_id, status, _now_local)
+    if changed > 0 and status == "RESOLVED":
         _set_resolved_metadata(issue_id, "MANUAL_COMMAND_ID")
-    return cur.rowcount
+    return changed
 
 def add_note(issue_id: int, note: str) -> bool:
-    conn = db()
-    row = conn.execute("SELECT meta FROM issues WHERE id=?", (issue_id,)).fetchone()
-    if not row:
-        conn.close()
-        return False
-    try:
-        meta = json.loads(row["meta"] or "{}")
-    except Exception:
-        meta = {}
-    notes = meta.get("notes") or []
-    notes.append({"ts": _now_local().isoformat(), "text": note[:500]})
-    meta["notes"] = notes
-    conn.execute("UPDATE issues SET meta=? WHERE id=?", (json.dumps(meta), issue_id))
-    conn.commit()
-    conn.close()
-    return True
+    return issue_add_note(issue_id, note, _now_local)
 
 
 # ---- Manager LIST paging state (in-memory) ----
 _MANAGER_LIST_OFFSETS: dict[str, int] = {}
 
-def _mask_phone(phone: str) -> str:
-    p = (phone or "").strip()
-    if p.startswith("+1") and len(p) >= 12:
-        return "+1***" + p[-4:]
-    if len(p) >= 4:
-        return "***" + p[-4:]
-    return p or "Unknown"
-
-def _fmt_hhmm_ampm(value) -> str:
-    """
-    Convert a datetime or ISO-ish timestamp to 'h:mmap' like the summary (e.g., 3:41pm).
-    Accepts:
-      - datetime
-      - ISO strings (with/without timezone)
-      - sqlite-style strings 'YYYY-MM-DD HH:MM:SS'
-    """
-    if not value:
-        return "?"
-
-    parsed = None
-
-    # already a datetime?
-    if isinstance(value, dt.datetime):
-        parsed = value
-    else:
-        s = str(value).strip()
-        if not s:
-            return "?"
-        try:
-            # Handles '2026-02-25T15:41:10.213158-06:00' and many variants
-            parsed = dt.datetime.fromisoformat(s)
-        except Exception:
-            # Try sqlite style 'YYYY-MM-DD HH:MM:SS'
-            try:
-                parsed = dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-            except Exception:
-                # Try without seconds
-                try:
-                    parsed = dt.datetime.strptime(s, "%Y-%m-%d %H:%M")
-                except Exception:
-                    return "?"
-
-    try:
-        return parsed.strftime("%-I:%M%p").lower()
-    except Exception:
-        return parsed.strftime("%I:%M%p").lstrip("0").lower()
-
 def list_open_issues(limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
-    """
-    Returns (rows, total_open) ordered by due_ts ASC.
-    Rows are dicts with the columns we need for summary-like formatting.
-    """
-    conn = db()
-    total = conn.execute("""
-        SELECT COUNT(*) AS n
-        FROM issues
-        WHERE status IN ('OPEN','PENDING')
-    """).fetchone()["n"]
-
-    rows = conn.execute("""
-        SELECT id, issue_type, phone, contact_id, contact_name, created_ts, due_ts, inbound_count, last_inbound_ts
-        FROM issues
-        WHERE status IN ('OPEN','PENDING')
-        ORDER BY due_ts ASC
-        LIMIT ? OFFSET ?
-    """, (limit, offset)).fetchall()
-    conn.close()
-
-    # sqlite Row -> dict
-    out = []
-    for r in rows:
-        out.append({
-            "id": r["id"],
-            "issue_type": r["issue_type"],  # "CALL" or "SMS" in your existing output
-            "phone": r["phone"],
-            "contact_id": r["contact_id"],
-            "contact_name": r["contact_name"],
-            "created_ts": r["created_ts"],
-            "due_ts": r["due_ts"],
-            "inbound_count": r["inbound_count"] if r["inbound_count"] is not None else 0,
-            "last_inbound_ts": r["last_inbound_ts"] or r["created_ts"],
-        })
-    return out, int(total)
+    return issue_list_open_issues(limit, offset)
 
 def _render_list_like_summary(rows: list[dict], total_open: int, offset: int, limit: int) -> str:
-    """
-    Summary-like list output, 5 at a time, split into Calls/Text like summary.
-    """
-    calls = []
-    texts = []
-
-    for r in rows:
-        iid = r["id"]
-        it = (r.get("issue_type") or "").upper()
-        phone = r.get("phone") or ""
-        name = (r.get("contact_name") or "").strip()
-        who = name if name else _mask_phone(phone)
-
-        last_s = _fmt_hhmm_ampm(r.get("last_inbound_ts") or "")
-        due_s = _fmt_hhmm_ampm(r.get("due_ts") or "")
-
-        line = f"#{iid} {who} — {last_s} | due {due_s}"
-        if it == "SMS":
-            n = int(r.get("inbound_count", 0) or 0)
-            if n > 1:
-                line += f" ({n})"
-            texts.append(line)
-        else:
-            calls.append(line)
-
-    start = offset + 1 if total_open else 0
-    end = min(offset + limit, total_open)
-
-    lines = [f"OPEN ({total_open}) — showing {start}-{end}"]
-
-    if calls:
-        lines.append(f"Calls ({len(calls)}):")
-        lines.extend(calls)
-
-    if texts:
-        lines.append(f"Texts ({len(texts)}):")
-        lines.extend(texts)
-
-    if end < total_open:
-        lines.append("Reply: More")
-    else:
-        lines.append("End of list. Reply: List")
-
-    return "\n".join(lines)
+    return render_list_like_summary(rows, total_open, offset, limit)
 
 def _set_issue_contact_name(issue_id: int, name: str) -> None:
-    if not name:
-        return
-    conn = db()
-    conn.execute(
-        "UPDATE issues SET contact_name=? WHERE id=? AND (contact_name IS NULL OR contact_name='')",
-        (name, issue_id),
-    )
-    conn.commit()
-    conn.close()
+    set_issue_contact_name(issue_id, name)
 
 def resolve_by_phone(phone: str, status: str = "RESOLVED") -> int:
-    conn = db()
-    now = _now_local().isoformat()
-    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status IN ('OPEN','PENDING') AND phone=?", (phone,)).fetchall()]
-    cur = conn.execute("""
-        UPDATE issues
-        SET status=?, resolved_ts=?
-        WHERE status IN ('OPEN','PENDING') AND phone=?
-    """, (status, now, phone))
-    conn.commit()
-    conn.close()
+    changed, ids = issue_resolve_by_phone(phone, status, _now_local)
     if status == "RESOLVED":
         for iid in ids:
             _set_resolved_metadata(iid, "MANUAL_COMMAND_PHONE", {"resolve_target": phone})
-    return cur.rowcount
+    return changed
 
 def resolve_by_contact_id(contact_id: str, status: str = "RESOLVED") -> int:
-    conn = db()
-    now = _now_local().isoformat()
-    ids = [r["id"] for r in conn.execute("SELECT id FROM issues WHERE status IN ('OPEN','PENDING') AND contact_id=?", (contact_id,)).fetchall()]
-    cur = conn.execute("""
-        UPDATE issues
-        SET status=?, resolved_ts=?
-        WHERE status IN ('OPEN','PENDING') AND contact_id=?
-    """, (status, now, contact_id))
-    conn.commit()
-    conn.close()
+    changed, ids = issue_resolve_by_contact_id(contact_id, status, _now_local)
     if status == "RESOLVED":
         for iid in ids:
             _set_resolved_metadata(iid, "MANUAL_COMMAND_CONTACT_ID", {"resolve_target": contact_id})
-    return cur.rowcount
+    return changed
 
 def resolve_by_name(name: str, status: str = "RESOLVED") -> int:
-    name_l = name.strip().lower()
-    if not name_l:
-        return 0
-
-    conn = db()
-    rows = conn.execute("SELECT id, meta FROM issues WHERE status IN ('OPEN','PENDING')").fetchall()
-    matched_ids: List[int] = []
-
-    for r in rows:
-        try:
-            meta = json.loads(r["meta"] or "{}")
-        except Exception:
-            meta = {}
-        cn = (meta.get("contact_name") or "").lower()
-        if cn and name_l in cn:
-            matched_ids.append(r["id"])
-
-    now = _now_local().isoformat()
-    if matched_ids:
-        q = "UPDATE issues SET status=?, resolved_ts=? WHERE id IN (%s)" % ",".join(["?"] * len(matched_ids))
-        conn.execute(q, [status, now] + matched_ids)
-        conn.commit()
-
-    conn.close()
+    matched_ids = issue_resolve_by_name(name, status, _now_local)
     if status == "RESOLVED":
         for iid in matched_ids:
             _set_resolved_metadata(iid, "MANUAL_COMMAND_NAME", {"resolve_target": name})
     return len(matched_ids)
 
 def _looks_like_contact_id(s: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9]{10,}", s))
+    return looks_like_contact_id(s)
 
 def resolve_target(target: str) -> int:
-    t = target.strip()
-    phone = _normalize_phone(t)
+    token = target.strip()
+    phone = _normalize_phone(token)
     if phone:
         return resolve_by_phone(phone)
-    if _looks_like_contact_id(t):
-        return resolve_by_contact_id(t)
-    return resolve_by_name(t)
+    if _looks_like_contact_id(token):
+        return resolve_by_contact_id(token)
+    return resolve_by_name(token)
 
 
 # ==========================
@@ -1444,9 +1145,9 @@ async def _ai_inbound_should_suppress(
 async def verify_pending(request: Request, limit: int = 200):
     _auth_or_401(request)
 
-    # Keep this endpoint stable even if legacy AI verify semantics evolve.
-    # Delegate to current deterministic resolver for known behavior and return
-    # the expected verify_pending response shape.
+    # Legacy compatibility endpoint.
+    # Current runtime behavior delegates to poll_resolver and preserves the
+    # historical response shape, including promotion counters that now remain 0.
     try:
         poll_result = await poll_resolver(request, limit=limit)
         if not isinstance(poll_result, dict):
@@ -1495,49 +1196,14 @@ async def cleanup_raw_events(request: Request, days: Optional[int] = None, sourc
 # ==========================
 # Summary logic (Managers only, v1)
 # ==========================
-def _short_phone(p: Optional[str]) -> str:
-    if not p:
-        return "-"
-    s = re.sub(r"\D", "", p)
-    if len(s) >= 10:
-        return f"+1***{s[-4:]}"
-    return p
-
 def _parse_iso(ts: Optional[str]) -> Optional[dt.datetime]:
-    if not ts:
-        return None
-    try:
-        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except Exception:
-        return None
+    return parse_iso(ts)
 
 def _is_recent(ts: Optional[str], now_local: dt.datetime, window_minutes: int) -> bool:
-    if not ts:
-        return False
-    parsed = _parse_iso(ts)
-    if parsed is None:
-        return False
-    try:
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=ZoneInfo(TZ_NAME))
-        delta = now_local - parsed.astimezone(ZoneInfo(TZ_NAME))
-        return 0 <= delta.total_seconds() <= (max(0, window_minutes) * 60.0)
-    except Exception:
-        return False
+    return is_recent(TZ_NAME, ts, now_local, window_minutes)
 
 def _is_escalated(issue_type: str, first_inbound_ts: Optional[str], created_ts: str, now_local: dt.datetime) -> bool:
-    """
-    Escalation: still OPEN after 24 business hours.
-    Uses business-hours adder from first_inbound_ts (SMS) or created_ts (CALL).
-    """
-    base_ts = first_inbound_ts if issue_type == "SMS" and first_inbound_ts else created_ts
-    base = _parse_iso(base_ts)
-    if not base:
-        return False
-    if base.tzinfo is None:
-        base = base.replace(tzinfo=ZoneInfo(TZ_NAME))
-    threshold = add_business_hours(base.astimezone(ZoneInfo(TZ_NAME)), 24.0)
-    return now_local >= threshold
+    return is_escalated(BUSINESS_TIME, issue_type, first_inbound_ts, created_ts, now_local)
 
 async def _manager_conversation_for_contact(contact_id: str) -> Optional[str]:
     # lookup via conversations/search?contactId=...
@@ -1611,93 +1277,17 @@ register_webhook_routes(
     ),
 )
 
-def _summary_title(slot: str) -> str:
-    s = slot.lower()
-    if s == "morning":
-        return "Morning"
-    if s == "midday":
-        return "Midday"
-    if s == "afternoon":
-        return "Afternoon"
-    return slot.capitalize()
-
 def _fmt_dt_local(ts: Optional[str]) -> str:
-    d = _parse_iso(ts)
-    if not d:
-        return "-"
-    if d.tzinfo is None:
-        d = d.replace(tzinfo=ZoneInfo(TZ_NAME))
-    loc = d.astimezone(ZoneInfo(TZ_NAME))
-    return loc.strftime("%-I:%M%p").lower()
+    return fmt_dt_local(TZ_NAME, ts)
 
 def _build_section_lines(rows: List[sqlite3.Row], label: str, now_local: dt.datetime) -> Tuple[List[str], List[str]]:
-    """
-    Returns (normal_lines, escalated_lines)
-    """
-    normal: List[str] = []
-    escalated: List[str] = []
-
-    for r in rows[:SUMMARY_MAX_ITEMS_PER_SECTION]:
-        it = r["issue_type"]
-        who = _display_name(r)
-        last_in = r["last_inbound_ts"] or r["created_ts"]
-        due = r["due_ts"]
-        inc = r["inbound_count"] if r["inbound_count"] is not None else 0
-        marker = f"#{r['id']} {who} — {_fmt_dt_local(last_in)} | due {_fmt_dt_local(due)}"
-        if it == "SMS":
-            marker += f" in={inc}"
-        if _is_escalated(it, r["first_inbound_ts"], r["created_ts"], now_local):
-            escalated.append(marker)
-        else:
-            normal.append(marker)
-
-    header = f"{label} ({len(rows)})"
-    if not rows:
-        return [f"{header}: none"], []
-    return [header + ":"] + normal, escalated
+    return build_section_lines(rows, label, now_local, BUSINESS_TIME, SUMMARY_MAX_ITEMS_PER_SECTION)
 
 def _display_name(r: sqlite3.Row) -> str:
-    try:
-        meta = json.loads(r["meta"] or "{}")
-    except Exception:
-        meta = {}
-    name = (meta.get("contact_name") or "").strip()
-    return name if name else _short_phone(r["phone"])
+    return display_name(r)
 
 async def _enrich_issues_with_contact_names(issues: List[sqlite3.Row]) -> None:
-    """
-    For issues missing contact_name in meta, fetch from GHL API and update DB.
-    """
-    conn = db()
-    for issue in issues:
-        try:
-            meta = json.loads(issue["meta"] or "{}")
-        except Exception:
-            meta = {}
-        
-        # Skip if contact_name already exists
-        if (meta.get("contact_name") or "").strip():
-            continue
-        
-        # Skip if no contact_id to look up
-        contact_id = issue["contact_id"]
-        if not contact_id:
-            continue
-        
-        # Fetch contact name from GHL API
-        try:
-            contact_name = await ghl_get_contact_name(contact_id)
-            if contact_name:
-                meta["contact_name"] = contact_name
-                conn.execute(
-                    "UPDATE issues SET meta=? WHERE id=?",
-                    (json.dumps(meta), issue["id"])
-                )
-                conn.commit()
-        except Exception:
-            pass
-    
-    conn.close()
+    await enrich_issues_with_contact_names(issues, ghl_get_contact_name)
 
 
 @app.post("/jobs/send_summary")
@@ -1725,76 +1315,23 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     except Exception:
         pass
 
-    conn = db()
-
-        # Overdue = active and now >= due_ts
-    overdue_sms = conn.execute("""
-      SELECT *
-      FROM issues
-            WHERE status IN ('OPEN','PENDING') AND issue_type='SMS' AND due_ts <= ?
-      ORDER BY due_ts ASC
-    """, (now_iso,)).fetchall()
-
-    overdue_calls = conn.execute("""
-      SELECT *
-      FROM issues
-            WHERE status IN ('OPEN','PENDING') AND issue_type='CALL' AND due_ts <= ?
-      ORDER BY due_ts ASC
-    """, (now_iso,)).fetchall()
-
     # Resolved since last summary
     key = "last_summary_ts"
     slot_key = f"last_summary_ts_{slot.lower()}"  # backward-compat fallback
     last_ts = kv_get(key) or kv_get(slot_key)
-    resolved_since: List[sqlite3.Row] = []
-    if last_ts:
-        resolved_since = conn.execute("""
-          SELECT *
-          FROM issues
-          WHERE status='RESOLVED'
-            AND resolved_ts IS NOT NULL
-            AND resolved_ts > ?
-            AND resolved_ts <= ?
-          ORDER BY resolved_ts DESC
-          LIMIT 100
-        """, (last_ts, now_iso)).fetchall()
-
-    conn.close()
+    overdue_sms = fetch_overdue_issues(now_iso, "SMS")
+    overdue_calls = fetch_overdue_issues(now_iso, "CALL")
+    resolved_since = fetch_resolved_since(last_ts, now_iso)
 
     # Enrich issues with contact names if missing
     await _enrich_issues_with_contact_names(list(overdue_sms) + list(overdue_calls) + list(resolved_since))
 
     # Re-fetch issues after enrichment to get updated meta data
-    conn = db()
-    overdue_sms = conn.execute("""
-      SELECT *
-      FROM issues
-            WHERE status IN ('OPEN','PENDING') AND issue_type='SMS' AND due_ts <= ?
-      ORDER BY due_ts ASC
-    """, (now_iso,)).fetchall()
+    overdue_sms = fetch_overdue_issues(now_iso, "SMS")
+    overdue_calls = fetch_overdue_issues(now_iso, "CALL")
+    resolved_since = fetch_resolved_since(last_ts, now_iso)
 
-    overdue_calls = conn.execute("""
-      SELECT *
-      FROM issues
-            WHERE status IN ('OPEN','PENDING') AND issue_type='CALL' AND due_ts <= ?
-      ORDER BY due_ts ASC
-    """, (now_iso,)).fetchall()
-
-    if last_ts:
-        resolved_since = conn.execute("""
-          SELECT *
-          FROM issues
-          WHERE status='RESOLVED'
-            AND resolved_ts IS NOT NULL
-            AND resolved_ts > ?
-            AND resolved_ts <= ?
-          ORDER BY resolved_ts DESC
-          LIMIT 100
-        """, (last_ts, now_iso)).fetchall()
-
-    conn.close()
-
-    title = _summary_title(slot)
+    title = summary_title(slot)
     lines: List[str] = []
     lines.append(f"NTPP Sentinel — {title} ({_fmt_date_local(now_local)}) • as of {_fmt_as_of_local(now_local)}")
     lines.append(f"Overdue: Calls {len(overdue_calls)} | Texts {len(overdue_sms)}")
@@ -1900,17 +1437,7 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
     except Exception:
         pass
 
-    conn = db()
-    rows = conn.execute("""
-      SELECT *
-      FROM issues
-            WHERE status IN ('OPEN','PENDING')
-        AND due_ts <= ?
-        AND breach_notified_ts IS NULL
-      ORDER BY due_ts ASC
-      LIMIT ?
-    """, (now_iso, limit)).fetchall()
-    conn.close()
+    rows = fetch_unnotified_breaches(now_iso, limit)
     if not rows:
         return {
             "job": "escalations",
@@ -1921,17 +1448,7 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
 
     await _enrich_issues_with_contact_names(list(rows))
 
-    conn = db()
-    rows = conn.execute("""
-      SELECT *
-      FROM issues
-            WHERE status IN ('OPEN','PENDING')
-        AND due_ts <= ?
-        AND breach_notified_ts IS NULL
-      ORDER BY due_ts ASC
-      LIMIT ?
-    """, (now_iso, limit)).fetchall()
-    conn.close()
+    rows = fetch_unnotified_breaches(now_iso, limit)
     if not rows:
         return {
             "job": "escalations",
