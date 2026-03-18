@@ -35,12 +35,12 @@ Inbound SMS:
 Missed/unanswered call:
 - `POST /webhook/ghl/unanswered_call`
 - Controlled by `voicemail_route=tech_sentinel`
-- Creates `PENDING` CALL issues
+- Creates `OPEN` CALL issues with a `due_ts`
 
 Verification/resolution:
 - `POST /jobs/poll_resolver`
 - `POST /jobs/verify_pending`
-- Detects employee outbound and promotes/resolves issues
+- Detects employee outbound and resolves active issues
 - `POST /jobs/cleanup_raw_events` (retention cleanup, dry-run by default)
 
 Notifications:
@@ -81,3 +81,4 @@ Notifications:
 - Idempotent/retry-safe jobs
 - Low-noise operator UX
 - Operational observability via concise flow logs
+- Business-time behavior and summary eligibility are driven by shared service helpers under `app/services/`

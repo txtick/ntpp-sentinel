@@ -22,10 +22,12 @@ You get scheduled summary texts (timing set by admin), typically:
 
 Each summary shows overdue calls/texts and what was resolved since the last summary.
 
+The default repo schedule runs on Monday-Saturday, but exact send times and active days come from admin configuration.
+
 ## Response-time window (SLA)
 
 - Business hours are configured by admin (for example `8:00am-5:00pm`).
-- Response timers run in business hours.
+- Response timers run only during configured business hours.
 
 ## When Sentinel auto-resolves an issue
 Sentinel can auto-resolve only when it sees a real employee response.

@@ -100,7 +100,7 @@ X-NTPP-Secret: <WEBHOOK_SECRET>
 
 ### Poll Resolver
 
-Resolves answered SMS issues.
+Resolves active SMS and CALL issues when a valid staff follow-up is detected.
 
 ```bash
 curl -X POST \
@@ -108,13 +108,13 @@ curl -X POST \
   -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
 ```
 
-Runs automatically every 15 minutes during business hours.
+Runs automatically every 15 minutes during business hours on configured cron days.
 
 ---
 
 ### Send Summary
 
-Manager rollups at 8:00, 11:00, 15:00 (Mon–Fri).
+Manager rollups at 8:00, 11:00, 15:00 on configured cron days.
 
 Dry run:
 
@@ -141,7 +141,7 @@ Slots:
 
 ### Escalations
 
-Placeholder endpoint (hourly 9–17 Mon–Fri):
+One-time breach alert endpoint during configured business hours:
 
 ```bash
 curl -X POST \
@@ -159,7 +159,7 @@ POST /webhook/ghl/inbound_sms
 
 Behavior:
 - Creates or updates deterministic SMS issue
-- 2 business-hour SLA
+- Configurable business-hour SLA
 - Does not reset SLA clock on additional inbound messages
 
 ---
@@ -198,7 +198,8 @@ Important:
 ## Business Logic Summary
 
 - SMS issues created on first inbound
-- 2 business-hour SLA (Mon–Fri 9–6)
+- Business hours and SLA are configurable (`BUSINESS_HOURS_*`, `SMS_SLA_HOURS`, `CALL_SLA_HOURS`)
+- Default repo cron days are Monday-Saturday via `CRON_DOW=1-6`
 - Resolver checks for outbound replies
 - Outbound resolves issue permanently
 - 24 business-hour escalation threshold

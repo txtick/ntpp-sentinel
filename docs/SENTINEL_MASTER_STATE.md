@@ -10,7 +10,7 @@ Sentinel ingests GoHighLevel webhooks and maintains deterministic issue tracking
 
 Core outcomes:
 - Tracks `SMS` and `CALL` issues.
-- Applies business-hour SLA timing.
+- Applies configurable business-hour SLA timing (current repo default runs Monday-Saturday business days).
 - Auto-resolves when valid employee response is detected.
 - Sends manager summaries.
 - Sends one-time real-time SLA breach alerts.
@@ -58,7 +58,7 @@ SMS flow:
 
 CALL flow:
 - Controlled signal: `voicemail_route=tech_sentinel`.
-- Creates `PENDING CALL` with `due_ts`.
+- Creates `OPEN CALL` with `due_ts`.
 - `poll_resolver` processes active `PENDING` and `OPEN` CALL issues and resolves when a valid call-resolution signal is found after creation.
 - `verify_pending` is a compatibility wrapper around `poll_resolver` and reports legacy promotion fields as `0`.
 
@@ -147,6 +147,7 @@ Timing:
 - `BUSINESS_HOURS_END`
 - `SMS_SLA_HOURS`
 - `CALL_SLA_HOURS`
+- `CRON_DOW` default repo value: `1-6` (Monday-Saturday)
 
 Behavior:
 - `INTERNAL_REPLY_GRACE_HOURS`
