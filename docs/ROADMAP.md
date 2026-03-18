@@ -38,6 +38,8 @@ AI-assisted decision logic.
 Planned:
 - Call transcript parsing
 - Better SMS intent classification
+- Promise/commitment extraction from SMS and call transcripts
+- Daily manager digest of promised follow-ups, quotes, and callbacks still owed to customers
 - Auto-categorization/routing hints
 - Priority scoring
 - Suggested reply generation

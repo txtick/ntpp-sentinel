@@ -73,6 +73,10 @@ cd /opt/ntpp-sentinel
 ./curl_job.sh "/jobs/cleanup_raw_events?dry_run=1"
 ```
 
+Notes:
+- `verify_pending` is currently a compatibility wrapper around `poll_resolver`.
+- Manager notifications only include overdue `OPEN` issues; `PENDING` rows are still useful for queue inspection.
+
 All active queue items:
 
 ```bash
@@ -224,6 +228,9 @@ Key cron env variables:
 - `CRON_ESCALATIONS_EVERY_MINUTES`
 - `CRON_POLL_RESOLVER_EVERY_MINUTES`
 - `CRON_VERIFY_PENDING_EVERY_MINUTES`
+
+Current repo default:
+- `CRON_DOW=1-6` (Monday-Saturday)
 
 High-impact runtime decision env variables:
 
