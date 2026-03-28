@@ -1,5 +1,11 @@
 from fastapi import FastAPI, Request, HTTPException # type: ignore
-import os, json, sqlite3, datetime as dt
+import gzip
+import os
+import json
+import sqlite3
+import shutil
+import tempfile
+import datetime as dt
 from typing import Any, Dict, Optional, List, Tuple
 import re
 import httpx # type: ignore
@@ -69,6 +75,9 @@ from services.summary import (
 # ==========================
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 TZ_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
+SKIMMER_DB_PATH = os.getenv("SKIMMER_DB_PATH", "/data/skimmer/skimmer.db")
+SKIMMER_DOWNLOAD_DIR = os.getenv("SKIMMER_DOWNLOAD_DIR", os.path.dirname(SKIMMER_DB_PATH) or "/data/skimmer")
+SKIMMER_LINK_FILE = os.getenv("SKIMMER_LINK_FILE", os.path.join(SKIMMER_DOWNLOAD_DIR, "skimmer_link.txt"))
 
 GHL_APP_BASE = os.getenv("GHL_APP_BASE", "https://app.gohighlevel.com")
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "")
@@ -221,6 +230,66 @@ def _auth_or_401(request: Request) -> None:
     secret = request.headers.get("X-NTPP-Secret") or request.query_params.get("secret")
     if not secret or secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _skimmer_link_file_path() -> str:
+    return SKIMMER_LINK_FILE
+
+
+def _write_skimmer_link(link: str) -> str:
+    path = _skimmer_link_file_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(link.strip())
+    return path
+
+
+def _ensure_dir(path: str) -> None:
+    if path:
+        os.makedirs(path, exist_ok=True)
+
+
+def _download_url_to_path(url: str, dest_path: str) -> None:
+    _ensure_dir(os.path.dirname(dest_path))
+    with httpx.stream("GET", url, timeout=120.0, follow_redirects=True) as response:
+        response.raise_for_status()
+        with open(dest_path, "wb") as fh:
+            for chunk in response.iter_bytes(chunk_size=8192):
+                if chunk:
+                    fh.write(chunk)
+
+
+def _looks_like_gzip(path: str) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"\x1f\x8b"
+    except Exception:
+        return False
+
+
+def _gunzip_file(src_path: str, dest_path: str) -> None:
+    _ensure_dir(os.path.dirname(dest_path))
+    with gzip.open(src_path, "rb") as sf, open(dest_path, "wb") as df:
+        shutil.copyfileobj(sf, df)
+
+
+def _download_and_save_skimmer(url: str, dest_path: str) -> None:
+    temp_dir = os.path.dirname(dest_path) or SKIMMER_DOWNLOAD_DIR
+    _ensure_dir(temp_dir)
+    with tempfile.NamedTemporaryFile(dir=temp_dir, delete=False, suffix=".tmp") as tmp:
+        temp_path = tmp.name
+    try:
+        _download_url_to_path(url, temp_path)
+        if _looks_like_gzip(temp_path) or url.lower().endswith(".gz"):
+            _gunzip_file(temp_path, dest_path)
+        else:
+            os.replace(temp_path, dest_path)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
 
 # ==========================
@@ -1191,6 +1260,50 @@ async def cleanup_raw_events(request: Request, days: Optional[int] = None, sourc
         "dry_run": bool(dry_run),
         "eligible": int(result.get("eligible", 0)),
         "deleted": int(result.get("deleted", 0)),
+    }
+
+
+@app.post("/jobs/skimmer_link")
+async def skimmer_link(request: Request):
+    _auth_or_401(request)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    link = None
+    if isinstance(payload, dict):
+        link = payload.get("skimmer_url") or payload.get("skimmer_link") or payload.get("skimmer_file_id")
+    if not link or not isinstance(link, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Expected JSON body with skimmer_url, skimmer_link, or skimmer_file_id",
+        )
+    link = link.strip()
+    if not link:
+        raise HTTPException(status_code=400, detail="Expected non-empty link")
+    if not re.fullmatch(r"https?://.+", link) and not re.fullmatch(r"[A-Za-z0-9_-]+", link):
+        raise HTTPException(
+            status_code=400,
+            detail="skimmer_url must be a valid URL or Google Drive file ID",
+        )
+
+    if link.lower().startswith("http://") or link.lower().startswith("https://"):
+        try:
+            _download_and_save_skimmer(link, SKIMMER_DB_PATH)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Skimmer download failed: {exc}")
+        return {
+            "status": "downloaded",
+            "skimmer_db_path": SKIMMER_DB_PATH,
+            "download_url": link,
+        }
+
+    path = _write_skimmer_link(link)
+    return {
+        "status": "stored",
+        "link_file": path,
+        "stored_value": link,
     }
 
 

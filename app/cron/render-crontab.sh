@@ -28,6 +28,10 @@ CRON_BUSINESS_END_HOUR="${CRON_BUSINESS_END_HOUR:-17}"
 CRON_ESCALATIONS_EVERY_MINUTES="${CRON_ESCALATIONS_EVERY_MINUTES:-1}"
 CRON_POLL_RESOLVER_EVERY_MINUTES="${CRON_POLL_RESOLVER_EVERY_MINUTES:-15}"
 CRON_VERIFY_PENDING_EVERY_MINUTES="${CRON_VERIFY_PENDING_EVERY_MINUTES:-5}"
+CRON_TZ="${CRON_TZ:-${TIMEZONE:-America/Chicago}}"
+CRON_SKIMMER_SYNC_MINUTE="${CRON_SKIMMER_SYNC_MINUTE:-15}"
+CRON_SKIMMER_SYNC_HOUR="${CRON_SKIMMER_SYNC_HOUR:-11}"
+CRON_SKIMMER_SYNC_DOW="${CRON_SKIMMER_SYNC_DOW:-*}"
 
 # Validation with safe fallback.
 valid_hour "$CRON_MORNING_HOUR" || CRON_MORNING_HOUR=8
@@ -48,6 +52,7 @@ fi
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 OUT="${SCRIPT_DIR}/crontab.generated"
 cat > "$OUT" <<EOF
+TZ=${CRON_TZ}
 0 ${CRON_MORNING_HOUR} * * ${CRON_DOW} /app/cron/cron.sh morning >> /logs/cron.log 2>&1
 0 ${CRON_MIDDAY_HOUR} * * ${CRON_DOW} /app/cron/cron.sh midday >> /logs/cron.log 2>&1
 0 ${CRON_AFTERNOON_HOUR} * * ${CRON_DOW} /app/cron/cron.sh afternoon >> /logs/cron.log 2>&1
@@ -60,6 +65,7 @@ cat > "$OUT" <<EOF
 
 */${CRON_VERIFY_PENDING_EVERY_MINUTES} ${CRON_BUSINESS_HOURS} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 0 ${CRON_BUSINESS_END_HOUR} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
+${CRON_SKIMMER_SYNC_MINUTE} ${CRON_SKIMMER_SYNC_HOUR} * * ${CRON_SKIMMER_SYNC_DOW} /usr/bin/python3 /app/cron/skimmer_download.py >> /logs/cron.log 2>&1
 EOF
 
 if [ "${CRON_INSTALL:-1}" = "1" ]; then
