@@ -199,6 +199,12 @@ docker exec -it ntpp-sentinel sh -lc 'echo "$AI_GATE_TIMEOUT_SECONDS"'
 
 If missing, update `/opt/ntpp-sentinel/.env` and redeploy.
 
+If you are using the Skimmer nightly dump sync feature, also verify:
+- `SKIMMER_DOWNLOAD_DIR`
+- `SKIMMER_DB_PATH`
+- `SKIMMER_LINK_FILE`
+- optional: `SKIMMER_ARCHIVE_DIR`, `SKIMMER_KEEP_DAILY`
+
 ---
 
 ## 4. Cron Verification
@@ -231,6 +237,13 @@ Key cron env variables:
 
 Current repo default:
 - `CRON_DOW=1-6` (Monday-Saturday)
+
+Optional Skimmer import env values:
+- `SKIMMER_DOWNLOAD_DIR`
+- `SKIMMER_DB_PATH`
+- `SKIMMER_LINK_FILE`
+- `SKIMMER_ARCHIVE_DIR`
+- `SKIMMER_KEEP_DAILY`
 
 High-impact runtime decision env variables:
 

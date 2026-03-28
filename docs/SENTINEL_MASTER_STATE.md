@@ -164,6 +164,15 @@ AI:
 Data retention:
 - `RAW_EVENTS_RETENTION_DAYS`
 
+Skimmer import:
+- `SKIMMER_DOWNLOAD_DIR`
+- `SKIMMER_DB_PATH`
+- `SKIMMER_LINK_FILE`
+- `SKIMMER_ARCHIVE_DIR`
+- `SKIMMER_KEEP_DAILY`
+
+`/jobs/skimmer_link` accepts JSON with `skimmer_url` and immediately downloads a temporary signed `.db.gz` export to `SKIMMER_DB_PATH`.
+
 Cron schedule generation:
 - `CRON_DOW`
 - `CRON_MORNING_HOUR`

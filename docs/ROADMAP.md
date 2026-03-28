@@ -13,6 +13,7 @@ Delivered:
 - False-positive controls (internal-thread suppression + ack closeout)
 - Optional AI follow-up gate with fail-open safeguards
 - Env-driven cron scheduling
+- Optional Skimmer nightly dump ingestion via `/jobs/skimmer_link`
 
 ---
 

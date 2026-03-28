@@ -48,6 +48,16 @@ GHL_VERSION=2021-07-28
 MANAGER_CONTACT_IDS=<comma_separated_contact_ids>
 ```
 
+Optional Skimmer import values:
+
+```env
+SKIMMER_DOWNLOAD_DIR=/data/skimmer
+SKIMMER_DB_PATH=/data/skimmer/skimmer.db
+SKIMMER_LINK_FILE=/data/skimmer/skimmer_link.txt
+# Optional: SKIMMER_ARCHIVE_DIR=/data/skimmer/archive
+# Optional: SKIMMER_KEEP_DAILY=1
+```
+
 ---
 
 ## Running Sentinel
@@ -148,6 +158,22 @@ curl -X POST \
   https://sentinel.northtexaspoolpros.com/jobs/escalations \
   -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
 ```
+
+---
+
+### Skimmer Import
+
+Temporary Skimmer export URLs can be posted directly to Sentinel:
+
+```bash
+curl -X POST \
+  https://sentinel.northtexaspoolpros.com/jobs/skimmer_link \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"skimmer_url":"<temporary_signed_url>"}'
+```
+
+Sentinel immediately downloads and decompresses the `.db.gz` export to `SKIMMER_DB_PATH` when a fresh signed URL is provided.
 
 ---
 

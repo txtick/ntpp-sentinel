@@ -24,6 +24,7 @@ Sentinel responsibilities:
 - SQLite database (`/data/sentinel.db`)
 - Caddy reverse proxy (`ntpp-caddy`)
 - In-container cron (schedule generated from `.env` at startup)
+- Optional Skimmer ingestion via `/jobs/skimmer_link`, which downloads and decompresses a temporary signed `.db.gz` export into `SKIMMER_DB_PATH`
 
 ## 3) Core Event Flow
 
