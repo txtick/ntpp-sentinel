@@ -72,3 +72,14 @@ This file documents the discovered Skimmer SQLite export found in the repository
 - Use `SKIMMER_DB_PATH` in `.env` to designate where Sentinel should save the downloaded DB.
 - Confirm that the export file structure matches your planned ingest logic before attempting a merge.
 - Keep the export file under version control only for documentation or sample-data purposes, not as an operational runtime file.
+
+## Next step
+
+- Use `scripts/pg_bootstrap.sql` or `app/pg.py` to create the Postgres side tables.
+- Run the first customer import with:
+
+```bash
+python scripts/import_skimmer_customers.py --sqlite /data/skimmer/skimmer.db
+```
+
+- Confirm `skimmer_import_runs`, `sk_customer`, and `customer_identity_map` are populated in Postgres.
