@@ -219,7 +219,10 @@ def _startup():
     init_db()
     ensure_schema()
     if DATABASE_URL:
-        ensure_pg_schema()
+        try:
+            ensure_pg_schema()
+        except Exception as exc:
+            print(f"WARNING: Postgres schema bootstrap failed: {exc}")
 
 @app.get("/health")
 def health():
