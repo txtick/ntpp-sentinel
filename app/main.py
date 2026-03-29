@@ -11,6 +11,7 @@ import re
 import httpx # type: ignore
 from zoneinfo import ZoneInfo
 from db import db, init_db, ensure_schema, purge_raw_events
+from pg import DATABASE_URL, ensure_pg_schema, pg_healthcheck
 from handlers.sms import (
     normalize_phone as _normalize_phone,
     extract_text as _extract_text,
@@ -217,10 +218,23 @@ def _startup():
     os.makedirs("/data", exist_ok=True)
     init_db()
     ensure_schema()
+    if DATABASE_URL:
+        ensure_pg_schema()
 
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/health/postgres")
+def health_postgres():
+    if not DATABASE_URL:
+        raise HTTPException(status_code=404, detail="DATABASE_URL is not configured")
+    try:
+        row = pg_healthcheck()
+        return {"ok": True, "now": row["now"] if row else None}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 # ==========================
