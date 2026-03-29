@@ -15,6 +15,10 @@ def open_skimmer_sqlite(path: str) -> sqlite3.Connection:
     return conn
 
 
+def row_get(row, key, default=None):
+    return row[key] if key in row.keys() else default
+
+
 def insert_import_run(conn, source_filename, db_path):
     with conn.cursor() as cur:
         cur.execute(
@@ -90,16 +94,16 @@ def upsert_customer(conn, row, source_system="skimmer"):
             (
                 source_system,
                 source_customer_id,
-                row.get("FirstName"),
-                row.get("LastName"),
-                row.get("CompanyName"),
-                row.get("PrimaryEmail"),
-                row.get("MobilePhone"),
-                row.get("MobilePhone2"),
-                row.get("BillingAddress"),
-                row.get("BillingCity"),
-                row.get("BillingState"),
-                row.get("BillingZip"),
+                row_get(row, "FirstName"),
+                row_get(row, "LastName"),
+                row_get(row, "CompanyName"),
+                row_get(row, "PrimaryEmail"),
+                row_get(row, "MobilePhone"),
+                row_get(row, "MobilePhone2"),
+                row_get(row, "BillingAddress"),
+                row_get(row, "BillingCity"),
+                row_get(row, "BillingState"),
+                row_get(row, "BillingZip"),
                 raw_json,
             ),
         )
@@ -141,10 +145,10 @@ def import_customers(sqlite_path, source_system="skimmer"):
             for row in rows:
                 sk_customer_id = upsert_customer(pg_conn, row, source_system=source_system)
                 identity_count += 1
-                upsert_identity_map(pg_conn, sk_customer_id, row.get("id"), "customer_id", source_system=source_system)
-                upsert_identity_map(pg_conn, sk_customer_id, row.get("PrimaryEmail"), "email", source_system=source_system)
-                upsert_identity_map(pg_conn, sk_customer_id, row.get("MobilePhone"), "mobile_phone", source_system=source_system)
-                upsert_identity_map(pg_conn, sk_customer_id, row.get("MobilePhone2"), "mobile_phone", source_system=source_system)
+                upsert_identity_map(pg_conn, sk_customer_id, row_get(row, "id"), "customer_id", source_system=source_system)
+                upsert_identity_map(pg_conn, sk_customer_id, row_get(row, "PrimaryEmail"), "email", source_system=source_system)
+                upsert_identity_map(pg_conn, sk_customer_id, row_get(row, "MobilePhone"), "mobile_phone", source_system=source_system)
+                upsert_identity_map(pg_conn, sk_customer_id, row_get(row, "MobilePhone2"), "mobile_phone", source_system=source_system)
                 imported += 1
             update_import_run(
                 pg_conn,
