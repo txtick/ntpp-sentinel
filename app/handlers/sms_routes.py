@@ -41,6 +41,7 @@ class SMSRouteDeps:
     manager_conversation_for_contact: Callable[[str], Awaitable[Optional[str]]]
     ghl_send_message: Callable[[str, str, str], Awaitable[Dict[str, Any]]]
     recent_staff_outbound_ts: Callable[[str], Awaitable[Optional[dt.datetime]]]
+    reply_window_hours: float
     flow_log: Callable[..., None]
     get_last_internal_outbound: Callable[[str], Optional[str]]
     parse_iso_dt: Callable[[Any], Optional[dt.datetime]]
@@ -318,6 +319,27 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                         conversation_id=conversation_id,
                     )
                     return {"received": True, "ignored": "ack_closeout_after_staff_reply"}
+
+        if conversation_id:
+            last_staff_ts = None
+            try:
+                last_staff_ts = await deps.recent_staff_outbound_ts(conversation_id)
+            except Exception:
+                last_staff_ts = None
+            if last_staff_ts is not None:
+                if last_staff_ts.tzinfo is None:
+                    last_staff_ts = last_staff_ts.replace(tzinfo=ZoneInfo(deps.tz_name))
+                delta = now_local - last_staff_ts
+                if delta.total_seconds() >= 0 and delta <= dt.timedelta(hours=deps.reply_window_hours):
+                    deps.flow_log(
+                        "sms.ignored_recent_staff_reply",
+                        who=who,
+                        contact_id=contact_id,
+                        conversation_id=conversation_id,
+                        latest_staff_outbound_ts=last_staff_ts.isoformat(),
+                        reply_window_hours=deps.reply_window_hours,
+                    )
+                    return {"received": True, "ignored": "recent_staff_reply"}
 
         ai_suppress, ai_gate = await deps.ai_inbound_should_suppress(conversation_id)
         if ai_gate is not None:

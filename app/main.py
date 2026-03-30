@@ -1363,6 +1363,7 @@ register_sms_routes(
         manager_conversation_for_contact=_manager_conversation_for_contact,
         ghl_send_message=ghl_send_message,
         recent_staff_outbound_ts=_recent_staff_outbound_ts,
+        reply_window_hours=AI_GATE_GAP_HOURS,
         flow_log=_flow_log,
         get_last_internal_outbound=get_last_internal_outbound,
         parse_iso_dt=_parse_iso_dt,
@@ -1404,6 +1405,8 @@ register_webhook_routes(
         is_spam=_webhook_is_spam,
         ghl_get_contact_name=ghl_get_contact_name,
         ghl_find_conversation_id_for_contact=ghl_find_conversation_id_for_contact,
+        recent_staff_outbound_ts=_recent_staff_outbound_ts,
+        reply_window_hours=AI_GATE_GAP_HOURS,
         flow_log=_flow_log,
     ),
 )
