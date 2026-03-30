@@ -32,6 +32,10 @@ CRON_TZ="${CRON_TZ:-${TIMEZONE:-America/Chicago}}"
 CRON_SKIMMER_SYNC_MINUTE="${CRON_SKIMMER_SYNC_MINUTE:-15}"
 CRON_SKIMMER_SYNC_HOUR="${CRON_SKIMMER_SYNC_HOUR:-11}"
 CRON_SKIMMER_SYNC_DOW="${CRON_SKIMMER_SYNC_DOW:-*}"
+CRON_SKIMMER_IMPORT_MINUTE="${CRON_SKIMMER_IMPORT_MINUTE:-30}"
+CRON_SKIMMER_IMPORT_HOUR="${CRON_SKIMMER_IMPORT_HOUR:-${CRON_SKIMMER_SYNC_HOUR}}"
+CRON_SKIMMER_IMPORT_DOW="${CRON_SKIMMER_IMPORT_DOW:-1-5}"
+SKIMMER_IMPORT_TABLES="${SKIMMER_IMPORT_TABLES:-all}"
 
 # Validation with safe fallback.
 valid_hour "$CRON_MORNING_HOUR" || CRON_MORNING_HOUR=8
@@ -41,7 +45,15 @@ valid_hour "$CRON_BUSINESS_END_HOUR" || CRON_BUSINESS_END_HOUR=17
 valid_minute_step "$CRON_ESCALATIONS_EVERY_MINUTES" || CRON_ESCALATIONS_EVERY_MINUTES=1
 valid_minute_step "$CRON_POLL_RESOLVER_EVERY_MINUTES" || CRON_POLL_RESOLVER_EVERY_MINUTES=15
 valid_minute_step "$CRON_VERIFY_PENDING_EVERY_MINUTES" || CRON_VERIFY_PENDING_EVERY_MINUTES=5
-
+valid_minute() {
+  is_int "$1" || return 1
+  [ "$1" -ge 0 ] && [ "$1" -le 59 ]
+}
+valid_minute "${CRON_SKIMMER_IMPORT_MINUTE}" || CRON_SKIMMER_IMPORT_MINUTE=30
+valid_hour "${CRON_SKIMMER_IMPORT_HOUR}" || CRON_SKIMMER_IMPORT_HOUR="${CRON_SKIMMER_SYNC_HOUR}"
+if ! printf '%s' "${CRON_SKIMMER_IMPORT_DOW}" | grep -Eq '^[0-9,*/-]+$'; then
+  CRON_SKIMMER_IMPORT_DOW="1-5"
+fi
 if ! printf '%s' "$CRON_BUSINESS_HOURS" | grep -Eq '^[0-9]{1,2}-[0-9]{1,2}$'; then
   CRON_BUSINESS_HOURS="8-16"
 fi
@@ -66,6 +78,7 @@ TZ=${CRON_TZ}
 */${CRON_VERIFY_PENDING_EVERY_MINUTES} ${CRON_BUSINESS_HOURS} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 0 ${CRON_BUSINESS_END_HOUR} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 ${CRON_SKIMMER_SYNC_MINUTE} ${CRON_SKIMMER_SYNC_HOUR} * * ${CRON_SKIMMER_SYNC_DOW} /usr/bin/python3 /app/cron/skimmer_download.py >> /logs/cron.log 2>&1
+${CRON_SKIMMER_IMPORT_MINUTE} ${CRON_SKIMMER_IMPORT_HOUR} * * ${CRON_SKIMMER_IMPORT_DOW} /usr/bin/python3 /app/scripts/import_skimmer_customers.py --tables ${SKIMMER_IMPORT_TABLES} >> /logs/cron.log 2>&1
 EOF
 
 if [ "${CRON_INSTALL:-1}" = "1" ]; then

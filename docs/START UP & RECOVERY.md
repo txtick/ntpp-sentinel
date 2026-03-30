@@ -234,9 +234,16 @@ Key cron env variables:
 - `CRON_ESCALATIONS_EVERY_MINUTES`
 - `CRON_POLL_RESOLVER_EVERY_MINUTES`
 - `CRON_VERIFY_PENDING_EVERY_MINUTES`
+- `CRON_SKIMMER_SYNC_HOUR`
+- `CRON_SKIMMER_SYNC_MINUTE`
+- `CRON_SKIMMER_SYNC_DOW`
+- `CRON_SKIMMER_IMPORT_HOUR`
+- `CRON_SKIMMER_IMPORT_MINUTE`
+- `CRON_SKIMMER_IMPORT_DOW`
 
 Current repo default:
 - `CRON_DOW=1-6` (Monday-Saturday)
+- `CRON_SKIMMER_IMPORT_DOW=1-5` (Monday-Friday)
 
 Optional Skimmer import env values:
 - `SKIMMER_DOWNLOAD_DIR`
@@ -244,6 +251,7 @@ Optional Skimmer import env values:
 - `SKIMMER_LINK_FILE`
 - `SKIMMER_ARCHIVE_DIR`
 - `SKIMMER_KEEP_DAILY`
+- `SKIMMER_IMPORT_TABLES`
 
 High-impact runtime decision env variables:
 

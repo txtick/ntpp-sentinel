@@ -82,4 +82,34 @@ This file documents the discovered Skimmer SQLite export found in the repository
 python scripts/import_skimmer_customers.py --sqlite /data/skimmer/skimmer.db
 ```
 
-- Confirm `skimmer_import_runs`, `sk_customer`, and `customer_identity_map` are populated in Postgres.
+- After the first customer import, run the next tables with:
+
+```bash
+python scripts/import_skimmer_customers.py --sqlite /data/skimmer/skimmer.db --tables pools,locations
+```
+
+- Import service stop metadata and readings with:
+
+```bash
+python scripts/import_skimmer_customers.py --sqlite /data/skimmer/skimmer.db --tables entry_descriptions,service_stop_entries
+```
+
+- Or import everything with:
+
+```bash
+python scripts/import_skimmer_customers.py --sqlite /data/skimmer/skimmer.db --tables all
+```
+
+- To run this automatically after the nightly Skimmer download, add cron settings in `.env`:
+
+```bash
+SKIMMER_IMPORT_TABLES=all
+CRON_SKIMMER_IMPORT_MINUTE=30
+CRON_SKIMMER_IMPORT_HOUR=11
+CRON_SKIMMER_IMPORT_DOW=1-5
+```
+
+This creates a weekday-only import job that runs after the nightly sync.
+
+- The Postgres bootstrap now creates a `sk_pool_with_service_location` view for joined pool/location records and a `sk_service_stop_entry_with_location` view for service stop readings joined to the customer.
+- Confirm `skimmer_import_runs`, `sk_customer`, `customer_identity_map`, `sk_pool`, `sk_service_location`, `sk_entry_description`, and `sk_service_stop_entry` are populated in Postgres.
