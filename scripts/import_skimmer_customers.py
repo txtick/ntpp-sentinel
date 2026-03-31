@@ -386,7 +386,7 @@ def upsert_service_location(conn, row, source_system="skimmer"):
                 row_get(row, "Latitude"),
                 row_get(row, "Longitude"),
                 row_get(row, "MinutesAtStop"),
-                row_get(row, "IsBadAddress"),
+                bool(row_get(row, "IsBadAddress")),
                 row_get(row, "GateCode"),
                 row_get(row, "DogsName"),
                 row_get(row, "Notes"),
