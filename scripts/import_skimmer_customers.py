@@ -187,7 +187,7 @@ def upsert_entry_description(conn, row, source_system="skimmer"):
                 row_get(row, "Sequence"),
                 row_get(row, "Cost"),
                 row_get(row, "Price"),
-                row_get(row, "CanIncludeWithService"),
+                bool(row_get(row, "CanIncludeWithService")),
                 row_get(row, "ColumnSequence"),
                 row_get(row, "CompanyId"),
                 raw_json,
