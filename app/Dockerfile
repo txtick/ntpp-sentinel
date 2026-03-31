@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV TZ=America/Chicago
 
 WORKDIR /app
-COPY requirements.txt /app/requirements.txt
+COPY app/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/ /app
