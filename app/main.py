@@ -1330,7 +1330,7 @@ async def skimmer_link(request: Request):
 
 def _run_skimmer_import() -> dict:
     tables = os.getenv("SKIMMER_IMPORT_TABLES", "all")
-    script = os.path.join(os.path.dirname(__file__), "..", "scripts", "import_skimmer_customers.py")
+    script = os.path.join(os.path.dirname(__file__), "scripts", "import_skimmer_customers.py")
     script = os.path.normpath(script)
     result = subprocess.run(
         [sys.executable, script, "--tables", tables, "--sqlite", SKIMMER_DB_PATH],
