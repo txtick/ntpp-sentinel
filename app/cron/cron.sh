@@ -45,6 +45,9 @@ case "$JOB" in
   escalations)
     call_job "${BASE}/jobs/escalations"
     ;;
+  skimmer_import)
+    call_job "${BASE}/jobs/skimmer_import"
+    ;;
   *)
     echo "$(ts) Unknown job: ${JOB}"
     exit 1

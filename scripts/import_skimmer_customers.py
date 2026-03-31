@@ -6,7 +6,12 @@ import sqlite3
 import sys
 from datetime import datetime
 
-from app.pg import pg
+# Support being called directly (cron/subprocess) or imported from within the app.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from pg import pg
+except ImportError:
+    from app.pg import pg
 
 
 def open_skimmer_sqlite(path: str) -> sqlite3.Connection:

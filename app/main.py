@@ -3,6 +3,8 @@ import gzip
 import os
 import json
 import sqlite3
+import subprocess
+import sys
 import shutil
 import tempfile
 import datetime as dt
@@ -1310,10 +1312,12 @@ async def skimmer_link(request: Request):
             _download_and_save_skimmer(link, SKIMMER_DB_PATH)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Skimmer download failed: {exc}")
+        import_result = _run_skimmer_import()
         return {
             "status": "downloaded",
             "skimmer_db_path": SKIMMER_DB_PATH,
             "download_url": link,
+            "import": import_result,
         }
 
     path = _write_skimmer_link(link)
@@ -1322,6 +1326,32 @@ async def skimmer_link(request: Request):
         "link_file": path,
         "stored_value": link,
     }
+
+
+def _run_skimmer_import() -> dict:
+    tables = os.getenv("SKIMMER_IMPORT_TABLES", "all")
+    script = os.path.join(os.path.dirname(__file__), "..", "scripts", "import_skimmer_customers.py")
+    script = os.path.normpath(script)
+    result = subprocess.run(
+        [sys.executable, script, "--tables", tables, "--sqlite", SKIMMER_DB_PATH],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if result.returncode != 0:
+        return {"status": "error", "detail": result.stderr.strip() or result.stdout.strip()}
+    return {"status": "ok", "output": result.stdout.strip()}
+
+
+@app.post("/jobs/skimmer_import")
+async def skimmer_import_job(request: Request):
+    _auth_or_401(request)
+    if not os.path.exists(SKIMMER_DB_PATH):
+        raise HTTPException(status_code=422, detail=f"Skimmer DB not found at {SKIMMER_DB_PATH}")
+    result = _run_skimmer_import()
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result.get("detail", "Import failed"))
+    return result
 
 
 # ==========================

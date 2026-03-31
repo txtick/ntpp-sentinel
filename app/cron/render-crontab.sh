@@ -78,7 +78,7 @@ TZ=${CRON_TZ}
 */${CRON_VERIFY_PENDING_EVERY_MINUTES} ${CRON_BUSINESS_HOURS} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 0 ${CRON_BUSINESS_END_HOUR} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 ${CRON_SKIMMER_SYNC_MINUTE} ${CRON_SKIMMER_SYNC_HOUR} * * ${CRON_SKIMMER_SYNC_DOW} /usr/bin/python3 /app/cron/skimmer_download.py >> /logs/cron.log 2>&1
-${CRON_SKIMMER_IMPORT_MINUTE} ${CRON_SKIMMER_IMPORT_HOUR} * * ${CRON_SKIMMER_IMPORT_DOW} /usr/bin/python3 /app/scripts/import_skimmer_customers.py --tables ${SKIMMER_IMPORT_TABLES} >> /logs/cron.log 2>&1
+${CRON_SKIMMER_IMPORT_MINUTE} ${CRON_SKIMMER_IMPORT_HOUR} * * ${CRON_SKIMMER_IMPORT_DOW} /app/cron/cron.sh skimmer_import >> /logs/cron.log 2>&1
 EOF
 
 if [ "${CRON_INSTALL:-1}" = "1" ]; then
