@@ -1,5 +1,6 @@
 # Secrets
 .env
+scripts/gas.js
 
 # Runtime data
 data/

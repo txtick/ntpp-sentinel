@@ -1,6 +1,8 @@
 services:
   sentinel:
-    build: ./app
+    build:
+      context: .
+      dockerfile: app/Dockerfile
     container_name: ntpp-sentinel
     restart: unless-stopped
     env_file: .env
