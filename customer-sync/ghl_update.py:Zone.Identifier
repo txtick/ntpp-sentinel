@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://claude.ai/chat/9485d36f-012e-448c-adb0-64420b189a69
+HostUrl=https://claude.ai/api/organizations/09302463-04e8-46b1-95d6-d65a48f35c23/conversations/9485d36f-012e-448c-adb0-64420b189a69/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2Fghl_update.py

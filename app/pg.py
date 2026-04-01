@@ -48,6 +48,12 @@ def ensure_pg_schema() -> None:
                     email TEXT,
                     phone TEXT,
                     mobile_phone TEXT,
+                    is_inactive BOOLEAN,
+                    is_lead BOOLEAN,
+                    customer_status TEXT,
+                    ghl_contact_id TEXT,
+                    ghl_last_sync_ts TIMESTAMPTZ,
+                    ghl_last_sync_error TEXT,
                     address TEXT,
                     city TEXT,
                     state TEXT,
@@ -57,6 +63,18 @@ def ensure_pg_schema() -> None:
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     UNIQUE (source_system, source_customer_id)
                 )
+                """
+            )
+            cur.execute("ALTER TABLE sk_customer ADD COLUMN IF NOT EXISTS is_inactive BOOLEAN")
+            cur.execute("ALTER TABLE sk_customer ADD COLUMN IF NOT EXISTS is_lead BOOLEAN")
+            cur.execute("ALTER TABLE sk_customer ADD COLUMN IF NOT EXISTS customer_status TEXT")
+            cur.execute("ALTER TABLE sk_customer ADD COLUMN IF NOT EXISTS ghl_contact_id TEXT")
+            cur.execute("ALTER TABLE sk_customer ADD COLUMN IF NOT EXISTS ghl_last_sync_ts TIMESTAMPTZ")
+            cur.execute("ALTER TABLE sk_customer ADD COLUMN IF NOT EXISTS ghl_last_sync_error TEXT")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_customer_status
+                ON sk_customer(source_system, customer_status)
                 """
             )
             cur.execute(

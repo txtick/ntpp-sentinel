@@ -16,7 +16,7 @@ import re
 import httpx # type: ignore
 from zoneinfo import ZoneInfo
 from db import db, init_db, ensure_schema, purge_raw_events
-from pg import DATABASE_URL, ensure_pg_schema, pg_healthcheck
+from pg import DATABASE_URL, ensure_pg_schema, pg_healthcheck, pg
 from handlers.sms import (
     normalize_phone as _normalize_phone,
     extract_text as _extract_text,
@@ -75,6 +75,16 @@ from services.summary import (
     fetch_unnotified_breaches,
     summary_title,
 )
+from services.customer_sync import (
+    PROTECTED_GHL_TYPES,
+    build_customer_sync_record,
+    build_ghl_contact_indexes,
+    build_ghl_contact_payload,
+    clean_text as sync_clean_text,
+    contact_needs_update,
+    customer_display_name,
+    match_ghl_contact,
+)
 
 # ==========================
 # Config
@@ -118,6 +128,8 @@ BUSINESS_TIME = BusinessTimeConfig(
 GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com")
 GHL_TOKEN = os.getenv("GHL_TOKEN", "")  # Private Integration token (Bearer)
 GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28")
+CUSTOMER_SYNC_PAGE_LIMIT = max(1, int(os.getenv("CUSTOMER_SYNC_PAGE_LIMIT", "100")))
+CUSTOMER_SYNC_DELAY_SECONDS = float(os.getenv("CUSTOMER_SYNC_DELAY_SECONDS", "0.10"))
 # OpenAI (AI follow-up gate; optional)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -616,6 +628,14 @@ async def ghl_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code} {r.text[:300]}")
     return r.json()
 
+
+async def ghl_put(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = GHL_BASE_URL.rstrip("/") + path
+    r = await _ghl_client.put(url, headers=_ghl_headers(), json=payload)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"GHL PUT {path} failed: {r.status_code} {r.text[:300]}")
+    return r.json() if (r.text or "").strip() else {}
+
 async def ghl_list_messages(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     """
     Verified response shape: {'messages': [...], 'traceId': ...}
@@ -710,6 +730,58 @@ async def ghl_find_conversation_id_for_contact(contact_id: Optional[str], phone:
                         v = c.get(k)
                         if isinstance(v, str) and v.strip():
                             return v.strip()
+    return None
+
+
+async def ghl_fetch_all_contacts(page_limit: int = CUSTOMER_SYNC_PAGE_LIMIT) -> List[Dict[str, Any]]:
+    contacts: List[Dict[str, Any]] = []
+    search_after: Optional[List[Any]] = None
+
+    while True:
+        payload: Dict[str, Any] = {
+            "locationId": GHL_LOCATION_ID,
+            "pageLimit": page_limit,
+        }
+        if search_after:
+            payload["searchAfter"] = search_after
+
+        data = await ghl_post("/contacts/search", payload)
+        page = data.get("contacts") if isinstance(data, dict) else None
+        if not isinstance(page, list) or not page:
+            break
+
+        contacts.extend([contact for contact in page if isinstance(contact, dict)])
+        last = page[-1] if isinstance(page[-1], dict) else {}
+        search_after = last.get("searchAfter")
+        if len(page) < page_limit or not search_after:
+            break
+
+    return contacts
+
+
+async def ghl_update_contact(contact_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    return await ghl_put(f"/contacts/{contact_id}", payload)
+
+
+async def ghl_create_contact(payload: Dict[str, Any]) -> Dict[str, Any]:
+    create_payload = dict(payload)
+    create_payload["locationId"] = GHL_LOCATION_ID
+    return await ghl_post("/contacts/", create_payload)
+
+
+def _ghl_contact_id_from_response(data: Dict[str, Any]) -> Optional[str]:
+    if not isinstance(data, dict):
+        return None
+    for key in ("id", "contactId"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    contact = data.get("contact")
+    if isinstance(contact, dict):
+        for key in ("id", "contactId"):
+            value = contact.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return None
 
 
@@ -1700,6 +1772,230 @@ async def skimmer_import_job(request: Request):
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("detail", "Import failed"))
     return result
+
+
+def _fetch_sk_customers(limit: int) -> List[Dict[str, Any]]:
+    if not DATABASE_URL:
+        raise HTTPException(status_code=500, detail="DATABASE_URL is not configured")
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    source_customer_id,
+                    first_name,
+                    last_name,
+                    company_name,
+                    email,
+                    phone,
+                    mobile_phone,
+                    is_inactive,
+                    is_lead,
+                    customer_status,
+                    ghl_contact_id
+                FROM sk_customer
+                WHERE source_system = 'skimmer'
+                ORDER BY id ASC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+    return rows if isinstance(rows, list) else []
+
+
+def _update_sk_customer_sync_state(
+    sk_customer_id: int,
+    *,
+    ghl_contact_id: Optional[str],
+    error: Optional[str],
+) -> None:
+    if not DATABASE_URL:
+        return
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE sk_customer
+                SET
+                    ghl_contact_id = COALESCE(%s, ghl_contact_id),
+                    ghl_last_sync_ts = NOW(),
+                    ghl_last_sync_error = %s
+                WHERE id = %s
+                """,
+                (ghl_contact_id, error, sk_customer_id),
+            )
+        conn.commit()
+
+
+@app.post("/jobs/skimmer_customer_sync")
+async def skimmer_customer_sync(request: Request, limit: int = 1000, dry_run: int = 1):
+    _auth_or_401(request)
+
+    started_at = time.perf_counter()
+    customers = [build_customer_sync_record(row) for row in _fetch_sk_customers(limit=max(1, limit))]
+    contacts = await ghl_fetch_all_contacts()
+    indexes = build_ghl_contact_indexes(contacts)
+
+    summary = {
+        "job": "skimmer_customer_sync",
+        "dry_run": bool(dry_run),
+        "customers_considered": len(customers),
+        "ghl_contacts_loaded": len(contacts),
+        "matched": 0,
+        "updated": 0,
+        "created": 0,
+        "skipped_protected": 0,
+        "skipped_ambiguous": 0,
+        "skipped_no_identifiers": 0,
+        "errors": 0,
+        "items": [],
+    }
+
+    for customer in customers:
+        sk_customer_id = int(customer["id"])
+        payload = build_ghl_contact_payload(customer)
+        if not any([payload.get("email"), payload.get("phone"), payload.get("name"), payload.get("companyName")]):
+            summary["skipped_no_identifiers"] += 1
+            summary["items"].append(
+                {
+                    "sk_customer_id": sk_customer_id,
+                    "customer": customer_display_name(customer),
+                    "action": "skip_no_identifiers",
+                }
+            )
+            continue
+
+        matched_contact, methods, ambiguous = match_ghl_contact(customer, indexes)
+        if ambiguous:
+            summary["skipped_ambiguous"] += 1
+            summary["items"].append(
+                {
+                    "sk_customer_id": sk_customer_id,
+                    "customer": customer_display_name(customer),
+                    "action": "skip_ambiguous",
+                    "match_methods": methods,
+                }
+            )
+            continue
+
+        if matched_contact is not None:
+            summary["matched"] += 1
+            current_type = sync_clean_text(matched_contact.get("type"))
+            if current_type in PROTECTED_GHL_TYPES:
+                summary["skipped_protected"] += 1
+                summary["items"].append(
+                    {
+                        "sk_customer_id": sk_customer_id,
+                        "customer": customer_display_name(customer),
+                        "action": "skip_protected_type",
+                        "ghl_contact_id": sync_clean_text(matched_contact.get("id")),
+                        "ghl_type": current_type,
+                    }
+                )
+                continue
+
+            needs_update = contact_needs_update(matched_contact, payload)
+            contact_id = sync_clean_text(matched_contact.get("id"))
+            if not needs_update:
+                if not dry_run:
+                    _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=contact_id, error=None)
+                summary["items"].append(
+                    {
+                        "sk_customer_id": sk_customer_id,
+                        "customer": customer_display_name(customer),
+                        "action": "no_change",
+                        "ghl_contact_id": contact_id,
+                        "match_methods": methods,
+                    }
+                )
+                continue
+
+            if dry_run:
+                summary["updated"] += 1
+                summary["items"].append(
+                    {
+                        "sk_customer_id": sk_customer_id,
+                        "customer": customer_display_name(customer),
+                        "action": "would_update",
+                        "ghl_contact_id": contact_id,
+                        "match_methods": methods,
+                        "payload": payload,
+                    }
+                )
+                continue
+
+            try:
+                await ghl_update_contact(contact_id, payload)
+                _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=contact_id, error=None)
+                summary["updated"] += 1
+                summary["items"].append(
+                    {
+                        "sk_customer_id": sk_customer_id,
+                        "customer": customer_display_name(customer),
+                        "action": "updated",
+                        "ghl_contact_id": contact_id,
+                        "match_methods": methods,
+                    }
+                )
+            except Exception as exc:
+                _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=contact_id or None, error=str(exc)[:500])
+                summary["errors"] += 1
+                summary["items"].append(
+                    {
+                        "sk_customer_id": sk_customer_id,
+                        "customer": customer_display_name(customer),
+                        "action": "error_update",
+                        "ghl_contact_id": contact_id,
+                        "error": str(exc),
+                    }
+                )
+            if CUSTOMER_SYNC_DELAY_SECONDS > 0:
+                await asyncio.sleep(CUSTOMER_SYNC_DELAY_SECONDS)
+            continue
+
+        if dry_run:
+            summary["created"] += 1
+            summary["items"].append(
+                {
+                    "sk_customer_id": sk_customer_id,
+                    "customer": customer_display_name(customer),
+                    "action": "would_create",
+                    "payload": payload,
+                }
+            )
+            continue
+
+        try:
+            data = await ghl_create_contact(payload)
+            contact_id = _ghl_contact_id_from_response(data)
+            _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=contact_id, error=None)
+            summary["created"] += 1
+            summary["items"].append(
+                {
+                    "sk_customer_id": sk_customer_id,
+                    "customer": customer_display_name(customer),
+                    "action": "created",
+                    "ghl_contact_id": contact_id,
+                }
+            )
+        except Exception as exc:
+            _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=None, error=str(exc)[:500])
+            summary["errors"] += 1
+            summary["items"].append(
+                {
+                    "sk_customer_id": sk_customer_id,
+                    "customer": customer_display_name(customer),
+                    "action": "error_create",
+                    "error": str(exc),
+                }
+            )
+        if CUSTOMER_SYNC_DELAY_SECONDS > 0:
+            await asyncio.sleep(CUSTOMER_SYNC_DELAY_SECONDS)
+
+    summary["elapsed_ms"] = round((time.perf_counter() - started_at) * 1000, 1)
+    return summary
 
 
 @app.post("/jobs/skimmer_drive_sync")

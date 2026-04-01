@@ -33,6 +33,14 @@ def log(msg: str) -> None:
     print(f"[skimmer-import] {msg}")
 
 
+def derive_customer_status(is_inactive, is_lead) -> str:
+    if bool(is_inactive):
+        return "past"
+    if bool(is_lead):
+        return "lead"
+    return "active"
+
+
 def insert_import_run(conn, source_filename, db_path):
     with conn.cursor() as cur:
         cur.execute(
@@ -86,12 +94,15 @@ def upsert_customer(conn, row, source_system="skimmer", cur=None):
                 email,
                 phone,
                 mobile_phone,
+                is_inactive,
+                is_lead,
+                customer_status,
                 address,
                 city,
                 state,
                 zip,
                 raw_json
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (source_system, source_customer_id)
             DO UPDATE SET
                 first_name = EXCLUDED.first_name,
@@ -100,6 +111,9 @@ def upsert_customer(conn, row, source_system="skimmer", cur=None):
                 email = EXCLUDED.email,
                 phone = EXCLUDED.phone,
                 mobile_phone = EXCLUDED.mobile_phone,
+                is_inactive = EXCLUDED.is_inactive,
+                is_lead = EXCLUDED.is_lead,
+                customer_status = EXCLUDED.customer_status,
                 address = EXCLUDED.address,
                 city = EXCLUDED.city,
                 state = EXCLUDED.state,
@@ -117,6 +131,9 @@ def upsert_customer(conn, row, source_system="skimmer", cur=None):
                 row_get(row, "PrimaryEmail"),
                 row_get(row, "MobilePhone"),
                 row_get(row, "MobilePhone2"),
+                bool(row_get(row, "IsInactive")),
+                bool(row_get(row, "IsLead")),
+                derive_customer_status(row_get(row, "IsInactive"), row_get(row, "IsLead")),
                 row_get(row, "BillingAddress"),
                 row_get(row, "BillingCity"),
                 row_get(row, "BillingState"),
@@ -531,7 +548,7 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
     chunk_count = 0
     for rows in _iter_sqlite_rows(
         sqlite_conn,
-        "SELECT id, FirstName, LastName, CompanyName, PrimaryEmail, MobilePhone, MobilePhone2, BillingAddress, BillingCity, BillingState, BillingZip FROM Customer",
+        "SELECT id, FirstName, LastName, CompanyName, PrimaryEmail, MobilePhone, MobilePhone2, BillingAddress, BillingCity, BillingState, BillingZip, IsInactive, IsLead FROM Customer",
     ):
         chunk_started_at = time.perf_counter()
         identity_rows = []
