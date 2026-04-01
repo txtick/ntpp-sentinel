@@ -20,4 +20,4 @@ __pycache__/
 .vscode/
 
 #customer sync scripts
-customer_sync/
+customer-sync/
