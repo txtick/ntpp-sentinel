@@ -178,7 +178,10 @@ CALL_MISSED_MARKER_KEYS = [
 ]
 POLL_RESOLVER_CONCURRENCY = max(1, int(os.getenv("POLL_RESOLVER_CONCURRENCY", "8")))
 
-app = FastAPI(swagger_ui_parameters={"persistAuthorization": True})
+app = FastAPI(
+    swagger_ui_parameters={"persistAuthorization": True},
+    redoc_url=None,  # ReDoc loads from CDN and shows blank page; use /docs instead
+)
 
 
 def _custom_openapi():
