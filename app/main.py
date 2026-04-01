@@ -97,6 +97,7 @@ SKIMMER_GDRIVE_FILE_NAME_REGEX = os.getenv(
     "SKIMMER_GDRIVE_FILE_NAME_REGEX",
     r"(?i)skimmer.*\.(db|sqlite|sqlite3|gz)$",
 )
+SKIMMER_GDRIVE_SEARCH_DEPTH = max(0, int(os.getenv("SKIMMER_GDRIVE_SEARCH_DEPTH", "3")))
 
 _bh_start_h, _bh_start_m = parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
 _bh_end_h, _bh_end_m = parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
@@ -389,11 +390,11 @@ async def _google_access_token() -> str:
     return access_token
 
 
-async def _google_drive_list_skimmer_candidates(folder_id: str, access_token: str) -> List[Dict[str, Any]]:
+async def _google_drive_list_folder(folder_id: str, access_token: str) -> List[Dict[str, Any]]:
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {
         "q": f"'{folder_id}' in parents and trashed=false",
-        "fields": "files(id,name,mimeType,modifiedTime,size,webViewLink),nextPageToken",
+        "fields": "files(id,name,mimeType,modifiedTime,size,webViewLink,shortcutDetails),nextPageToken",
         "orderBy": "modifiedTime desc",
         "pageSize": "100",
         "supportsAllDrives": "true",
@@ -410,6 +411,52 @@ async def _google_drive_list_skimmer_candidates(folder_id: str, access_token: st
     payload = r.json()
     files = payload.get("files")
     return files if isinstance(files, list) else []
+
+
+async def _google_drive_list_skimmer_candidates(folder_id: str, access_token: str) -> List[Dict[str, Any]]:
+    visited = set()
+
+    async def _walk(current_folder_id: str, depth: int) -> List[Dict[str, Any]]:
+        if current_folder_id in visited:
+            return []
+        visited.add(current_folder_id)
+
+        files = await _google_drive_list_folder(current_folder_id, access_token)
+        out: List[Dict[str, Any]] = []
+        child_folders: List[str] = []
+
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            mime_type = str(item.get("mimeType") or "")
+            shortcut = item.get("shortcutDetails") if isinstance(item.get("shortcutDetails"), dict) else None
+            shortcut_target_id = str((shortcut or {}).get("targetId") or "").strip()
+            shortcut_target_mime = str((shortcut or {}).get("targetMimeType") or "").strip()
+
+            if mime_type == "application/vnd.google-apps.folder":
+                child_id = str(item.get("id") or "").strip()
+                if child_id:
+                    child_folders.append(child_id)
+                continue
+
+            if (
+                mime_type == "application/vnd.google-apps.shortcut"
+                and shortcut_target_id
+                and shortcut_target_mime == "application/vnd.google-apps.folder"
+            ):
+                child_folders.append(shortcut_target_id)
+                continue
+
+            out.append(item)
+
+        if depth <= 0:
+            return out
+
+        for child_folder_id in child_folders:
+            out.extend(await _walk(child_folder_id, depth - 1))
+        return out
+
+    return await _walk(folder_id, SKIMMER_GDRIVE_SEARCH_DEPTH)
 
 
 def _pick_latest_skimmer_file(files: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
