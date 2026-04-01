@@ -1,3 +1,4 @@
+import asyncio
 import json
 import datetime as dt
 from dataclasses import dataclass
@@ -61,6 +62,29 @@ class SMSRouteDeps:
     ghl_conversation_link: Callable[[Optional[str]], Optional[str]]
 
 
+async def _enrich_rows_with_names(rows: List[dict], deps: "SMSRouteDeps") -> None:
+    """Fetch missing contact names in parallel, deduplicated by contact_id."""
+    need: Dict[str, List[dict]] = {}
+    for r in rows:
+        cid = r.get("contact_id")
+        if not (r.get("contact_name") or "").strip() and cid:
+            need.setdefault(cid, []).append(r)
+    if not need:
+        return
+
+    async def _fetch(cid: str):
+        try:
+            return cid, await deps.ghl_get_contact_name(cid)
+        except Exception:
+            return cid, None
+
+    for cid, name in await asyncio.gather(*[_fetch(cid) for cid in need]):
+        if name:
+            for r in need[cid]:
+                deps.set_issue_contact_name(r["id"], name)
+                r["contact_name"] = name
+
+
 def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
     manager_list_offsets: Dict[str, int] = {}
 
@@ -113,12 +137,7 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
             rows, total = deps.list_open_issues(limit=limit, offset=offset)
             if total == 0:
                 return {"ok": True, "cmd": "LIST", "text": "No OPEN issues."}
-            for r in rows:
-                if not (r.get("contact_name") or "").strip() and r.get("contact_id"):
-                    fetched = await deps.ghl_get_contact_name(r["contact_id"])
-                    if fetched:
-                        deps.set_issue_contact_name(r["id"], fetched)
-                        r["contact_name"] = fetched
+            await _enrich_rows_with_names(rows, deps)
             body = deps.render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
             return {"ok": True, "cmd": "LIST", "text": body}
 
@@ -132,12 +151,7 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
             if not rows:
                 manager_list_offsets[command_contact_id] = 0
                 return {"ok": True, "cmd": "MORE", "text": "No more OPEN issues. Reply: List"}
-            for r in rows:
-                if not (r.get("contact_name") or "").strip() and r.get("contact_id"):
-                    fetched = await deps.ghl_get_contact_name(r["contact_id"])
-                    if fetched:
-                        deps.set_issue_contact_name(r["id"], fetched)
-                        r["contact_name"] = fetched
+            await _enrich_rows_with_names(rows, deps)
             body = deps.render_list_like_summary(rows, total_open=total, offset=offset, limit=limit)
             return {"ok": True, "cmd": "MORE", "text": body}
 
@@ -358,17 +372,18 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
             return {"received": True, "ignored": "ai_inbound_suppress"}
 
         conn = deps.db()
-        row = None
-        if conversation_id:
-            row = conn.execute(
-                "SELECT * FROM issues WHERE status IN ('PENDING','OPEN') AND issue_type='SMS' AND conversation_id=? ORDER BY id DESC LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
-        if row is None and from_phone:
-            row = conn.execute(
-                "SELECT * FROM issues WHERE status IN ('PENDING','OPEN') AND issue_type='SMS' AND phone=? ORDER BY id DESC LIMIT 1",
-                (from_phone,),
-            ).fetchone()
+        row = conn.execute(
+            """
+            SELECT * FROM issues
+            WHERE status IN ('PENDING','OPEN') AND issue_type='SMS'
+              AND (conversation_id=? OR phone=?)
+            ORDER BY
+              CASE WHEN conversation_id=? THEN 0 ELSE 1 END,
+              id DESC
+            LIMIT 1
+            """,
+            (conversation_id, from_phone, conversation_id),
+        ).fetchone()
 
         if row is None:
             meta: Dict[str, Any] = {"last_text": text[:500], "source": "inbound_sms_webhook"}

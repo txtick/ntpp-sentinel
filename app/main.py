@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException # type: ignore
+from fastapi.openapi.utils import get_openapi
+import asyncio
 import gzip
 import os
 import json
@@ -8,6 +10,7 @@ import sys
 import shutil
 import tempfile
 import datetime as dt
+import time
 from typing import Any, Dict, Optional, List, Tuple
 import re
 import httpx # type: ignore
@@ -173,8 +176,31 @@ CALL_REQUIRE_MISSED_MARKER = os.getenv("CALL_REQUIRE_MISSED_MARKER", "1").lower(
 CALL_MISSED_MARKER_KEYS = [
     s.strip() for s in os.getenv("CALL_MISSED_MARKER_KEYS", "sentinel_missed_call,missed_call,is_missed_call").split(",") if s.strip()
 ]
+POLL_RESOLVER_CONCURRENCY = max(1, int(os.getenv("POLL_RESOLVER_CONCURRENCY", "8")))
 
-app = FastAPI()
+app = FastAPI(swagger_ui_parameters={"persistAuthorization": True})
+
+
+def _custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title="NTPP Sentinel", version="1.0.0", routes=app.routes)
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "ApiKeyHeader": {"type": "apiKey", "in": "header", "name": "X-NTPP-Secret"}
+    }
+    schema["security"] = [{"ApiKeyHeader": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
+
+# Shared GHL HTTP client — reused across requests to avoid per-call TLS handshake overhead.
+_ghl_client = httpx.AsyncClient(timeout=20.0)
+
+@app.on_event("shutdown")
+async def _shutdown_ghl_client():
+    await _ghl_client.aclose()
 
 
 def set_last_internal_outbound(
@@ -357,19 +383,17 @@ def _ghl_headers() -> Dict[str, str]:
 
 async def ghl_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.get(url, headers=_ghl_headers(), params=params or {})
-        if r.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"GHL GET {path} failed: {r.status_code} {r.text[:300]}")
-        return r.json()
+    r = await _ghl_client.get(url, headers=_ghl_headers(), params=params or {})
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"GHL GET {path} failed: {r.status_code} {r.text[:300]}")
+    return r.json()
 
 async def ghl_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.post(url, headers=_ghl_headers(), json=payload)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code} {r.text[:300]}")
-        return r.json()
+    r = await _ghl_client.post(url, headers=_ghl_headers(), json=payload)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code} {r.text[:300]}")
+    return r.json()
 
 async def ghl_list_messages(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]]:
     """
@@ -559,10 +583,24 @@ async def _parse_request_payload(request: Request) -> Dict[str, Any]:
     return payload
 
 def _log_raw_event(source: str, payload: Dict[str, Any]) -> None:
+    """Schedule the SQLite write as a background task so it doesn't block the event loop."""
+    payload_json = json.dumps(payload)
+    ts = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    async def _task():
+        try:
+            await asyncio.to_thread(_log_raw_event_sync, source, ts, payload_json)
+        except Exception:
+            pass
+
+    asyncio.create_task(_task())
+
+
+def _log_raw_event_sync(source: str, ts: str, payload_json: str) -> None:
     conn = db()
     conn.execute(
         "INSERT INTO raw_events (received_ts, source, payload) VALUES (?, ?, ?)",
-        (dt.datetime.utcnow().isoformat(), source, json.dumps(payload))
+        (ts, source, payload_json),
     )
     conn.commit()
     conn.close()
@@ -949,6 +987,44 @@ def _has_outbound_after(msgs: List[Dict[str, Any]], first_inbound_ts: str) -> bo
 
     return False
 
+
+async def _poll_resolver_fetch_messages(
+    issue_rows: List[sqlite3.Row],
+    *,
+    fetch_limit: int,
+) -> Dict[str, List[Dict[str, Any]]]:
+    sem = asyncio.Semaphore(POLL_RESOLVER_CONCURRENCY)
+
+    async def _fetch(conversation_id: str) -> Tuple[str, List[Dict[str, Any]]]:
+        async with sem:
+            msgs = await ghl_list_messages(conversation_id, limit=fetch_limit)
+            return conversation_id, msgs
+
+    unique_conversation_ids = []
+    seen = set()
+    for row in issue_rows:
+        conv_id = row["conversation_id"]
+        if not conv_id or conv_id in seen:
+            continue
+        seen.add(conv_id)
+        unique_conversation_ids.append(conv_id)
+
+    if not unique_conversation_ids:
+        return {}
+
+    results = await asyncio.gather(
+        *[_fetch(conv_id) for conv_id in unique_conversation_ids],
+        return_exceptions=True,
+    )
+
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for result in results:
+        if isinstance(result, Exception):
+            continue
+        conv_id, msgs = result
+        out[conv_id] = msgs
+    return out
+
 @app.post("/jobs/poll_resolver")
 async def poll_resolver(request: Request, limit: int = 200):
     """
@@ -961,27 +1037,30 @@ async def poll_resolver(request: Request, limit: int = 200):
       Resolve if ANY staff outbound where dateAdded > created_ts
     """
     _auth_or_401(request)
+    started_at = time.perf_counter()
 
     conn = db()
-    rows = conn.execute("""
-        SELECT id, conversation_id, first_inbound_ts, outbound_count
-        FROM issues
-        WHERE status IN ('OPEN','PENDING')
-          AND issue_type='SMS'
-          AND conversation_id IS NOT NULL
-        ORDER BY due_ts ASC
-        LIMIT ?
-    """, (limit,)).fetchall()
-    call_rows = conn.execute("""
-        SELECT id, conversation_id, created_ts, outbound_count
-        FROM issues
-        WHERE status IN ('OPEN','PENDING')
-          AND issue_type='CALL'
-          AND conversation_id IS NOT NULL
-        ORDER BY due_ts ASC
-        LIMIT ?
-    """, (limit,)).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute("""
+            SELECT id, conversation_id, first_inbound_ts, outbound_count
+            FROM issues
+            WHERE status IN ('OPEN','PENDING')
+              AND issue_type='SMS'
+              AND conversation_id IS NOT NULL
+            ORDER BY due_ts ASC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        call_rows = conn.execute("""
+            SELECT id, conversation_id, created_ts, outbound_count
+            FROM issues
+            WHERE status IN ('OPEN','PENDING')
+              AND issue_type='CALL'
+              AND conversation_id IS NOT NULL
+            ORDER BY due_ts ASC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    finally:
+        conn.close()
 
     checked = 0
     resolved = 0
@@ -989,197 +1068,218 @@ async def poll_resolver(request: Request, limit: int = 200):
     call_checked = 0
     call_resolved = 0
     call_updated_counts = 0
+    fetch_started_at = time.perf_counter()
+    sms_messages_by_conversation = await _poll_resolver_fetch_messages(rows, fetch_limit=50)
+    call_messages_by_conversation = await _poll_resolver_fetch_messages(call_rows, fetch_limit=50)
+    fetch_elapsed_ms = round((time.perf_counter() - fetch_started_at) * 1000, 1)
 
-    for r in rows:
-        checked += 1
-        issue_id = r["id"]
-        conv_id = r["conversation_id"]
-        if not conv_id:
-            continue
-
-        try:
-            msgs = await ghl_list_messages(conv_id, limit=50)
-        except HTTPException:
-            continue
-
-        try:
-            fi = dt.datetime.fromisoformat((r["first_inbound_ts"] or "").replace("Z", "+00:00"))
-        except Exception:
-            fi = None
-
-        outbound_after = False
-        out_count = 0
-        latest_staff_ts: Optional[dt.datetime] = None
-        latest_staff_uid: Optional[str] = None
-        latest_customer_inbound_ts: Optional[dt.datetime] = None
-        latest_customer_inbound_text: str = ""
-
-        for m in msgs:
-            if _msg_is_staff_outbound(m):
-                out_count += 1
-
-                mts0 = _msg_ts(m)
-                if mts0 is not None:
-                    if latest_staff_ts is None or mts0 > latest_staff_ts:
-                        latest_staff_ts = mts0
-                        latest_staff_uid = str(m.get("userId") or "")
-
-                if fi is not None:
-                    mts = _msg_ts(m)
-                    if mts is None:
-                        continue
-                    try:
-                        # compare as UTC
-                        fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
-                        if mts.astimezone(dt.timezone.utc) > fi_utc:
-                            outbound_after = True
-                    except Exception:
-                        pass
-
-        if latest_staff_ts is not None:
-            try:
-                set_last_internal_outbound(
-                    conv_id,
-                    latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
-                    latest_staff_uid or None,
-                )
-            except Exception:
-                pass
-
-        conn2 = db()
-        prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
-        if out_count != prev_out:
-            conn2.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
-            conn2.commit()
-            updated_counts += 1
-
-        if outbound_after:
-            now = _now_local().isoformat()
-            conn2.execute("""
-                UPDATE issues
-                SET status='RESOLVED', resolved_ts=?
-                WHERE id=? AND status IN ('OPEN','PENDING')
-            """, (now, issue_id))
-            conn2.commit()
-            resolved += 1
-            _set_resolved_metadata(issue_id, "RULE_POLL_RESOLVER_SMS_OUTBOUND")
-            _flow_log(
-                "sms.auto_resolved",
-                issue_id=issue_id,
-                conversation_id=conv_id,
-                via="poll_resolver",
-            )
-
-        conn2.close()
-
-    for r in call_rows:
-        call_checked += 1
-        issue_id = r["id"]
-        conv_id = r["conversation_id"]
-        if not conv_id:
-            continue
-
-        try:
-            msgs = await ghl_list_messages(conv_id, limit=50)
-        except HTTPException as e:
-            _flow_log(
-                "call.resolver_fetch_error",
-                issue_id=issue_id,
-                conversation_id=conv_id,
-                status_code=getattr(e, "status_code", None),
-            )
-            continue
-
-        created = _parse_iso_dt(r["created_ts"])
-        created_utc: Optional[dt.datetime] = None
-        cutoff_utc: Optional[dt.datetime] = None
-        if created is not None:
-            try:
-                created_utc = created.astimezone(dt.timezone.utc) if created.tzinfo else created.replace(
-                    tzinfo=ZoneInfo(TZ_NAME)
-                ).astimezone(dt.timezone.utc)
-                cutoff_utc = created_utc - dt.timedelta(minutes=max(0.0, CALL_RESOLVE_LOOKBACK_MINUTES))
-            except Exception:
-                created_utc = None
-                cutoff_utc = None
-
-        call_resolution_after = False
-        resolution_signal: Optional[str] = None
-        out_count = 0
-        latest_staff_ts: Optional[dt.datetime] = None
-        latest_staff_uid: Optional[str] = None
-
-        for m in msgs:
-            signal = _msg_call_resolution_signal(m)
-
-            if _msg_is_call_resolution_outbound(m):
-                out_count += 1
-                mts0 = _msg_ts(m)
-                if mts0 is not None:
-                    if latest_staff_ts is None or mts0 > latest_staff_ts:
-                        latest_staff_ts = mts0
-                        latest_staff_uid = str(m.get("userId") or "")
-
-            if signal is None or cutoff_utc is None:
+    update_conn = db()
+    try:
+        for r in rows:
+            checked += 1
+            issue_id = r["id"]
+            conv_id = r["conversation_id"]
+            if not conv_id:
                 continue
 
-            mts = _msg_ts(m)
-            if mts is None:
+            msgs = sms_messages_by_conversation.get(conv_id)
+            if msgs is None:
                 continue
 
             try:
-                if mts.astimezone(dt.timezone.utc) > cutoff_utc:
-                    call_resolution_after = True
-                    if resolution_signal is None:
-                        resolution_signal = signal
+                fi = dt.datetime.fromisoformat((r["first_inbound_ts"] or "").replace("Z", "+00:00"))
             except Exception:
-                pass
+                fi = None
 
-        if latest_staff_ts is not None:
-            try:
-                set_last_internal_outbound(
-                    conv_id,
-                    latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
-                    latest_staff_uid or None,
+            outbound_after = False
+            out_count = 0
+            latest_staff_ts: Optional[dt.datetime] = None
+            latest_staff_uid: Optional[str] = None
+            latest_customer_inbound_ts: Optional[dt.datetime] = None
+            latest_customer_inbound_text: str = ""
+
+            for m in msgs:
+                if _msg_is_staff_outbound(m):
+                    out_count += 1
+
+                    mts0 = _msg_ts(m)
+                    if mts0 is not None:
+                        if latest_staff_ts is None or mts0 > latest_staff_ts:
+                            latest_staff_ts = mts0
+                            latest_staff_uid = str(m.get("userId") or "")
+
+                    if fi is not None:
+                        if mts0 is None:
+                            continue
+                        try:
+                            # compare as UTC
+                            fi_utc = fi.astimezone(dt.timezone.utc) if fi.tzinfo else fi.replace(tzinfo=ZoneInfo(TZ_NAME)).astimezone(dt.timezone.utc)
+                            if mts0.astimezone(dt.timezone.utc) > fi_utc:
+                                outbound_after = True
+                        except Exception:
+                            pass
+
+            if latest_staff_ts is not None:
+                try:
+                    set_last_internal_outbound(
+                        conv_id,
+                        latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
+                        latest_staff_uid or None,
+                    )
+                except Exception:
+                    pass
+
+            prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
+            if out_count != prev_out:
+                update_conn.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
+                updated_counts += 1
+
+            if outbound_after:
+                now = _now_local().isoformat()
+                cur = update_conn.execute("""
+                    UPDATE issues
+                    SET status='RESOLVED', resolved_ts=?
+                    WHERE id=? AND status IN ('OPEN','PENDING')
+                """, (now, issue_id))
+                if cur.rowcount and cur.rowcount > 0:
+                    resolved += 1
+                    _set_resolved_metadata(issue_id, "RULE_POLL_RESOLVER_SMS_OUTBOUND")
+                    _flow_log(
+                        "sms.auto_resolved",
+                        issue_id=issue_id,
+                        conversation_id=conv_id,
+                        via="poll_resolver",
+                    )
+
+        update_conn.commit()
+
+        for r in call_rows:
+            call_checked += 1
+            issue_id = r["id"]
+            conv_id = r["conversation_id"]
+            if not conv_id:
+                continue
+
+            msgs = call_messages_by_conversation.get(conv_id)
+            if msgs is None:
+                _flow_log(
+                    "call.resolver_fetch_error",
+                    issue_id=issue_id,
+                    conversation_id=conv_id,
+                    status_code=None,
                 )
-            except Exception:
-                pass
+                continue
 
-        conn2 = db()
-        prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
-        if out_count != prev_out:
-            conn2.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
-            conn2.commit()
-            call_updated_counts += 1
+            created = _parse_iso_dt(r["created_ts"])
+            created_utc: Optional[dt.datetime] = None
+            cutoff_utc: Optional[dt.datetime] = None
+            if created is not None:
+                try:
+                    created_utc = created.astimezone(dt.timezone.utc) if created.tzinfo else created.replace(
+                        tzinfo=ZoneInfo(TZ_NAME)
+                    ).astimezone(dt.timezone.utc)
+                    cutoff_utc = created_utc - dt.timedelta(minutes=max(0.0, CALL_RESOLVE_LOOKBACK_MINUTES))
+                except Exception:
+                    created_utc = None
+                    cutoff_utc = None
 
-        if call_resolution_after:
-            now = _now_local().isoformat()
-            conn2.execute("""
-                UPDATE issues
-                SET status='RESOLVED', resolved_ts=?
-                WHERE id=? AND status IN ('OPEN','PENDING')
-            """, (now, issue_id))
-            conn2.commit()
-            call_resolved += 1
-            resolved_by = (
-                "RULE_POLL_RESOLVER_CALL_OUTBOUND"
-                if resolution_signal == "outbound"
-                else "RULE_POLL_RESOLVER_CALL_ACTIVITY"
-            )
-            _set_resolved_metadata(
-                issue_id,
-                resolved_by,
-                {"resolution_signal": resolution_signal or "unknown"},
-            )
-            _flow_log(
-                "call.auto_resolved",
-                issue_id=issue_id,
-                conversation_id=conv_id,
-                via="poll_resolver",
-                signal=resolution_signal or "unknown",
-            )
+            call_resolution_after = False
+            resolution_signal: Optional[str] = None
+            out_count = 0
+            latest_staff_ts: Optional[dt.datetime] = None
+            latest_staff_uid: Optional[str] = None
 
-        conn2.close()
+            for m in msgs:
+                signal = _msg_call_resolution_signal(m)
+
+                if _msg_is_call_resolution_outbound(m):
+                    out_count += 1
+                    mts0 = _msg_ts(m)
+                    if mts0 is not None:
+                        if latest_staff_ts is None or mts0 > latest_staff_ts:
+                            latest_staff_ts = mts0
+                            latest_staff_uid = str(m.get("userId") or "")
+
+                if signal is None or cutoff_utc is None:
+                    continue
+
+                mts = _msg_ts(m)
+                if mts is None:
+                    continue
+
+                try:
+                    if mts.astimezone(dt.timezone.utc) > cutoff_utc:
+                        call_resolution_after = True
+                        if resolution_signal is None:
+                            resolution_signal = signal
+                except Exception:
+                    pass
+
+            if latest_staff_ts is not None:
+                try:
+                    set_last_internal_outbound(
+                        conv_id,
+                        latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
+                        latest_staff_uid or None,
+                    )
+                except Exception:
+                    pass
+
+            prev_out = r["outbound_count"] if r["outbound_count"] is not None else 0
+            if out_count != prev_out:
+                update_conn.execute("UPDATE issues SET outbound_count=? WHERE id=?", (out_count, issue_id))
+                call_updated_counts += 1
+
+            if call_resolution_after:
+                now = _now_local().isoformat()
+                cur = update_conn.execute("""
+                    UPDATE issues
+                    SET status='RESOLVED', resolved_ts=?
+                    WHERE id=? AND status IN ('OPEN','PENDING')
+                """, (now, issue_id))
+                if cur.rowcount and cur.rowcount > 0:
+                    call_resolved += 1
+                    resolved_by = (
+                        "RULE_POLL_RESOLVER_CALL_OUTBOUND"
+                        if resolution_signal == "outbound"
+                        else "RULE_POLL_RESOLVER_CALL_ACTIVITY"
+                    )
+                    _set_resolved_metadata(
+                        issue_id,
+                        resolved_by,
+                        {"resolution_signal": resolution_signal or "unknown"},
+                    )
+                    _flow_log(
+                        "call.auto_resolved",
+                        issue_id=issue_id,
+                        conversation_id=conv_id,
+                        via="poll_resolver",
+                        signal=resolution_signal or "unknown",
+                    )
+
+        update_conn.commit()
+
+    finally:
+        update_conn.close()
+
+    total_elapsed_ms = round((time.perf_counter() - started_at) * 1000, 1)
+    _flow_log(
+        "poll_resolver.completed",
+        limit=limit,
+        sms_issue_rows=len(rows),
+        call_issue_rows=len(call_rows),
+        sms_conversations_fetched=len(sms_messages_by_conversation),
+        call_conversations_fetched=len(call_messages_by_conversation),
+        fetch_elapsed_ms=fetch_elapsed_ms,
+        total_elapsed_ms=total_elapsed_ms,
+        checked=checked,
+        resolved=resolved,
+        updated_counts=updated_counts,
+        call_checked=call_checked,
+        call_resolved=call_resolved,
+        call_updated_counts=call_updated_counts,
+        concurrency=POLL_RESOLVER_CONCURRENCY,
+    )
 
     return {
         "job": "poll_resolver",
@@ -1591,13 +1691,9 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
     now_local = _now_local()
     now_iso = now_local.isoformat()
 
-    # Keep deterministic and reduce false positives from stale issue states.
+    # Freshen issue states before scanning for breaches.
     try:
         await poll_resolver(request, limit=500)
-    except Exception:
-        pass
-    try:
-        await verify_pending(request, limit=500)
     except Exception:
         pass
 

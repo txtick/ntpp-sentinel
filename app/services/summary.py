@@ -1,7 +1,8 @@
+import asyncio
 import json
 import re
 import sqlite3
-from typing import Awaitable, Callable, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from db import db
 from services.business_time import BusinessTimeConfig, add_business_hours, fmt_dt_local, is_escalated
@@ -76,32 +77,61 @@ async def enrich_issues_with_contact_names(
     issues: List[sqlite3.Row],
     get_contact_name: Callable[[Optional[str]], Awaitable[Optional[str]]],
 ) -> None:
-    conn = db()
+    # Group by contact_id — one API call per unique contact, not per issue
+    by_contact: Dict[str, List[tuple]] = {}
     for issue in issues:
         try:
             meta = json.loads(issue["meta"] or "{}")
         except Exception:
             meta = {}
-
         if (meta.get("contact_name") or "").strip():
             continue
-
         contact_id = issue["contact_id"]
         if not contact_id:
             continue
+        by_contact.setdefault(contact_id, []).append((issue, meta))
 
+    if not by_contact:
+        return
+
+    # One API call per unique contact_id, all in parallel
+    async def _fetch_one(contact_id: str):
         try:
-            contact_name = await get_contact_name(contact_id)
-            if contact_name:
-                meta["contact_name"] = contact_name
-                conn.execute("UPDATE issues SET meta=? WHERE id=?", (json.dumps(meta), issue["id"]))
-                conn.commit()
+            return contact_id, await get_contact_name(contact_id)
         except Exception:
-            pass
-    conn.close()
+            return contact_id, None
+
+    contact_names: Dict[str, str] = {
+        cid: name
+        for cid, name in await asyncio.gather(*[_fetch_one(cid) for cid in by_contact])
+        if name
+    }
+
+    if not contact_names:
+        return
+
+    # Batch all DB writes in a single commit
+    updates = []
+    for contact_id, pairs in by_contact.items():
+        name = contact_names.get(contact_id)
+        if not name:
+            continue
+        for issue, meta in pairs:
+            updates.append((json.dumps({**meta, "contact_name": name}), name, issue["id"]))
+
+    conn = db()
+    try:
+        for meta_json, contact_name, issue_id in updates:
+            conn.execute(
+                "UPDATE issues SET meta=?, contact_name=COALESCE(NULLIF(contact_name,''),?) WHERE id=?",
+                (meta_json, contact_name, issue_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def fetch_overdue_issues(now_iso: str, issue_type: str) -> List[sqlite3.Row]:
+def fetch_overdue_issues(now_iso: str, issue_type: str, limit: int = 200) -> List[sqlite3.Row]:
     conn = db()
     rows = conn.execute(
         """
@@ -109,8 +139,9 @@ def fetch_overdue_issues(now_iso: str, issue_type: str) -> List[sqlite3.Row]:
         FROM issues
         WHERE status='OPEN' AND issue_type=? AND due_ts <= ?
         ORDER BY due_ts ASC
+        LIMIT ?
         """,
-        (issue_type, now_iso),
+        (issue_type, now_iso, limit),
     ).fetchall()
     conn.close()
     return rows

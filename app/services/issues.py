@@ -275,17 +275,11 @@ def resolve_by_name(
         return []
 
     conn = db()
-    rows = conn.execute("SELECT id, meta FROM issues WHERE status='OPEN'").fetchall()
-    matched_ids: List[int] = []
-
-    for row in rows:
-        try:
-            meta = json.loads(row["meta"] or "{}")
-        except Exception:
-            meta = {}
-        contact_name = (meta.get("contact_name") or "").lower()
-        if contact_name and name_l in contact_name:
-            matched_ids.append(row["id"])
+    rows = conn.execute(
+        "SELECT id FROM issues WHERE status='OPEN' AND contact_name LIKE ?",
+        (f"%{name_l}%",),
+    ).fetchall()
+    matched_ids = [row["id"] for row in rows]
 
     if matched_ids:
         now_iso = now_local().isoformat()

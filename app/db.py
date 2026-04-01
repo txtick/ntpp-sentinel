@@ -37,6 +37,10 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_issues_contact_status ON issues(contact_id, status)"
     )
+    # Resolved-issues range scans (used by fetch_resolved_since in summary jobs)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_issues_status_resolved_ts ON issues(status, resolved_ts)"
+    )
     # Event retention / diagnostics scans
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_raw_events_source_received ON raw_events(source, received_ts)"
