@@ -87,6 +87,16 @@ SKIMMER_LINK_FILE = os.getenv("SKIMMER_LINK_FILE", os.path.join(SKIMMER_DOWNLOAD
 
 GHL_APP_BASE = os.getenv("GHL_APP_BASE", "https://app.gohighlevel.com")
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "")
+GOOGLE_OAUTH_TOKEN_URL = os.getenv("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token")
+GOOGLE_DRIVE_API_BASE = os.getenv("GOOGLE_DRIVE_API_BASE", "https://www.googleapis.com/drive/v3")
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REFRESH_TOKEN = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN", "")
+SKIMMER_GDRIVE_FOLDER_ID = os.getenv("SKIMMER_GDRIVE_FOLDER_ID", "")
+SKIMMER_GDRIVE_FILE_NAME_REGEX = os.getenv(
+    "SKIMMER_GDRIVE_FILE_NAME_REGEX",
+    r"(?i)skimmer.*\.(db|sqlite|sqlite3|gz)$",
+)
 
 _bh_start_h, _bh_start_m = parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
 _bh_end_h, _bh_end_m = parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
@@ -347,6 +357,158 @@ def _download_and_save_skimmer(url: str, dest_path: str) -> None:
                 os.remove(temp_path)
             except Exception:
                 pass
+
+
+async def _google_access_token() -> str:
+    if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET or not GOOGLE_OAUTH_REFRESH_TOKEN:
+        raise HTTPException(
+            status_code=500,
+            detail="Google OAuth is not fully configured",
+        )
+
+    r = await _ghl_client.post(
+        GOOGLE_OAUTH_TOKEN_URL,
+        data={
+            "client_id": GOOGLE_OAUTH_CLIENT_ID,
+            "client_secret": GOOGLE_OAUTH_CLIENT_SECRET,
+            "refresh_token": GOOGLE_OAUTH_REFRESH_TOKEN,
+            "grant_type": "refresh_token",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    if r.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google token refresh failed: {r.status_code} {r.text[:300]}",
+        )
+
+    payload = r.json()
+    access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Google token refresh returned no access_token")
+    return access_token
+
+
+async def _google_drive_list_skimmer_candidates(folder_id: str, access_token: str) -> List[Dict[str, Any]]:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {
+        "q": f"'{folder_id}' in parents and trashed=false",
+        "fields": "files(id,name,mimeType,modifiedTime,size,webViewLink),nextPageToken",
+        "orderBy": "modifiedTime desc",
+        "pageSize": "100",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+        "corpora": "allDrives",
+    }
+    r = await _ghl_client.get(f"{GOOGLE_DRIVE_API_BASE}/files", headers=headers, params=params)
+    if r.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Google Drive file listing failed: {r.status_code} {r.text[:300]}",
+        )
+
+    payload = r.json()
+    files = payload.get("files")
+    return files if isinstance(files, list) else []
+
+
+def _pick_latest_skimmer_file(files: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not files:
+        return None
+
+    pattern = None
+    try:
+        pattern = re.compile(SKIMMER_GDRIVE_FILE_NAME_REGEX)
+    except re.error:
+        pattern = None
+
+    candidates = []
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        mime_type = str(item.get("mimeType") or "")
+        if mime_type == "application/vnd.google-apps.folder":
+            continue
+        if pattern is not None and not pattern.search(name):
+            continue
+        candidates.append(item)
+
+    if candidates:
+        return candidates[0]
+
+    for item in files:
+        if isinstance(item, dict) and str(item.get("mimeType") or "") != "application/vnd.google-apps.folder":
+            return item
+    return None
+
+
+def _download_google_drive_file(file_id: str, access_token: str, dest_path: str) -> None:
+    _ensure_dir(os.path.dirname(dest_path))
+    download_url = f"{GOOGLE_DRIVE_API_BASE}/files/{file_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    temp_dir = os.path.dirname(dest_path) or SKIMMER_DOWNLOAD_DIR
+    with tempfile.NamedTemporaryFile(dir=temp_dir, delete=False, suffix=".tmp") as tmp:
+        temp_path = tmp.name
+    try:
+        with httpx.stream(
+            "GET",
+            download_url,
+            headers=headers,
+            params={
+                "alt": "media",
+                "supportsAllDrives": "true",
+            },
+            timeout=120.0,
+            follow_redirects=True,
+        ) as response:
+            response.raise_for_status()
+            with open(temp_path, "wb") as fh:
+                for chunk in response.iter_bytes(chunk_size=8192):
+                    if chunk:
+                        fh.write(chunk)
+
+        if _looks_like_gzip(temp_path):
+            _gunzip_file(temp_path, dest_path)
+        else:
+            os.replace(temp_path, dest_path)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
+async def _sync_skimmer_from_google_drive(import_after: bool = True) -> Dict[str, Any]:
+    if not SKIMMER_GDRIVE_FOLDER_ID:
+        raise HTTPException(status_code=500, detail="SKIMMER_GDRIVE_FOLDER_ID is not configured")
+
+    access_token = await _google_access_token()
+    files = await _google_drive_list_skimmer_candidates(SKIMMER_GDRIVE_FOLDER_ID, access_token)
+    chosen = _pick_latest_skimmer_file(files)
+    if not chosen:
+        raise HTTPException(status_code=404, detail="No matching Skimmer file found in Google Drive folder")
+
+    file_id = str(chosen.get("id") or "").strip()
+    file_name = str(chosen.get("name") or "").strip()
+    modified_time = str(chosen.get("modifiedTime") or "").strip()
+    if not file_id:
+        raise HTTPException(status_code=502, detail="Google Drive listing returned a file without an id")
+
+    await asyncio.to_thread(_download_google_drive_file, file_id, access_token, SKIMMER_DB_PATH)
+
+    result = {
+        "status": "downloaded",
+        "source": "google_drive",
+        "skimmer_db_path": SKIMMER_DB_PATH,
+        "google_drive_file_id": file_id,
+        "google_drive_file_name": file_name,
+        "google_drive_modified_time": modified_time or None,
+    }
+    if import_after:
+        result["import"] = _run_skimmer_import()
+    return result
 
 
 # ==========================
@@ -1490,6 +1652,15 @@ async def skimmer_import_job(request: Request):
     result = _run_skimmer_import()
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("detail", "Import failed"))
+    return result
+
+
+@app.post("/jobs/skimmer_drive_sync")
+async def skimmer_drive_sync(request: Request, import_after: int = 1):
+    _auth_or_401(request)
+    result = await _sync_skimmer_from_google_drive(import_after=bool(import_after))
+    if result.get("import", {}).get("status") == "error":
+        raise HTTPException(status_code=500, detail=result["import"].get("detail", "Import failed"))
     return result
 
 
