@@ -207,6 +207,17 @@ def set_last_internal_outbound(
     conversation_id: str, ts_iso: str, internal_contact_id: Optional[str]
 ) -> None:
     conn = db()
+    _set_last_internal_outbound_conn(conn, conversation_id, ts_iso, internal_contact_id)
+    conn.commit()
+    conn.close()
+
+
+def _set_last_internal_outbound_conn(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    ts_iso: str,
+    internal_contact_id: Optional[str],
+) -> None:
     conn.execute(
         """
       INSERT INTO conversation_state (conversation_id, last_internal_outbound_ts, last_internal_outbound_contact_id)
@@ -217,8 +228,6 @@ def set_last_internal_outbound(
     """,
         (conversation_id, ts_iso, internal_contact_id),
     )
-    conn.commit()
-    conn.close()
 
 
 def get_last_internal_outbound(conversation_id: str) -> Optional[str]:
@@ -552,6 +561,30 @@ def mark_spam(phone: str) -> None:
 
 def _set_resolved_metadata(issue_id: int, resolved_by: str, extra: Optional[Dict[str, Any]] = None) -> None:
     issue_set_resolved_metadata(issue_id, resolved_by, _now_local, extra)
+
+
+def _set_resolved_metadata_conn(
+    conn: sqlite3.Connection,
+    issue_id: int,
+    resolved_by: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    row = conn.execute("SELECT meta FROM issues WHERE id=?", (issue_id,)).fetchone()
+    if not row:
+        return
+    try:
+        meta = json.loads(row["meta"] or "{}")
+    except Exception:
+        meta = {}
+    meta.update(
+        {
+            "resolved_by": resolved_by,
+            "resolved_meta_ts": _now_local().isoformat(),
+        }
+    )
+    if extra:
+        meta.update(extra)
+    conn.execute("UPDATE issues SET meta=? WHERE id=?", (json.dumps(meta), issue_id))
 
 
 # ==========================
@@ -1121,7 +1154,8 @@ async def poll_resolver(request: Request, limit: int = 200):
 
             if latest_staff_ts is not None:
                 try:
-                    set_last_internal_outbound(
+                    _set_last_internal_outbound_conn(
+                        update_conn,
                         conv_id,
                         latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
                         latest_staff_uid or None,
@@ -1143,7 +1177,7 @@ async def poll_resolver(request: Request, limit: int = 200):
                 """, (now, issue_id))
                 if cur.rowcount and cur.rowcount > 0:
                     resolved += 1
-                    _set_resolved_metadata(issue_id, "RULE_POLL_RESOLVER_SMS_OUTBOUND")
+                    _set_resolved_metadata_conn(update_conn, issue_id, "RULE_POLL_RESOLVER_SMS_OUTBOUND")
                     _flow_log(
                         "sms.auto_resolved",
                         issue_id=issue_id,
@@ -1217,7 +1251,8 @@ async def poll_resolver(request: Request, limit: int = 200):
 
             if latest_staff_ts is not None:
                 try:
-                    set_last_internal_outbound(
+                    _set_last_internal_outbound_conn(
+                        update_conn,
                         conv_id,
                         latest_staff_ts.astimezone(ZoneInfo(TZ_NAME)).isoformat(),
                         latest_staff_uid or None,
@@ -1244,7 +1279,8 @@ async def poll_resolver(request: Request, limit: int = 200):
                         if resolution_signal == "outbound"
                         else "RULE_POLL_RESOLVER_CALL_ACTIVITY"
                     )
-                    _set_resolved_metadata(
+                    _set_resolved_metadata_conn(
+                        update_conn,
                         issue_id,
                         resolved_by,
                         {"resolution_signal": resolution_signal or "unknown"},
