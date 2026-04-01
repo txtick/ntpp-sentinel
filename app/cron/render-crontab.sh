@@ -32,9 +32,6 @@ CRON_TZ="${CRON_TZ:-${TIMEZONE:-America/Chicago}}"
 CRON_SKIMMER_SYNC_MINUTE="${CRON_SKIMMER_SYNC_MINUTE:-15}"
 CRON_SKIMMER_SYNC_HOUR="${CRON_SKIMMER_SYNC_HOUR:-11}"
 CRON_SKIMMER_SYNC_DOW="${CRON_SKIMMER_SYNC_DOW:-*}"
-CRON_SKIMMER_IMPORT_MINUTE="${CRON_SKIMMER_IMPORT_MINUTE:-30}"
-CRON_SKIMMER_IMPORT_HOUR="${CRON_SKIMMER_IMPORT_HOUR:-${CRON_SKIMMER_SYNC_HOUR}}"
-CRON_SKIMMER_IMPORT_DOW="${CRON_SKIMMER_IMPORT_DOW:-1-5}"
 SKIMMER_IMPORT_TABLES="${SKIMMER_IMPORT_TABLES:-all}"
 
 # Validation with safe fallback.
@@ -49,10 +46,10 @@ valid_minute() {
   is_int "$1" || return 1
   [ "$1" -ge 0 ] && [ "$1" -le 59 ]
 }
-valid_minute "${CRON_SKIMMER_IMPORT_MINUTE}" || CRON_SKIMMER_IMPORT_MINUTE=30
-valid_hour "${CRON_SKIMMER_IMPORT_HOUR}" || CRON_SKIMMER_IMPORT_HOUR="${CRON_SKIMMER_SYNC_HOUR}"
-if ! printf '%s' "${CRON_SKIMMER_IMPORT_DOW}" | grep -Eq '^[0-9,*/-]+$'; then
-  CRON_SKIMMER_IMPORT_DOW="1-5"
+valid_minute "${CRON_SKIMMER_SYNC_MINUTE}" || CRON_SKIMMER_SYNC_MINUTE=15
+valid_hour "${CRON_SKIMMER_SYNC_HOUR}" || CRON_SKIMMER_SYNC_HOUR=11
+if ! printf '%s' "${CRON_SKIMMER_SYNC_DOW}" | grep -Eq '^[0-9,*/-]+$'; then
+  CRON_SKIMMER_SYNC_DOW="*"
 fi
 if ! printf '%s' "$CRON_BUSINESS_HOURS" | grep -Eq '^[0-9]{1,2}-[0-9]{1,2}$'; then
   CRON_BUSINESS_HOURS="8-16"
@@ -77,8 +74,7 @@ TZ=${CRON_TZ}
 
 */${CRON_VERIFY_PENDING_EVERY_MINUTES} ${CRON_BUSINESS_HOURS} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 0 ${CRON_BUSINESS_END_HOUR} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
-${CRON_SKIMMER_SYNC_MINUTE} ${CRON_SKIMMER_SYNC_HOUR} * * ${CRON_SKIMMER_SYNC_DOW} /usr/bin/python3 /app/cron/skimmer_download.py >> /logs/cron.log 2>&1
-${CRON_SKIMMER_IMPORT_MINUTE} ${CRON_SKIMMER_IMPORT_HOUR} * * ${CRON_SKIMMER_IMPORT_DOW} /app/cron/cron.sh skimmer_import >> /logs/cron.log 2>&1
+${CRON_SKIMMER_SYNC_MINUTE} ${CRON_SKIMMER_SYNC_HOUR} * * ${CRON_SKIMMER_SYNC_DOW} /app/cron/cron.sh skimmer_drive_sync >> /logs/cron.log 2>&1
 EOF
 
 if [ "${CRON_INSTALL:-1}" = "1" ]; then

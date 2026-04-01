@@ -48,6 +48,9 @@ case "$JOB" in
   skimmer_import)
     call_job "${BASE}/jobs/skimmer_import"
     ;;
+  skimmer_drive_sync)
+    call_job "${BASE}/jobs/skimmer_drive_sync?import_after=1"
+    ;;
   *)
     echo "$(ts) Unknown job: ${JOB}"
     exit 1
