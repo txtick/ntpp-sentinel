@@ -202,7 +202,7 @@ CALL_MISSED_MARKER_KEYS = [
 POLL_RESOLVER_CONCURRENCY = max(1, int(os.getenv("POLL_RESOLVER_CONCURRENCY", "8")))
 
 app = FastAPI(
-    swagger_ui_parameters={"persistAuthorization": True},
+    swagger_ui_parameters={"persistAuthorization": False},
     redoc_url=None,  # ReDoc loads from CDN and shows blank page; use /docs instead
 )
 
@@ -299,15 +299,15 @@ def health_postgres():
     try:
         row = pg_healthcheck()
         return {"ok": True, "now": row["now"] if row else None}
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Postgres health check failed")
 
 
 # ==========================
 # Auth helper (shared)
 # ==========================
 def _auth_or_401(request: Request) -> None:
-    secret = request.headers.get("X-NTPP-Secret") or request.query_params.get("secret")
+    secret = request.headers.get("X-NTPP-Secret")
     if not secret or secret != WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -618,14 +618,14 @@ async def ghl_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[st
     url = GHL_BASE_URL.rstrip("/") + path
     r = await _ghl_client.get(url, headers=_ghl_headers(), params=params or {})
     if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"GHL GET {path} failed: {r.status_code} {r.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"GHL GET {path} failed: {r.status_code}")
     return r.json()
 
 async def ghl_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
     r = await _ghl_client.post(url, headers=_ghl_headers(), json=payload)
     if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code} {r.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code}")
     return r.json()
 
 
@@ -633,7 +633,7 @@ async def ghl_put(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
     r = await _ghl_client.put(url, headers=_ghl_headers(), json=payload)
     if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"GHL PUT {path} failed: {r.status_code} {r.text[:300]}")
+        raise HTTPException(status_code=502, detail=f"GHL PUT {path} failed: {r.status_code}")
     return r.json() if (r.text or "").strip() else {}
 
 async def ghl_list_messages(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]]:
