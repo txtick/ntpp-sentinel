@@ -751,20 +751,39 @@ async def _ghl_search_conversation_by_phone(phone: str) -> Tuple[Optional[str], 
     Returns (conversation_id, contact_id) or (None, None) if not found.
     Used by the rollover feature to resolve a Skimmer customer phone → GHL conversation.
     """
+    normalized_phone = _normalize_phone(phone)
+    if not normalized_phone:
+        return None, None
+
     try:
-        data = await ghl_get("/conversations/search", params={"phone": phone})
+        data = await ghl_get("/conversations/search", params={"phone": normalized_phone})
     except Exception:
         return None, None
+
     if isinstance(data, dict):
+        matches: List[Tuple[str, str]] = []
         for key in ("conversations", "data", "items"):
             items = data.get(key)
             if isinstance(items, list) and items:
-                c = items[0]
-                if isinstance(c, dict):
+                for c in items:
+                    if not isinstance(c, dict):
+                        continue
                     conv_id = c.get("id") or c.get("conversationId")
                     contact_id = c.get("contactId")
-                    if conv_id:
-                        return conv_id, contact_id
+                    if isinstance(conv_id, str) and conv_id.strip() and isinstance(contact_id, str) and contact_id.strip():
+                        matches.append((conv_id.strip(), contact_id.strip()))
+                if matches:
+                    break
+
+        unique_matches = list(dict.fromkeys(matches))
+        if len(unique_matches) == 1:
+            return unique_matches[0]
+        if len(unique_matches) > 1:
+            _flow_log(
+                "rollover.ambiguous_conversation_match",
+                phone=normalized_phone,
+                match_count=len(unique_matches),
+            )
     return None, None
 
 
