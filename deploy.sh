@@ -13,7 +13,7 @@ echo "[deploy] branch: ${BRANCH}"
 
 git checkout "${BRANCH}"
 git pull --ff-only origin "${BRANCH}"
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
 
 echo "[deploy] done"
 docker compose ps
