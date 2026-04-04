@@ -130,6 +130,18 @@ GHL_TOKEN = os.getenv("GHL_TOKEN", "")  # Private Integration token (Bearer)
 GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28")
 CUSTOMER_SYNC_PAGE_LIMIT = max(1, int(os.getenv("CUSTOMER_SYNC_PAGE_LIMIT", "100")))
 CUSTOMER_SYNC_DELAY_SECONDS = float(os.getenv("CUSTOMER_SYNC_DELAY_SECONDS", "0.10"))
+
+# Route Rollover feature
+ROLLOVER_ENABLED = os.getenv("ROLLOVER_ENABLED", "1").lower() in ("1", "true", "yes", "on")
+
+def _parse_skimmer_tech_map() -> Dict[str, str]:
+    raw = os.getenv("SKIMMER_TECH_ID_MAP", "{}")
+    try:
+        return dict(json.loads(raw))
+    except Exception:
+        return {}
+
+SKIMMER_TECH_ID_MAP: Dict[str, str] = _parse_skimmer_tech_map()
 # OpenAI (AI follow-up gate; optional)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -731,6 +743,29 @@ async def ghl_find_conversation_id_for_contact(contact_id: Optional[str], phone:
                         if isinstance(v, str) and v.strip():
                             return v.strip()
     return None
+
+
+async def _ghl_search_conversation_by_phone(phone: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Search GHL conversations by phone number.
+    Returns (conversation_id, contact_id) or (None, None) if not found.
+    Used by the rollover feature to resolve a Skimmer customer phone → GHL conversation.
+    """
+    try:
+        data = await ghl_get("/conversations/search", params={"phone": phone})
+    except Exception:
+        return None, None
+    if isinstance(data, dict):
+        for key in ("conversations", "data", "items"):
+            items = data.get(key)
+            if isinstance(items, list) and items:
+                c = items[0]
+                if isinstance(c, dict):
+                    conv_id = c.get("id") or c.get("conversationId")
+                    contact_id = c.get("contactId")
+                    if conv_id:
+                        return conv_id, contact_id
+    return None, None
 
 
 async def ghl_fetch_all_contacts(page_limit: int = CUSTOMER_SYNC_PAGE_LIMIT) -> List[Dict[str, Any]]:
@@ -2064,6 +2099,10 @@ register_sms_routes(
         mark_spam=mark_spam,
         resolve_by_phone=resolve_by_phone,
         ghl_conversation_link=ghl_conversation_link,
+        rollover_enabled=ROLLOVER_ENABLED,
+        skimmer_tech_id_map=SKIMMER_TECH_ID_MAP,
+        manager_contact_ids=MANAGER_CONTACT_IDS,
+        ghl_search_conversation_by_phone=_ghl_search_conversation_by_phone,
     ),
 )
 

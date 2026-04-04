@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 
+from handlers.rollover_handler import handle_rollover
 from handlers.sms import (
     extract_contact_id,
     extract_contact_name,
@@ -60,6 +61,11 @@ class SMSRouteDeps:
     mark_spam: Callable[[str], None]
     resolve_by_phone: Callable[[str, str], int]
     ghl_conversation_link: Callable[[Optional[str]], Optional[str]]
+    # Rollover feature
+    rollover_enabled: bool
+    skimmer_tech_id_map: Dict[str, str]
+    manager_contact_ids: List[str]
+    ghl_search_conversation_by_phone: Callable[[str], Awaitable[Tuple[Optional[str], Optional[str]]]]
 
 
 async def _enrich_rows_with_names(rows: List[dict], deps: "SMSRouteDeps") -> None:
@@ -278,6 +284,11 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
             return {"received": True, "ignored": "outbound"}
 
         if is_internal:
+            rollover_result = await handle_rollover(text, contact_id, conversation_id, deps)
+            if rollover_result is not None:
+                deps.flow_log("sms.rollover", who=who, contact_id=contact_id, rollover=rollover_result.get("rollover"))
+                return rollover_result
+
             result = await handle_command(text=text, command_contact_id=contact_id, command_from_phone=from_phone)
             if result.get("ok") and result.get("text") and contact_id:
                 try:

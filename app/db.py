@@ -106,6 +106,23 @@ def ensure_schema() -> None:
         """
     )
 
+    # Route rollover sessions (transient operational state; SQLite only)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rollover_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_id TEXT NOT NULL,
+            conversation_id TEXT,
+            state TEXT NOT NULL,
+            route_stops_json TEXT NOT NULL,
+            selected_indices TEXT,
+            created_ts REAL NOT NULL,
+            updated_ts REAL NOT NULL,
+            completed_ts REAL
+        )
+        """
+    )
+
     _ensure_indexes(conn)
     conn.commit()
     conn.close()
@@ -198,6 +215,23 @@ def init_db() -> None:
         conversation_id TEXT PRIMARY KEY,
         last_internal_outbound_ts TEXT,
         last_internal_outbound_contact_id TEXT
+      )
+    """
+    )
+
+    # Route rollover sessions (transient operational state; SQLite only)
+    cur.execute(
+        """
+      CREATE TABLE IF NOT EXISTS rollover_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        contact_id TEXT NOT NULL,
+        conversation_id TEXT,
+        state TEXT NOT NULL,
+        route_stops_json TEXT NOT NULL,
+        selected_indices TEXT,
+        created_ts REAL NOT NULL,
+        updated_ts REAL NOT NULL,
+        completed_ts REAL
       )
     """
     )
