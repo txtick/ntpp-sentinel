@@ -17,6 +17,25 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  ingest-worker:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: ntpp-ingest-worker
+    restart: unless-stopped
+    env_file: .env
+    command: ["/app/ingest/worker-start.sh"]
+    expose:
+      - "8010"
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   caddy:
     image: caddy:2
     container_name: ntpp-caddy

@@ -16,7 +16,8 @@ COPY scripts/ /app/scripts/
 RUN mkdir -p /logs /data && touch /logs/cron.log
 
 # Install runtime scripts
-RUN chmod +x /app/cron/cron.sh /app/cron/render-crontab.sh /app/start.sh
+RUN chmod +x /app/cron/cron.sh /app/cron/render-crontab.sh /app/start.sh \
+    /app/ingest/cron.sh /app/ingest/render-worker-crontab.sh /app/ingest/worker-start.sh
 
 ENV PYTHONUNBUFFERED=1
 

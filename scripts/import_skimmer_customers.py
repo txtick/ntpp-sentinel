@@ -625,6 +625,7 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
     log(
         f"import complete tables={','.join(tables)} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
     )
+    counts["import_run_id"] = run_id
     return counts
 
 

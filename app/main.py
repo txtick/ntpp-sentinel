@@ -108,6 +108,10 @@ SKIMMER_GDRIVE_FILE_NAME_REGEX = os.getenv(
     r"(?i)skimmer.*\.(db|sqlite|sqlite3|gz)$",
 )
 SKIMMER_GDRIVE_SEARCH_DEPTH = max(0, int(os.getenv("SKIMMER_GDRIVE_SEARCH_DEPTH", "3")))
+INGEST_WORKER_BASE_URL = os.getenv("INGEST_WORKER_BASE_URL", "http://ingest-worker:8010").rstrip("/")
+INGEST_WORKER_SECRET = os.getenv("INGEST_WORKER_SECRET", "").strip() or WEBHOOK_SECRET
+INGEST_TRIGGER_ENABLED = os.getenv("INGEST_TRIGGER_ENABLED", "1").lower() in ("1", "true", "yes", "on")
+INGEST_TRIGGER_TIMEOUT_SECONDS = float(os.getenv("INGEST_TRIGGER_TIMEOUT_SECONDS", "600"))
 
 _bh_start_h, _bh_start_m = parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
 _bh_end_h, _bh_end_m = parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
@@ -551,6 +555,56 @@ def _download_google_drive_file(file_id: str, access_token: str, dest_path: str)
                 pass
 
 
+async def _trigger_ingest_worker(
+    *,
+    sqlite_path: str,
+    source_system: str,
+    trigger_reason: str,
+    trigger_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not INGEST_TRIGGER_ENABLED:
+        return {"status": "skipped", "reason": "INGEST_TRIGGER_ENABLED is false"}
+    if not INGEST_WORKER_BASE_URL:
+        raise HTTPException(status_code=500, detail="INGEST_WORKER_BASE_URL is not configured")
+
+    url = f"{INGEST_WORKER_BASE_URL}/jobs/run"
+    headers = {"Content-Type": "application/json"}
+    if INGEST_WORKER_SECRET:
+        headers["X-NTPP-Secret"] = INGEST_WORKER_SECRET
+
+    payload = {
+        "sqlite_path": sqlite_path,
+        "source_system": source_system,
+        "trigger_reason": trigger_reason,
+        "trigger_metadata": trigger_metadata or {},
+    }
+    async with httpx.AsyncClient(timeout=INGEST_TRIGGER_TIMEOUT_SECONDS) as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"ingest worker request failed: {exc}")
+
+    if response.status_code >= 400:
+        detail = None
+        try:
+            body = response.json()
+            detail = body.get("detail") if isinstance(body, dict) else None
+        except Exception:
+            detail = None
+        if response.status_code == 409:
+            raise HTTPException(status_code=409, detail=detail or "ingest worker is already running")
+        raise HTTPException(
+            status_code=502,
+            detail=f"ingest worker failed: {response.status_code}{f' {detail}' if detail else ''}",
+        )
+
+    try:
+        data = response.json()
+        return data if isinstance(data, dict) else {"status": "ok"}
+    except Exception:
+        return {"status": "ok"}
+
+
 async def _sync_skimmer_from_google_drive(import_after: bool = True) -> Dict[str, Any]:
     if not SKIMMER_GDRIVE_FOLDER_ID:
         raise HTTPException(status_code=500, detail="SKIMMER_GDRIVE_FOLDER_ID is not configured")
@@ -578,7 +632,17 @@ async def _sync_skimmer_from_google_drive(import_after: bool = True) -> Dict[str
         "google_drive_modified_time": modified_time or None,
     }
     if import_after:
-        result["import"] = _run_skimmer_import()
+        result["normalization"] = await _trigger_ingest_worker(
+            sqlite_path=SKIMMER_DB_PATH,
+            source_system="skimmer",
+            trigger_reason="skimmer_drive_sync",
+            trigger_metadata={
+                "source": "google_drive",
+                "google_drive_file_id": file_id,
+                "google_drive_file_name": file_name,
+                "google_drive_modified_time": modified_time or None,
+            },
+        )
     return result
 
 
