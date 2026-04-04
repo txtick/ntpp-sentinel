@@ -21,3 +21,10 @@ __pycache__/
 
 #customer sync scripts
 customer-sync/
+
+# Claude
+.claude/
+CLAUDE.md
+claude.json
+claude*.json
+.claude.json
