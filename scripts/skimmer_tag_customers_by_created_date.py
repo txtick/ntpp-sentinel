@@ -38,8 +38,39 @@ DEFAULT_SQLITE_CANDIDATES = [
 
 DEFAULT_API_BASE_URL = os.getenv("SKIMMER_API_BASE_URL", "https://publicapi.getskimmer.com")
 DEFAULT_API_KEY = os.getenv("SKIMMER_API_KEY", "")
-DEFAULT_UPDATE_PATH_TEMPLATE = os.getenv("SKIMMER_CUSTOMER_UPDATE_PATH_TEMPLATE", "/Customers/{customer_id}")
-DEFAULT_UPDATE_METHOD = os.getenv("SKIMMER_CUSTOMER_UPDATE_METHOD", "PATCH").upper()
+DEFAULT_UPDATE_PATH_TEMPLATE = os.getenv("SKIMMER_CUSTOMER_UPDATE_PATH_TEMPLATE", "/Customers")
+DEFAULT_UPDATE_METHOD = os.getenv("SKIMMER_CUSTOMER_UPDATE_METHOD", "PUT").upper()
+
+CUSTOMER_UPDATE_FIELDS = [
+    "id",
+    "billingAddress",
+    "billingCity",
+    "billingState",
+    "billingZip",
+    "tags",
+    "firstName",
+    "lastName",
+    "companyName",
+    "mobilePhone",
+    "mobileLabel1",
+    "mobilePhone2",
+    "mobileLabel2",
+    "homePhone",
+    "workPhone",
+    "primaryEmail",
+    "secondaryEmail",
+    "email3",
+    "email4",
+    "notes",
+    "customerCode",
+    "displayAsCompany",
+    "primaryEmailIsBilling",
+    "secondaryEmailIsBilling",
+    "email3IsBilling",
+    "email4IsBilling",
+    "mobilePhoneSendServiceTexts",
+    "leadSourceId",
+]
 
 
 @dataclass
@@ -133,6 +164,7 @@ def load_candidates(
     sqlite_path: str,
     *,
     cutoff_date: date,
+    mode: str,
     tag_name: str,
     include_inactive: bool,
     include_leads: bool,
@@ -176,8 +208,12 @@ def load_candidates(
         except ValueError:
             continue
 
-        if created_at_dt >= cutoff_dt:
-            continue
+        if mode == "before":
+            if created_at_dt >= cutoff_dt:
+                continue
+        else:
+            if created_at_dt < cutoff_dt:
+                continue
 
         row_company_id = str(row["CompanyId"] or "").strip()
         if company_id and row_company_id != company_id:
@@ -312,6 +348,16 @@ def _merge_tag_names(existing: List[str], tag_name: str) -> List[str]:
     return list(seen.values())
 
 
+def _build_customer_update_payload(record: Dict[str, Any], merged_tags: List[str]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
+    for field in CUSTOMER_UPDATE_FIELDS:
+        if field == "tags":
+            payload[field] = merged_tags
+        else:
+            payload[field] = record.get(field)
+    return payload
+
+
 def apply_tags_via_api(
     customers: Iterable[CandidateCustomer],
     *,
@@ -338,10 +384,11 @@ def apply_tags_via_api(
 
     with httpx.Client(base_url=api_base_url.rstrip("/"), headers=headers, timeout=timeout_seconds) as client:
         for customer in customers:
-            path = update_path_template.format(customer_id=customer.customer_id)
+            fetch_path = f"/Customers/{customer.customer_id}"
+            update_path = update_path_template.format(customer_id=customer.customer_id)
 
             try:
-                get_response = client.get(path)
+                get_response = client.get(fetch_path)
                 get_response.raise_for_status()
                 record = get_response.json()
             except Exception as exc:
@@ -356,15 +403,17 @@ def apply_tags_via_api(
                 continue
 
             existing_tags = _extract_tag_names(record.get("Tags"))
+            if not existing_tags:
+                existing_tags = _extract_tag_names(record.get("tags"))
             merged_tags = _merge_tag_names(existing_tags, tag_name)
             if {t.lower() for t in merged_tags} == {t.lower() for t in existing_tags}:
                 skipped += 1
                 continue
 
-            payload = {"Tags": merged_tags}
+            payload = _build_customer_update_payload(record, merged_tags)
 
             try:
-                response = client.request(update_method, path, json=payload)
+                response = client.request(update_method, update_path, json=payload)
                 response.raise_for_status()
                 updated += 1
             except Exception as exc:
@@ -393,7 +442,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cutoff-date",
         required=True,
-        help="Customers created before this YYYY-MM-DD date are selected. For your current use case: 2025-08-01.",
+        help="Reference YYYY-MM-DD date used with --mode. For your current use case: 2025-08-01.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["before", "since"],
+        default="before",
+        help="Match customers created before the cutoff date or since it. Default: before",
     )
     parser.add_argument(
         "--tag",
@@ -417,12 +472,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--update-path-template",
         default=DEFAULT_UPDATE_PATH_TEMPLATE,
-        help="Path template for customer updates. Default: /Customers/{customer_id}",
+        help="Path template for customer updates. Default: /Customers",
     )
     parser.add_argument(
         "--update-method",
         default=DEFAULT_UPDATE_METHOD,
-        help="HTTP method for customer updates. Default: PATCH",
+        help="HTTP method for customer updates. Default: PUT",
     )
     parser.add_argument("--timeout-seconds", type=float, default=20.0, help="HTTP timeout for API calls.")
     return parser
@@ -446,6 +501,7 @@ def main() -> int:
     customers = load_candidates(
         sqlite_path,
         cutoff_date=cutoff_date,
+        mode=args.mode,
         tag_name=args.tag,
         include_inactive=args.include_inactive,
         include_leads=args.include_leads,
@@ -456,7 +512,10 @@ def main() -> int:
         customers = customers[: args.limit]
 
     print(f"SQLite file: {sqlite_path}")
-    print(f"Cutoff date: {cutoff_date.isoformat()} (customers created before this date match)")
+    if args.mode == "before":
+        print(f"Cutoff date: {cutoff_date.isoformat()} (customers created before this date match)")
+    else:
+        print(f"Cutoff date: {cutoff_date.isoformat()} (customers created on or after this date match)")
     print(f"Tag to add: {args.tag}")
     print(f"Matched customers: {len(customers)}")
     print(f"Included inactive: {args.include_inactive}")
