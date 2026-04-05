@@ -34,12 +34,13 @@ Quick verify:
 ssh kevin@sentinel '
   cd /opt/ntpp-sentinel &&
   docker compose ps &&
-  docker compose logs -n 50 sentinel
+  docker compose logs -n 50 sentinel &&
+  docker compose logs -n 50 ingest-worker
 '
 curl -s https://sentinel.northtexaspoolpros.com/health
 ```
 
-Expected health:
+Expected public health:
 
 ```json
 {"ok": true}
@@ -47,24 +48,48 @@ Expected health:
 
 ---
 
-## 2. Server Verification Commands
+## 2. Services
 
-Use these to check queue health and current state.
+Current compose services:
 
-Saved trace script (recommended):
+- `sentinel`
+- `ingest-worker`
+- `caddy`
+
+Current roles:
+
+- `sentinel`: webhooks, jobs, customer sync, Skimmer DB download, worker trigger
+- `ingest-worker`: validation, import, normalization, derived view refresh
+- `caddy`: public reverse proxy to `sentinel`
+
+`ingest-worker` is internal-only and is not exposed publicly through Caddy.
+
+---
+
+## 3. Core Verification Commands
+
+Check containers:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose ps
+```
+
+Check recent logs:
+
+```bash
+docker compose logs --tail=200 sentinel
+docker compose logs --tail=200 ingest-worker
+```
+
+Saved trace script for issue-flow debugging:
 
 ```bash
 cd /opt/ntpp-sentinel
 ./trace.sh +12146323629
 ```
 
-Optional overrides:
-
-```bash
-PHONE=+12146323629 BASE=https://sentinel.northtexaspoolpros.com LOG_TAIL=800 ./trace.sh
-```
-
-Authenticated job helper (recommended):
+Authenticated job helper:
 
 ```bash
 cd /opt/ntpp-sentinel
@@ -74,8 +99,93 @@ cd /opt/ntpp-sentinel
 ```
 
 Notes:
-- `verify_pending` is currently a compatibility wrapper around `poll_resolver`.
-- Manager notifications only include overdue `OPEN` issues; `PENDING` rows are still useful for queue inspection.
+- `verify_pending` is currently a compatibility wrapper around `poll_resolver`
+- manager notifications only include overdue `OPEN` issues
+
+---
+
+## 4. Skimmer Download + Normalization
+
+Primary nightly path:
+
+1. Sentinel downloads the latest Skimmer DB from Google Drive
+2. Sentinel triggers the ingest worker
+3. Worker accepts the job and runs normalization in the background
+
+Manual trigger:
+
+```bash
+curl -i -X POST "https://sentinel.northtexaspoolpros.com/jobs/skimmer_drive_sync?import_after=1" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
+
+Expected result:
+- download succeeds
+- response includes `normalization.status = accepted`
+
+Manual worker validation only:
+
+```bash
+docker compose exec -T ingest-worker python -m ingest.run \
+  --sqlite /data/skimmer/skimmer.db \
+  --validate-only
+```
+
+Manual full worker run:
+
+```bash
+docker compose exec -T ingest-worker python -m ingest.run \
+  --sqlite /data/skimmer/skimmer.db \
+  --source-system skimmer
+```
+
+Check latest pipeline runs:
+
+```bash
+docker compose exec -T sentinel python - <<'PY'
+from pg import pg
+with pg() as conn:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, started_at, completed_at, source_filename, success, error_message
+            FROM ingest_pipeline_runs
+            ORDER BY id DESC
+            LIMIT 10
+        """)
+        for row in cur.fetchall():
+            print(row)
+PY
+```
+
+Check normalized table counts:
+
+```bash
+docker compose exec -T sentinel python - <<'PY'
+from pg import pg
+tables = ["customers", "pools", "chemistry_readings", "chemical_dose_events"]
+with pg() as conn:
+    with conn.cursor() as cur:
+        for table in tables:
+            cur.execute(f"SELECT COUNT(*) AS count FROM {table}")
+            print(table, cur.fetchone()["count"])
+PY
+```
+
+Check dashboard summary view:
+
+```bash
+docker compose exec -T sentinel python - <<'PY'
+from pg import pg
+with pg() as conn:
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM dashboard_summary_v")
+        print(cur.fetchone())
+PY
+```
+
+---
+
+## 5. Sentinel Queue Verification
 
 All active queue items:
 
@@ -129,101 +239,71 @@ LIMIT 50;
 "
 ```
 
-Inspect a specific issue:
-
-```bash
-sqlite3 -header -column /opt/ntpp-sentinel/data/sentinel.db "
-SELECT id, issue_type, status, contact_name, phone, contact_id, conversation_id, created_ts, due_ts, resolved_ts, meta
-FROM issues
-WHERE id=42;
-"
-```
-
-Recent webhook events for a phone:
-
-```bash
-sqlite3 -header -column /opt/ntpp-sentinel/data/sentinel.db "
-SELECT id, received_ts, source
-FROM raw_events
-WHERE payload LIKE '%+19403899207%'
-ORDER BY id DESC
-LIMIT 20;
-"
-```
-
-Run jobs manually:
-
-```bash
-curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/verify_pending" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/poll_resolver" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/escalations" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-# Raw event retention cleanup (dry-run by default)
-curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/cleanup_raw_events?dry_run=1" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-# Execute cleanup (example: keep 30 days)
-curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/cleanup_raw_events?days=30&dry_run=0" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-```
-
-Summary test:
-
-```bash
-curl -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-```
-
 ---
 
-## 3. Environment Verification
+## 6. Environment Verification
 
-Check important env values inside container:
+Check important env values inside Sentinel:
 
 ```bash
-docker exec -it ntpp-sentinel sh -lc 'echo "$WEBHOOK_SECRET" | wc -c'
-docker exec -it ntpp-sentinel sh -lc 'echo "$GHL_TOKEN" | wc -c'
-docker exec -it ntpp-sentinel sh -lc 'echo "$GHL_LOCATION_ID"'
-docker exec -it ntpp-sentinel sh -lc 'echo "$MANAGER_CONTACT_IDS"'
-docker exec -it ntpp-sentinel sh -lc 'echo "$INTERNAL_CONTACT_IDS"'
-docker exec -it ntpp-sentinel sh -lc 'echo "$INTERNAL_USER_IDS"'
-docker exec -it ntpp-sentinel sh -lc 'echo "$DECISION_MODE"'
-docker exec -it ntpp-sentinel sh -lc 'echo "$AI_GATE_MODEL"'
-docker exec -it ntpp-sentinel sh -lc 'echo "$AI_GATE_TIMEOUT_SECONDS"'
+docker compose exec -T sentinel sh -lc 'echo "$WEBHOOK_SECRET" | wc -c'
+docker compose exec -T sentinel sh -lc 'echo "$GHL_TOKEN" | wc -c'
+docker compose exec -T sentinel sh -lc 'echo "$GHL_LOCATION_ID"'
+docker compose exec -T sentinel sh -lc 'echo "$MANAGER_CONTACT_IDS"'
+docker compose exec -T sentinel sh -lc 'echo "$INTERNAL_CONTACT_IDS"'
+docker compose exec -T sentinel sh -lc 'echo "$INTERNAL_USER_IDS"'
+docker compose exec -T sentinel sh -lc 'echo "$DECISION_MODE"'
+docker compose exec -T sentinel sh -lc 'echo "$AI_GATE_MODEL"'
 ```
 
-If missing, update `/opt/ntpp-sentinel/.env` and redeploy.
+Check ingest-worker env:
 
-If you are using the Skimmer nightly dump sync feature, also verify:
+```bash
+docker compose exec -T ingest-worker sh -lc 'echo "$INGEST_WORKER_BASE_URL"'
+docker compose exec -T ingest-worker sh -lc 'echo "$INGEST_SOURCE_SYSTEM"'
+docker compose exec -T ingest-worker sh -lc 'echo "$INACTIVE_PRUNE_DAYS"'
+docker compose exec -T ingest-worker sh -lc 'echo "$INGEST_SKIP_DUPLICATE_SOURCE_SUCCESS"'
+```
+
+Important Skimmer/worker env values:
+
+- `SKIMMER_GDRIVE_FOLDER_ID`
+- `SKIMMER_GDRIVE_FILE_NAME_REGEX`
+- `GOOGLE_OAUTH_CLIENT_ID`
+- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_OAUTH_REFRESH_TOKEN`
 - `SKIMMER_DOWNLOAD_DIR`
 - `SKIMMER_DB_PATH`
-- `SKIMMER_LINK_FILE`
-- optional: `SKIMMER_ARCHIVE_DIR`, `SKIMMER_KEEP_DAILY`
+- `INGEST_WORKER_BASE_URL`
+- `INGEST_TRIGGER_ENABLED`
+- `INACTIVE_PRUNE_DAYS`
+
+If anything is missing, update `/opt/ntpp-sentinel/.env` and redeploy.
 
 ---
 
-## 4. Cron Verification
+## 7. Cron Verification
 
-Cron is generated from `.env` at startup.
-
-Active runtime cron:
+Sentinel cron:
 
 ```bash
-docker exec -it ntpp-sentinel sh -lc 'crontab -l'
+docker compose exec -T sentinel sh -lc 'crontab -l'
+```
+
+Worker cron:
+
+```bash
+docker compose exec -T ingest-worker sh -lc 'crontab -l'
 ```
 
 Cron logs:
 
 ```bash
 tail -f /opt/ntpp-sentinel/logs/cron.log
+tail -f /opt/ntpp-sentinel/logs/ingest-worker.log
 ```
 
-Key cron env variables:
+Key sentinel cron env:
 
 - `CRON_DOW`
 - `CRON_MORNING_HOUR`
@@ -237,116 +317,33 @@ Key cron env variables:
 - `CRON_SKIMMER_SYNC_HOUR`
 - `CRON_SKIMMER_SYNC_MINUTE`
 - `CRON_SKIMMER_SYNC_DOW`
-- `CRON_SKIMMER_IMPORT_HOUR`
-- `CRON_SKIMMER_IMPORT_MINUTE`
-- `CRON_SKIMMER_IMPORT_DOW`
 
-Current repo default:
-- `CRON_DOW=1-6` (Monday-Saturday)
-- `CRON_SKIMMER_IMPORT_DOW=1-5` (Monday-Friday)
+Key worker fallback cron env:
 
-Optional Skimmer import env values:
-- `SKIMMER_DOWNLOAD_DIR`
-- `SKIMMER_DB_PATH`
-- `SKIMMER_LINK_FILE`
-- `SKIMMER_ARCHIVE_DIR`
-- `SKIMMER_KEEP_DAILY`
-- `SKIMMER_IMPORT_TABLES`
-
-High-impact runtime decision env variables:
-
-- `DECISION_MODE` (`deterministic` or `ai_primary`)
-- `AI_PRIMARY_SUPPRESS_NO_CONFIDENCE`
-- `AI_GATE_ON_EVERY_INBOUND`
-- `AI_GATE_TIMEOUT_SECONDS`
-- `AI_GATE_MAX_OUTPUT_TOKENS`
+- `CRON_INGEST_WORKER_MINUTE`
+- `CRON_INGEST_WORKER_HOUR`
+- `CRON_INGEST_WORKER_DOW`
 
 ---
 
-## 5. Troubleshooting
+## 8. Recovery Notes
 
-Container not healthy:
+If Skimmer download succeeds but normalization does not:
+
+1. inspect `docker compose logs --tail=200 ingest-worker`
+2. inspect `ingest_pipeline_runs`
+3. rerun the worker manually with `python -m ingest.run`
+
+If the worker is unhealthy:
 
 ```bash
 cd /opt/ntpp-sentinel
-docker compose logs -n 200 sentinel
+docker compose up -d --build --remove-orphans ingest-worker
 ```
 
-Webhook/job 500s:
-
-```bash
-docker compose logs -n 300 sentinel | rg "Traceback|ERROR|verify_pending|poll_resolver|escalations"
-```
-
-If you see missing env errors, fix `.env` then:
+If the whole stack needs a clean restart:
 
 ```bash
 cd /opt/ntpp-sentinel
 docker compose up -d --build --remove-orphans
-```
-
----
-
-## 6. Rollback
-
-List commits:
-
-```bash
-cd /opt/ntpp-sentinel
-git log --oneline --decorate -n 20
-```
-
-Checkout previous known-good commit and restart:
-
-```bash
-cd /opt/ntpp-sentinel
-git checkout <commit_hash>
-docker compose up -d --build
-```
-
-Return to `main` after incident:
-
-```bash
-cd /opt/ntpp-sentinel
-git checkout main
-git pull --ff-only
-docker compose up -d --build
-```
-
----
-
-## 7. Confidence Checklist
-
-Before done:
-
-- `/health` returns `{"ok": true}`
-- `verify_pending` manual call returns `200`
-- `poll_resolver` manual call returns `200`
-- `escalations` manual call returns `200`
-- `crontab -l` matches expected schedule
-- `cron.log` shows successful job calls
-
-Run these checks:
-
-```bash
-# 1) Health
-curl -i -s https://sentinel.northtexaspoolpros.com/health
-
-# 2) Jobs (expect HTTP/1.1 200 and JSON body)
-curl -i -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/verify_pending" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-curl -i -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/poll_resolver" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-curl -i -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/escalations" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-# 3) Summary dry run
-curl -i -s -X POST "https://sentinel.northtexaspoolpros.com/jobs/send_summary?slot=morning&dry_run=1" \
-  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
-
-# 4) Runtime cron + cron activity
-docker exec -it ntpp-sentinel sh -lc 'crontab -l'
-tail -n 50 /opt/ntpp-sentinel/logs/cron.log
 ```

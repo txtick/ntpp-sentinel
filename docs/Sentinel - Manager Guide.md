@@ -29,6 +29,22 @@ The default repo schedule runs on Monday-Saturday, but exact send times and acti
 - Business hours are configured by admin (for example `8:00am-5:00pm`).
 - Response timers run only during configured business hours.
 
+## Route Rollover
+Sentinel also supports Route Rollover messaging.
+
+This is separate from missed-call and missed-text monitoring.
+
+Its job is to help when a technician route changes and a customer needs a rollover or apology message sent into the correct conversation.
+
+What managers should know:
+
+- It is a live operational workflow inside Sentinel.
+- It uses Skimmer assignment data to identify the technician context.
+- It sends only when Sentinel finds a single confident customer conversation match.
+- If the match is unclear, Sentinel is designed to avoid sending rather than risk messaging the wrong customer.
+
+In practice, this means Route Rollover is meant to reduce manual follow-up during technician handoffs without creating extra customer confusion.
+
 ## When Sentinel auto-resolves an issue
 Sentinel can auto-resolve only when it sees a real employee response.
 
