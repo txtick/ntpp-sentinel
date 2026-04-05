@@ -91,6 +91,13 @@ class CandidateCustomer:
     existing_tags: List[str]
 
 
+@dataclass
+class TagDefinition:
+    tag_id: str
+    name: str
+    company_id: str
+
+
 def _resolve_sqlite_path(explicit_path: Optional[str]) -> str:
     if explicit_path:
         path = Path(explicit_path)
@@ -149,6 +156,42 @@ def _existing_tag_map(conn: sqlite3.Connection) -> Dict[str, List[str]]:
     for customer_id, tag_name in rows:
         result.setdefault(customer_id, []).append(str(tag_name))
     return result
+
+
+def load_tag_definition(sqlite_path: str, tag_name: str, company_id: Optional[str]) -> Optional[TagDefinition]:
+    conn = sqlite3.connect(sqlite_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, Name, CompanyId
+            FROM Tag
+            WHERE COALESCE(Deleted, 0) = 0
+              AND lower(trim(Name)) = lower(trim(?))
+            ORDER BY CreatedAt DESC
+            """,
+            (tag_name,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if company_id:
+        for row in rows:
+            if str(row["CompanyId"] or "").strip() == company_id:
+                return TagDefinition(
+                    tag_id=str(row["id"]),
+                    name=str(row["Name"]),
+                    company_id=str(row["CompanyId"] or ""),
+                )
+
+    if rows:
+        row = rows[0]
+        return TagDefinition(
+            tag_id=str(row["id"]),
+            name=str(row["Name"]),
+            company_id=str(row["CompanyId"] or ""),
+        )
+    return None
 
 
 def _display_name(first_name: str, last_name: str, company_name: str, customer_id: str) -> str:
@@ -337,18 +380,72 @@ def _extract_tag_names(value: Any) -> List[str]:
     return []
 
 
-def _merge_tag_names(existing: List[str], tag_name: str) -> List[str]:
-    seen: Dict[str, str] = {}
-    for value in existing:
-        cleaned = value.strip()
-        if cleaned:
-            seen.setdefault(cleaned.lower(), cleaned)
-    if tag_name.strip():
-        seen.setdefault(tag_name.strip().lower(), tag_name.strip())
-    return list(seen.values())
+def _extract_tag_objects(value: Any) -> List[Dict[str, Any]]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return []
+        return _extract_tag_objects(parsed)
+    if isinstance(value, list):
+        result: List[Dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict):
+                result.append(dict(item))
+        return result
+    if isinstance(value, dict):
+        return [dict(value)]
+    return []
 
 
-def _build_customer_update_payload(record: Dict[str, Any], merged_tags: List[str]) -> Dict[str, Any]:
+def _merge_tag_objects(
+    existing_objects: List[Dict[str, Any]],
+    existing_names: List[str],
+    target_tag: TagDefinition,
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for obj in existing_objects:
+        name = str(obj.get("name") or obj.get("Name") or "").strip()
+        if not name:
+            continue
+        name_lc = name.lower()
+        if name_lc in seen:
+            continue
+        seen.add(name_lc)
+        merged.append(
+            {
+                "id": obj.get("id") or obj.get("Id"),
+                "name": name,
+                "companyId": obj.get("companyId") or obj.get("CompanyId"),
+            }
+        )
+
+    for name in existing_names:
+        name_lc = name.strip().lower()
+        if name_lc and name_lc not in seen:
+            seen.add(name_lc)
+            merged.append({"name": name.strip()})
+
+    if target_tag.name.strip().lower() not in seen:
+        merged.append(
+            {
+                "id": target_tag.tag_id,
+                "name": target_tag.name,
+                "companyId": target_tag.company_id or None,
+            }
+        )
+
+    return merged
+
+
+def _build_customer_update_payload(record: Dict[str, Any], merged_tags: List[Dict[str, Any]]) -> Dict[str, Any]:
     payload: Dict[str, Any] = {}
     for field in CUSTOMER_UPDATE_FIELDS:
         if field == "tags":
@@ -361,7 +458,7 @@ def _build_customer_update_payload(record: Dict[str, Any], merged_tags: List[str
 def apply_tags_via_api(
     customers: Iterable[CandidateCustomer],
     *,
-    tag_name: str,
+    target_tag: TagDefinition,
     api_base_url: str,
     api_key: str,
     update_path_template: str,
@@ -402,11 +499,17 @@ def apply_tags_via_api(
                 )
                 continue
 
-            existing_tags = _extract_tag_names(record.get("Tags"))
+            existing_tag_objects = _extract_tag_objects(record.get("tags"))
+            if not existing_tag_objects:
+                existing_tag_objects = _extract_tag_objects(record.get("Tags"))
+            existing_tags = _extract_tag_names(record.get("tags"))
             if not existing_tags:
-                existing_tags = _extract_tag_names(record.get("tags"))
-            merged_tags = _merge_tag_names(existing_tags, tag_name)
-            if {t.lower() for t in merged_tags} == {t.lower() for t in existing_tags}:
+                existing_tags = _extract_tag_names(record.get("Tags"))
+
+            merged_tags = _merge_tag_objects(existing_tag_objects, existing_tags, target_tag)
+            if {t.lower() for t in existing_tags} == {t.lower() for t in existing_tags + [target_tag.name] if t.lower() != target_tag.name.lower()} and any(
+                t.lower() == target_tag.name.lower() for t in existing_tags
+            ):
                 skipped += 1
                 continue
 
@@ -455,6 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Tag name to add to matching customers, for example legacy-pricing.",
     )
+    parser.add_argument("--tag-id", help="Optional explicit Skimmer tag id. Useful if the tag exists in Skimmer but is not yet in the local SQLite export.")
     parser.add_argument("--company-id", help="Optional Skimmer CompanyId filter.")
     parser.add_argument("--include-inactive", action="store_true", help="Include inactive customers.")
     parser.add_argument("--include-leads", action="store_true", help="Include leads.")
@@ -543,14 +647,34 @@ def main() -> int:
         write_json(args.json_out, customers, args.tag)
         print(f"JSON written: {args.json_out}")
 
+    target_tag = load_tag_definition(sqlite_path, args.tag, args.company_id)
+    if args.tag_id:
+        target_tag = TagDefinition(
+            tag_id=args.tag_id,
+            name=args.tag,
+            company_id=args.company_id or (target_tag.company_id if target_tag else ""),
+        )
+
     if not args.apply:
         print("")
+        if target_tag:
+            print(f"Resolved tag definition: {target_tag.name} ({target_tag.tag_id})")
+        else:
+            print("Tag definition not found in the SQLite export. Dry run still works; API apply will need the tag created in Skimmer first.")
         print("Dry run only. Re-run with --apply to attempt API tagging.")
         return 0
 
+    if not target_tag:
+        print(
+            "Cannot apply tag because the tag definition was not found in the SQLite export.\n"
+            "Create the tag in Skimmer first, refresh the SQLite export, or pass --tag-id explicitly.",
+            file=sys.stderr,
+        )
+        return 2
+
     result = apply_tags_via_api(
         customers,
-        tag_name=args.tag,
+        target_tag=target_tag,
         api_base_url=args.api_base_url,
         api_key=args.api_key,
         update_path_template=args.update_path_template,
