@@ -434,13 +434,12 @@ def _merge_tag_objects(
             merged.append({"name": name.strip()})
 
     if target_tag.name.strip().lower() not in seen:
-        merged.append(
-            {
-                "id": target_tag.tag_id,
-                "name": target_tag.name,
-                "companyId": target_tag.company_id or None,
-            }
-        )
+        tag_obj: Dict[str, Any] = {"name": target_tag.name}
+        if target_tag.tag_id:
+            tag_obj["id"] = target_tag.tag_id
+        if target_tag.company_id:
+            tag_obj["companyId"] = target_tag.company_id
+        merged.append(tag_obj)
 
     return merged
 
@@ -655,22 +654,24 @@ def main() -> int:
             company_id=args.company_id or (target_tag.company_id if target_tag else ""),
         )
 
+    if not target_tag:
+        target_tag = TagDefinition(
+            tag_id=args.tag_id or "",
+            name=args.tag,
+            company_id=args.company_id or "",
+        )
+
     if not args.apply:
         print("")
-        if target_tag:
+        if target_tag.tag_id:
             print(f"Resolved tag definition: {target_tag.name} ({target_tag.tag_id})")
         else:
-            print("Tag definition not found in the SQLite export. Dry run still works; API apply will need the tag created in Skimmer first.")
+            print(
+                "Tag definition not found in the SQLite export. "
+                "Dry run still works, and apply mode will fall back to a name-only tag object."
+            )
         print("Dry run only. Re-run with --apply to attempt API tagging.")
         return 0
-
-    if not target_tag:
-        print(
-            "Cannot apply tag because the tag definition was not found in the SQLite export.\n"
-            "Create the tag in Skimmer first, refresh the SQLite export, or pass --tag-id explicitly.",
-            file=sys.stderr,
-        )
-        return 2
 
     result = apply_tags_via_api(
         customers,
