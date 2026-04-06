@@ -6,6 +6,11 @@ scripts/gas.js
 data/
 logs/
 *.db
+*.csv
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
 
 # Python
 __pycache__/

@@ -323,8 +323,22 @@ def health_postgres():
 # Auth helper (shared)
 # ==========================
 def _auth_or_401(request: Request) -> None:
-    secret = request.headers.get("X-NTPP-Secret")
+    secret = (request.headers.get("X-NTPP-Secret") or "").strip()
     if not secret or secret != WEBHOOK_SECRET:
+        print(
+            "AUTH "
+            + json.dumps(
+                {
+                    "path": str(request.url.path),
+                    "has_x_ntpp_secret": bool(secret),
+                    "secret_len": len(secret),
+                    "content_type": (request.headers.get("content-type") or ""),
+                    "user_agent": (request.headers.get("user-agent") or "")[:120],
+                },
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        )
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -2164,7 +2178,7 @@ register_sms_routes(
         manager_conversation_for_contact=_manager_conversation_for_contact,
         ghl_send_message=ghl_send_message,
         recent_staff_outbound_ts=_recent_staff_outbound_ts,
-        reply_window_hours=AI_GATE_GAP_HOURS,
+        reply_window_hours=INTERNAL_REPLY_GRACE_HOURS,
         flow_log=_flow_log,
         get_last_internal_outbound=get_last_internal_outbound,
         parse_iso_dt=_parse_iso_dt,
@@ -2211,7 +2225,7 @@ register_webhook_routes(
         ghl_get_contact_name=ghl_get_contact_name,
         ghl_find_conversation_id_for_contact=ghl_find_conversation_id_for_contact,
         recent_staff_outbound_ts=_recent_staff_outbound_ts,
-        reply_window_hours=AI_GATE_GAP_HOURS,
+        reply_window_hours=INTERNAL_REPLY_GRACE_HOURS,
         flow_log=_flow_log,
     ),
 )
