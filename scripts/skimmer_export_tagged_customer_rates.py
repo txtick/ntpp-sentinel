@@ -200,6 +200,10 @@ def package_adjustment(tags: List[str]) -> Decimal:
     return sum(matched, Decimal("0"))
 
 
+def package_tags_used(tags: List[str]) -> List[str]:
+    return sorted({tag for tag in tags if tag.lower() in PACKAGE_TAG_ADJUSTMENTS})
+
+
 def calculate_adjusted_rates(current_rate: Any, tags: List[str], increase_percent: Decimal) -> Dict[str, str]:
     if current_rate is None or str(current_rate).strip() == "":
         return {
@@ -211,6 +215,7 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str], increase_percen
 
     current = Decimal(str(current_rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     adjustment = package_adjustment(tags)
+    applied_package_tags = package_tags_used(tags)
     base = (current - adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     multiplier = Decimal("1") + (increase_percent / Decimal("100"))
     increased_base = (base * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -218,6 +223,8 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str], increase_percen
 
     return {
         "current_service_rate": format(current, "f"),
+        "package_adjustment_applied": format(adjustment.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"),
+        "package_tag_used": "|".join(applied_package_tags),
         "current_base_rate": format(base, "f"),
         "increased_base_rate": format(increased_base, "f"),
         "projected_new_total_rate": format(projected_total, "f"),
@@ -231,13 +238,20 @@ def write_csv(
     increase_percent: Decimal,
 ) -> int:
     fieldnames = [
+        "customer_id",
+        "service_location_id",
         "full_name",
         "city",
         "zip_code",
         "current_service_rate",
+        "package_adjustment_applied",
+        "package_tag_used",
         "current_base_rate",
         "increased_base_rate",
         "projected_new_total_rate",
+        "approved_for_increase",
+        "final_new_rate",
+        "notes",
     ]
 
     row_count = 0
@@ -251,10 +265,15 @@ def write_csv(
                 rates = calculate_adjusted_rates(None, customer["tags"], increase_percent)
                 writer.writerow(
                     {
+                        "customer_id": customer["customer_id"],
+                        "service_location_id": "",
                         "full_name": customer["display_name"],
                         "city": "",
                         "zip_code": "",
                         **rates,
+                        "approved_for_increase": "",
+                        "final_new_rate": "",
+                        "notes": "",
                     }
                 )
                 row_count += 1
@@ -264,10 +283,15 @@ def write_csv(
                 rates = calculate_adjusted_rates(location.get("Rate"), customer["tags"], increase_percent)
                 writer.writerow(
                     {
+                        "customer_id": customer["customer_id"],
+                        "service_location_id": clean_text(location.get("id")),
                         "full_name": customer["display_name"],
                         "city": clean_text(location.get("City")),
                         "zip_code": clean_text(location.get("Zip")),
                         **rates,
+                        "approved_for_increase": "",
+                        "final_new_rate": "",
+                        "notes": "",
                     }
                 )
                 row_count += 1
