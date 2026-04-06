@@ -100,6 +100,7 @@ cd /opt/ntpp-sentinel
 
 Notes:
 - `verify_pending` is currently a compatibility wrapper around `poll_resolver`
+- `verify_pending` remains available for manual compatibility checks, but cron should run `poll_resolver` directly
 - manager notifications only include overdue `OPEN` issues
 
 ---
@@ -313,7 +314,6 @@ Key sentinel cron env:
 - `CRON_BUSINESS_END_HOUR`
 - `CRON_ESCALATIONS_EVERY_MINUTES`
 - `CRON_POLL_RESOLVER_EVERY_MINUTES`
-- `CRON_VERIFY_PENDING_EVERY_MINUTES`
 - `CRON_SKIMMER_SYNC_HOUR`
 - `CRON_SKIMMER_SYNC_MINUTE`
 - `CRON_SKIMMER_SYNC_DOW`

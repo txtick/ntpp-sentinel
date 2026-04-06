@@ -72,8 +72,6 @@ TZ=${CRON_TZ}
 */${CRON_POLL_RESOLVER_EVERY_MINUTES} ${CRON_BUSINESS_HOURS} * * ${CRON_DOW} /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
 0 ${CRON_BUSINESS_END_HOUR} * * ${CRON_DOW} /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
 
-*/${CRON_VERIFY_PENDING_EVERY_MINUTES} ${CRON_BUSINESS_HOURS} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
-0 ${CRON_BUSINESS_END_HOUR} * * ${CRON_DOW} /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
 ${CRON_SKIMMER_SYNC_MINUTE} ${CRON_SKIMMER_SYNC_HOUR} * * ${CRON_SKIMMER_SYNC_DOW} /app/cron/cron.sh skimmer_drive_sync >> /logs/cron.log 2>&1
 EOF
 

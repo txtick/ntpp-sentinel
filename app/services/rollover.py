@@ -25,6 +25,8 @@ ROLLOVER_ENABLED = os.getenv("ROLLOVER_ENABLED", "1").lower() in ("1", "true", "
 OFFICE_PHONE = "833-689-7665"
 MAX_STOPS_SHOWN = 20
 CUSTOMER_SEND_DELAY_SECONDS = 0.5
+ROLLOVER_SESSION_TIMEOUT_MINUTES = max(1, int(os.getenv("ROLLOVER_SESSION_TIMEOUT_MINUTES", "120")))
+ROLLOVER_SESSION_TIMEOUT_SECONDS = ROLLOVER_SESSION_TIMEOUT_MINUTES * 60
 
 TRIGGER_PHRASES = [
     "rollover",
@@ -111,6 +113,28 @@ def abort_incomplete_sessions(conn, contact_id: str) -> None:
         (time.time(), contact_id),
     )
     conn.commit()
+
+
+def expire_stale_sessions(conn, contact_id: str, timeout_seconds: int) -> int:
+    """
+    Mark stale AWAITING_* sessions as EXPIRED.
+    Returns the number of rows updated.
+    """
+    if timeout_seconds <= 0:
+        return 0
+    cutoff = time.time() - timeout_seconds
+    cur = conn.execute(
+        """
+        UPDATE rollover_sessions
+        SET state = 'EXPIRED', updated_ts = ?
+        WHERE contact_id = ?
+          AND state IN ('AWAITING_SELECTION', 'AWAITING_CONFIRMATION')
+          AND updated_ts < ?
+        """,
+        (time.time(), contact_id, cutoff),
+    )
+    conn.commit()
+    return cur.rowcount or 0
 
 
 def create_session(

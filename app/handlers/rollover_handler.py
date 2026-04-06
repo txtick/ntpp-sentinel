@@ -14,12 +14,14 @@ from services.rollover import (
     OFFICE_PHONE,
     MAX_STOPS_SHOWN,
     CUSTOMER_SEND_DELAY_SECONDS,
+    ROLLOVER_SESSION_TIMEOUT_SECONDS,
     is_rollover_trigger,
     fetch_tech_route,
     fetch_skimmer_customer,
     extract_customer_phone,
     get_active_session,
     abort_incomplete_sessions,
+    expire_stale_sessions,
     create_session,
     update_session_state,
     build_route_list_message,
@@ -55,9 +57,19 @@ async def handle_rollover(
 
     conn = deps.db()
     try:
+        expired_sessions = expire_stale_sessions(conn, contact_id, ROLLOVER_SESSION_TIMEOUT_SECONDS)
         active_session = get_active_session(conn, contact_id)
     finally:
         conn.close()
+
+    if expired_sessions and not active_session and not is_rollover_trigger(text):
+        await _reply(
+            "Your previous rollover session expired. Reply ROLLOVER to start again.",
+            contact_id,
+            conversation_id,
+            deps,
+        )
+        return {"received": True, "rollover": "expired"}
 
     if active_session:
         state = active_session["state"]

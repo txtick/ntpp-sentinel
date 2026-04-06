@@ -7,5 +7,3 @@
 
 */15 8-16 * * 1-6 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
 0 17 * * 1-6 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
-*/5  8-16 * * 1-6 /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
-0 17 * * 1-6 /app/cron/cron.sh verify_pending >> /logs/cron.log 2>&1
