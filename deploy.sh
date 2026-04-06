@@ -18,6 +18,8 @@ docker compose up -d --build --remove-orphans
 echo "[deploy] done"
 docker compose ps
 
+sleep 8
+
 echo "ingest-worker logs"
 docker compose logs --tail=50 ingest-worker
 

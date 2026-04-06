@@ -24,9 +24,8 @@ import httpx  # type: ignore
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = ROOT / "app"
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from pg import DATABASE_URL, pg  # type: ignore
 from services.customer_sync import (  # type: ignore
