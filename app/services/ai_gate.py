@@ -67,15 +67,19 @@ def _select_context_window(
     msg_ts: Callable[[Dict[str, Any]], Optional[dt.datetime]],
 ) -> List[Dict[str, Any]]:
     """
-    Choose a small, recent slice to avoid mixing multiple mini-conversations.
+    Choose a small, recent slice without requiring the AI to read the whole thread.
 
     Strategy (deterministic):
-      - Walk backwards from newest message
-      - Stop if we hit a long silence gap (AI_GATE_GAP_HOURS)
-      - Also stop once we've included the most recent staff outbound and there is
-        at least one newer message after it
+      - Start with the newest AI_GATE_MAX_MESSAGES messages
+      - If that slice does not include a staff outbound, pull in the most recent
+        prior staff outbound so the model can see what the customer may be replying to
       - Always cap at AI_GATE_MAX_MESSAGES
+
+    We intentionally do not hard-stop on long silence gaps anymore. Customers may
+    reply days later to an older outbound, and the AI still needs the latest staff
+    message as context for that delayed reply.
     """
+    _ = gap_hours
     items: List[Tuple[dt.datetime, Dict[str, Any]]] = []
     for m in msgs or []:
         ts = msg_ts(m)
@@ -86,29 +90,21 @@ def _select_context_window(
     if not items:
         return []
 
-    selected: List[Tuple[dt.datetime, Dict[str, Any]]] = []
-    last_ts: Optional[dt.datetime] = None
-    saw_newer_than_staff = False
-
-    for ts, m in reversed(items):
-        if last_ts is not None:
-            gap = (last_ts - ts).total_seconds()
-            if gap >= (gap_hours * 3600.0):
+    selected = items[-max_messages:]
+    if not any(is_staff_outbound(m) for _, m in selected):
+        selected_start = len(items) - len(selected)
+        prior_staff: Optional[Tuple[dt.datetime, Dict[str, Any]]] = None
+        for idx in range(selected_start - 1, -1, -1):
+            candidate = items[idx]
+            if is_staff_outbound(candidate[1]):
+                prior_staff = candidate
                 break
+        if prior_staff is not None:
+            if len(selected) >= max_messages:
+                selected = [prior_staff] + selected[1:]
+            else:
+                selected = [prior_staff] + selected
 
-        selected.append((ts, m))
-        last_ts = ts
-
-        if is_staff_outbound(m):
-            if saw_newer_than_staff:
-                break
-        else:
-            saw_newer_than_staff = True
-
-        if len(selected) >= max_messages:
-            break
-
-    selected.reverse()
     return [m for _, m in selected]
 
 
