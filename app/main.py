@@ -245,6 +245,11 @@ async def _shutdown_ghl_client():
     await _ghl_client.aclose()
 
 
+def _log_line(message: str) -> None:
+    stamp = dt.datetime.now(tz=ZoneInfo(TZ_NAME)).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{stamp}] {message}")
+
+
 def set_last_internal_outbound(
     conversation_id: str, ts_iso: str, internal_contact_id: Optional[str]
 ) -> None:
@@ -301,7 +306,7 @@ def _startup():
         try:
             ensure_pg_schema()
         except Exception as exc:
-            print(f"WARNING: Postgres schema bootstrap failed: {exc}")
+            _log_line(f"WARNING: Postgres schema bootstrap failed: {exc}")
 
 @app.get("/health")
 def health():
@@ -325,20 +330,6 @@ def health_postgres():
 def _auth_or_401(request: Request) -> None:
     secret = (request.headers.get("X-NTPP-Secret") or "").strip()
     if not secret or secret != WEBHOOK_SECRET:
-        print(
-            "AUTH "
-            + json.dumps(
-                {
-                    "path": str(request.url.path),
-                    "has_x_ntpp_secret": bool(secret),
-                    "secret_len": len(secret),
-                    "content_type": (request.headers.get("content-type") or ""),
-                    "user_agent": (request.headers.get("user-agent") or "")[:120],
-                },
-                separators=(",", ":"),
-                ensure_ascii=True,
-            )
-        )
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -1078,7 +1069,7 @@ def _flow_log(event: str, **fields: Any) -> None:
     for k, v in fields.items():
         if v is not None:
             payload[k] = v
-    print("FLOW " + json.dumps(payload, separators=(",", ":"), ensure_ascii=True))
+    _log_line("FLOW " + json.dumps(payload, separators=(",", ":"), ensure_ascii=True))
 
 
 def get_issue_by_id(issue_id: int) -> Optional[sqlite3.Row]:
@@ -1293,12 +1284,10 @@ def _msg_is_staff_outbound(m: Dict[str, Any]) -> bool:
 def _msg_is_call_resolution_outbound(m: Dict[str, Any]) -> bool:
     """
     CALL issue resolution signal:
-      - any outbound activity in the conversation counts as a follow-up
-    This intentionally includes outbound call log entries that may not carry userId.
+      - only real employee outbound activity counts as a follow-up
+    Automation and IVR activity must not resolve missed-call issues.
     """
-    if not isinstance(m, dict):
-        return False
-    return _msg_direction(m) == "outbound"
+    return _msg_is_staff_outbound(m)
 
 
 def _normalize_status_token(value: Any) -> str:
@@ -1351,26 +1340,13 @@ def _msg_call_resolution_signal(m: Dict[str, Any]) -> Optional[str]:
     Returns the resolution signal for CALL issues, if present.
 
     Signals:
-      - "outbound": legacy behavior, any outbound activity
-      - "call_status_positive": explicit answered/completed call status
+      - "outbound": explicit employee outbound follow-up
     """
     if not isinstance(m, dict):
         return None
 
     if _msg_is_call_resolution_outbound(m):
         return "outbound"
-
-    tokens = _msg_call_status_tokens(m)
-    if not tokens:
-        return None
-
-    has_negative = any(_status_matches(t, CALL_RESOLVE_NEGATIVE_STATUSES) for t in tokens)
-    if has_negative:
-        return None
-
-    has_positive = any(_status_matches(t, CALL_RESOLVE_POSITIVE_STATUSES) for t in tokens)
-    if has_positive:
-        return "call_status_positive"
 
     return None
 
