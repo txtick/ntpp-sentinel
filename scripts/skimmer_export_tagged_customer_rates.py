@@ -27,6 +27,12 @@ import httpx  # type: ignore
 SKIMMER_API_BASE_URL = os.getenv("SKIMMER_API_BASE_URL", "https://publicapi.getskimmer.com")
 SKIMMER_API_KEY = os.getenv("SKIMMER_API_KEY", "")
 DEFAULT_SQLITE_PATH = os.getenv("SKIMMER_DB_PATH", "/data/skimmer/skimmer.db")
+PACKAGE_TAG_ADJUSTMENTS: Dict[str, Decimal] = {
+    "patriot": Decimal("55"),
+    "freedom": Decimal("40"),
+    "liberty": Decimal("20"),
+}
+EXCLUDED_TAGS = {"not-invoiced"}
 
 
 def clean_text(value: Any) -> str:
@@ -91,6 +97,8 @@ def fetch_tagged_customers(
     for customer in customers:
         tags = _extract_tag_names(customer.get("tags"))
         if target_tag_lc not in {tag.lower() for tag in tags}:
+            continue
+        if EXCLUDED_TAGS & {tag.lower() for tag in tags}:
             continue
 
         is_inactive = bool(customer.get("isInactive"))
@@ -187,6 +195,35 @@ def current_rate_str(current_rate: Any) -> str:
     return format(current, "f")
 
 
+def package_adjustment(tags: List[str]) -> Decimal:
+    matched = [PACKAGE_TAG_ADJUSTMENTS[tag.lower()] for tag in tags if tag.lower() in PACKAGE_TAG_ADJUSTMENTS]
+    return sum(matched, Decimal("0"))
+
+
+def calculate_adjusted_rates(current_rate: Any, tags: List[str], increase_percent: Decimal) -> Dict[str, str]:
+    if current_rate is None or str(current_rate).strip() == "":
+        return {
+            "current_service_rate": "",
+            "current_base_rate": "",
+            "increased_base_rate": "",
+            "projected_new_total_rate": "",
+        }
+
+    current = Decimal(str(current_rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    adjustment = package_adjustment(tags)
+    base = (current - adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    multiplier = Decimal("1") + (increase_percent / Decimal("100"))
+    increased_base = (base * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    projected_total = (increased_base + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    return {
+        "current_service_rate": format(current, "f"),
+        "current_base_rate": format(base, "f"),
+        "increased_base_rate": format(increased_base, "f"),
+        "projected_new_total_rate": format(projected_total, "f"),
+    }
+
+
 def write_csv(
     csv_path: str,
     tagged_customers: List[Dict[str, Any]],
@@ -194,27 +231,13 @@ def write_csv(
     increase_percent: Decimal,
 ) -> int:
     fieldnames = [
-        "customer_id",
-        "display_name",
-        "first_name",
-        "last_name",
-        "company_name",
-        "primary_email",
-        "mobile_phone",
-        "created_at",
-        "skimmer_tags",
-        "service_location_id",
-        "service_address",
-        "service_city",
-        "service_state",
-        "service_zip",
-        "rate_type",
+        "full_name",
+        "city",
+        "zip_code",
         "current_service_rate",
-        "service_rate_plus_percent",
-        "increase_percent",
-        "labor_cost",
-        "labor_cost_type",
-        "service_location_notes",
+        "current_base_rate",
+        "increased_base_rate",
+        "projected_new_total_rate",
     ]
 
     row_count = 0
@@ -225,47 +248,26 @@ def write_csv(
         for customer in tagged_customers:
             locations = service_locations_by_customer.get(customer["customer_id"], [])
             if not locations:
+                rates = calculate_adjusted_rates(None, customer["tags"], increase_percent)
                 writer.writerow(
                     {
-                        "customer_id": customer["customer_id"],
-                        "display_name": customer["display_name"],
-                        "first_name": customer["first_name"],
-                        "last_name": customer["last_name"],
-                        "company_name": customer["company_name"],
-                        "primary_email": customer["primary_email"],
-                        "mobile_phone": customer["mobile_phone"],
-                        "created_at": customer["created_at"],
-                        "skimmer_tags": "|".join(customer["tags"]),
-                        "increase_percent": format(increase_percent, "f"),
+                        "full_name": customer["display_name"],
+                        "city": "",
+                        "zip_code": "",
+                        **rates,
                     }
                 )
                 row_count += 1
                 continue
 
             for location in locations:
+                rates = calculate_adjusted_rates(location.get("Rate"), customer["tags"], increase_percent)
                 writer.writerow(
                     {
-                        "customer_id": customer["customer_id"],
-                        "display_name": customer["display_name"],
-                        "first_name": customer["first_name"],
-                        "last_name": customer["last_name"],
-                        "company_name": customer["company_name"],
-                        "primary_email": customer["primary_email"],
-                        "mobile_phone": customer["mobile_phone"],
-                        "created_at": customer["created_at"],
-                        "skimmer_tags": "|".join(customer["tags"]),
-                        "service_location_id": clean_text(location.get("id")),
-                        "service_address": clean_text(location.get("Address")),
-                        "service_city": clean_text(location.get("City")),
-                        "service_state": clean_text(location.get("State")),
-                        "service_zip": clean_text(location.get("Zip")),
-                        "rate_type": clean_text(location.get("RateType")),
-                        "current_service_rate": current_rate_str(location.get("Rate")),
-                        "service_rate_plus_percent": calculate_increased_rate(location.get("Rate"), increase_percent),
-                        "increase_percent": format(increase_percent, "f"),
-                        "labor_cost": current_rate_str(location.get("LaborCost")),
-                        "labor_cost_type": clean_text(location.get("LaborCostType")),
-                        "service_location_notes": clean_text(location.get("Notes")),
+                        "full_name": customer["display_name"],
+                        "city": clean_text(location.get("City")),
+                        "zip_code": clean_text(location.get("Zip")),
+                        **rates,
                     }
                 )
                 row_count += 1
