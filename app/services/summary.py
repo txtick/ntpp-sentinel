@@ -1,6 +1,5 @@
 import asyncio
 import json
-import re
 import sqlite3
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -19,13 +18,10 @@ def summary_title(slot: str) -> str:
     return slot.capitalize()
 
 
-def short_phone(phone: Optional[str]) -> str:
+def phone_label(phone: Optional[str]) -> str:
     if not phone:
         return "-"
-    digits = re.sub(r"\D", "", phone)
-    if len(digits) >= 10:
-        return f"+1***{digits[-4:]}"
-    return phone
+    return str(phone).strip() or "-"
 
 
 def display_name(row: sqlite3.Row) -> str:
@@ -34,7 +30,7 @@ def display_name(row: sqlite3.Row) -> str:
     except Exception:
         meta = {}
     name = (meta.get("contact_name") or "").strip()
-    return name if name else short_phone(row["phone"])
+    return name if name else phone_label(row["phone"])
 
 
 def build_section_lines(
