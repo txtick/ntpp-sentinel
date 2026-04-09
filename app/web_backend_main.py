@@ -6,6 +6,8 @@ from services.dashboard_backend import (
     get_dashboard_summary,
     get_postgres_health,
     ensure_web_backend_schema,
+    list_alert_instances,
+    refresh_alert_instances,
 )
 
 app = FastAPI(
@@ -36,3 +38,18 @@ def api_home_summary():
         "ok": True,
         "summary": get_dashboard_summary(),
     }
+
+
+@app.get("/api/alerts")
+def api_alerts(status: str = "", category: str = "", limit: int = 100, offset: int = 0):
+    return list_alert_instances(
+        status=status or None,
+        category=category or None,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.post("/jobs/dashboard/refresh")
+def job_dashboard_refresh(trigger_reason: str = "manual"):
+    return refresh_alert_instances(trigger_reason=trigger_reason)
