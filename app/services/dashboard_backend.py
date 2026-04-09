@@ -6,9 +6,13 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from pg import DATABASE_URL, ensure_pg_schema, pg, pg_healthcheck
+from services.dashboard_schema import ensure_dashboard_schema_definitions
 
 MANAGED_ALERT_CATEGORIES = ("pool", "process", "revenue")
 ACTIONABLE_ALERT_STATUSES = ("open", "acknowledged", "snoozed", "resolved", "cleared")
+MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
+    os.getenv("MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD", "75")
+)
 
 
 def _json_dumps(value: Any) -> str:
@@ -91,17 +95,34 @@ def _metadata_source_refresh_id(item: Dict[str, Any]) -> Optional[int]:
 
 
 def _ensure_backend_owned_dashboard_definitions() -> None:
-    previous = os.environ.get("INGEST_OWNS_DASHBOARD_SCHEMA")
-    os.environ["INGEST_OWNS_DASHBOARD_SCHEMA"] = "1"
-    try:
-        from ingest.pipeline import ensure_operational_schema
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT to_regclass('public.customers') AS customers_name,
+                       to_regclass('public.pools') AS pools_name,
+                       to_regclass('public.chemistry_readings') AS chemistry_name,
+                       to_regclass('public.chemical_dose_events') AS dose_name,
+                       to_regclass('public.ingest_pipeline_runs') AS runs_name
+                """
+            )
+            row = cur.fetchone() or {}
 
-        ensure_operational_schema()
-    finally:
-        if previous is None:
-            os.environ.pop("INGEST_OWNS_DASHBOARD_SCHEMA", None)
-        else:
-            os.environ["INGEST_OWNS_DASHBOARD_SCHEMA"] = previous
+        required = [
+            row.get("customers_name"),
+            row.get("pools_name"),
+            row.get("chemistry_name"),
+            row.get("dose_name"),
+            row.get("runs_name"),
+        ]
+        if not all(required):
+            return
+
+        ensure_dashboard_schema_definitions(
+            conn,
+            monthly_chemical_cost_review_threshold=MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD,
+        )
+        conn.commit()
 
 
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
