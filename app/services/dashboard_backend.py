@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -44,6 +45,7 @@ def _fetch_alert_instance(cur, alert_id: int) -> Optional[Dict[str, Any]]:
             first_detected_at,
             last_detected_at,
             last_evaluated_at,
+            resolved_at,
             cleared_at,
             assigned_to,
             acknowledged_at,
@@ -58,6 +60,25 @@ def _fetch_alert_instance(cur, alert_id: int) -> Optional[Dict[str, Any]]:
     )
     row = cur.fetchone()
     return dict(row) if row else None
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    normalized = raw.replace(" ", "T")
+    try:
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+
+
+def _detection_evidence_ts(item: Dict[str, Any]) -> Optional[datetime]:
+    return _parse_dt(item.get("service_date"))
 
 
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
@@ -246,6 +267,7 @@ def ensure_web_backend_schema() -> None:
                     first_detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     last_detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     last_evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    resolved_at TIMESTAMPTZ,
                     cleared_at TIMESTAMPTZ,
                     assigned_to TEXT,
                     acknowledged_at TIMESTAMPTZ,
@@ -269,6 +291,7 @@ def ensure_web_backend_schema() -> None:
                 ON alert_instances(customer_id, pool_id)
                 """
             )
+            cur.execute("ALTER TABLE alert_instances ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS alert_instance_events (
@@ -342,10 +365,11 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                     title = _alert_title(str(item["category"]), item)
                     summary = _alert_summary(str(item["category"]), item)
                     metadata_json = _json_dumps(item["metadata_json"])
+                    evidence_ts = _detection_evidence_ts(item)
 
                     cur.execute(
                         """
-                        SELECT id, status
+                        SELECT id, status, resolved_at
                         FROM alert_instances
                         WHERE category = %s
                           AND rule_code = %s
@@ -360,6 +384,7 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                         ),
                     )
                     existing = cur.fetchone()
+                    existing_status = str(existing["status"]) if existing else ""
                     seen_key = "|".join(
                         [
                             str(item["category"]),
@@ -371,36 +396,58 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                     seen_keys.append(seen_key)
 
                     if existing:
-                        new_status = "open" if existing["status"] == "cleared" else existing["status"]
+                        resolved_at = _parse_dt(existing.get("resolved_at"))
+                        reopen_resolved = bool(
+                            existing_status == "resolved"
+                            and resolved_at is not None
+                            and evidence_ts is not None
+                            and evidence_ts > resolved_at
+                        )
+                        if existing_status == "cleared":
+                            new_status = "open"
+                        elif reopen_resolved:
+                            new_status = "open"
+                        else:
+                            new_status = existing_status
+
+                        set_clauses = [
+                            "customer_id = %s",
+                            "pool_id = %s",
+                            "status = %s",
+                            "severity = %s",
+                            "title = %s",
+                            "summary = %s",
+                            "last_evaluated_at = NOW()",
+                            "metadata_json = %s::jsonb",
+                            "updated_at = NOW()",
+                        ]
+                        update_params: List[Any] = [
+                            item.get("customer_id"),
+                            item.get("pool_id"),
+                            new_status,
+                            item["severity"],
+                            title,
+                            summary,
+                            metadata_json,
+                        ]
+
+                        if existing_status != "resolved" or reopen_resolved:
+                            set_clauses.append("last_detected_at = NOW()")
+                        if existing_status == "cleared":
+                            set_clauses.append("cleared_at = NULL")
+                        if reopen_resolved:
+                            set_clauses.append("resolved_at = NULL")
+
                         cur.execute(
-                            """
+                            f"""
                             UPDATE alert_instances
-                            SET customer_id = %s,
-                                pool_id = %s,
-                                status = %s,
-                                severity = %s,
-                                title = %s,
-                                summary = %s,
-                                last_detected_at = NOW(),
-                                last_evaluated_at = NOW(),
-                                cleared_at = NULL,
-                                metadata_json = %s::jsonb,
-                                updated_at = NOW()
+                            SET {", ".join(set_clauses)}
                             WHERE id = %s
                             """,
-                            (
-                                item.get("customer_id"),
-                                item.get("pool_id"),
-                                new_status,
-                                item["severity"],
-                                title,
-                                summary,
-                                metadata_json,
-                                existing["id"],
-                            ),
+                            update_params + [existing["id"]],
                         )
                         updated_count += 1
-                        event_type = "reopened" if existing["status"] == "cleared" else "detected"
+                        event_type = "reopened" if existing_status == "cleared" or reopen_resolved else "detected"
                         if event_type == "reopened":
                             reopened_count += 1
                         cur.execute(
@@ -456,8 +503,8 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                                 payload_json
                             ) VALUES (%s, 'detected', %s, %s::jsonb)
                             """,
-                        (inserted["id"], "refresh", metadata_json),
-                    )
+                            (inserted["id"], "refresh", metadata_json),
+                        )
 
                 cur.execute(
                     """
@@ -604,6 +651,7 @@ def list_alert_instances(
                     first_detected_at,
                     last_detected_at,
                     last_evaluated_at,
+                    resolved_at,
                     cleared_at,
                     assigned_to,
                     acknowledged_at,
@@ -665,6 +713,66 @@ def get_alert_instance(alert_id: int) -> Dict[str, Any]:
     return {"ok": True, "item": item, "events": events}
 
 
+def list_alert_events(alert_id: int, limit: int = 100) -> Dict[str, Any]:
+    require_postgres_configured()
+    safe_limit = max(1, min(int(limit), 200))
+    with pg() as conn:
+        with conn.cursor() as cur:
+            item = _fetch_alert_instance(cur, int(alert_id))
+            if not item:
+                raise HTTPException(status_code=404, detail="Alert not found")
+
+            cur.execute(
+                """
+                SELECT id, event_type, event_ts, actor, payload_json
+                FROM alert_instance_events
+                WHERE alert_instance_id = %s
+                ORDER BY event_ts DESC, id DESC
+                LIMIT %s
+                """,
+                (int(alert_id), safe_limit),
+            )
+            events = [dict(row) for row in cur.fetchall()]
+
+    return {"ok": True, "alert_id": int(alert_id), "items": events, "limit": safe_limit}
+
+
+def list_refresh_runs(limit: int = 20) -> Dict[str, Any]:
+    require_postgres_configured()
+    safe_limit = max(1, min(int(limit), 100))
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, started_at, completed_at, trigger_reason, success, error_message, metrics_json
+                FROM alert_refresh_runs
+                ORDER BY id DESC
+                LIMIT %s
+                """,
+                (safe_limit,),
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+    return {"ok": True, "items": rows, "limit": safe_limit}
+
+
+def get_refresh_run(refresh_run_id: int) -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, started_at, completed_at, trigger_reason, success, error_message, metrics_json
+                FROM alert_refresh_runs
+                WHERE id = %s
+                """,
+                (int(refresh_run_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Refresh run not found")
+    return {"ok": True, "item": dict(row)}
+
+
 def update_alert_instance_status(
     alert_id: int,
     *,
@@ -696,6 +804,7 @@ def update_alert_instance_status(
             else:
                 now_field_updates.append("status = %s")
                 params.append("resolved")
+                now_field_updates.append("resolved_at = NOW()")
                 now_field_updates.append("snoozed_until = NULL")
                 now_field_updates.append("updated_at = NOW()")
                 event_type = "resolved"

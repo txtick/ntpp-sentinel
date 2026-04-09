@@ -5,9 +5,12 @@ from fastapi import FastAPI, HTTPException, Request
 from services.dashboard_backend import (
     get_dashboard_summary,
     get_alert_instance,
+    get_refresh_run,
     get_postgres_health,
     ensure_web_backend_schema,
+    list_alert_events,
     list_alert_instances,
+    list_refresh_runs,
     refresh_alert_instances,
     update_alert_instance_status,
 )
@@ -67,6 +70,11 @@ def api_alert_detail(alert_id: int):
     return get_alert_instance(alert_id)
 
 
+@app.get("/api/alerts/{alert_id}/events")
+def api_alert_events(alert_id: int, limit: int = 100):
+    return list_alert_events(alert_id, limit=limit)
+
+
 @app.post("/api/alerts/{alert_id}/ack")
 def api_alert_ack(request: Request, alert_id: int, actor: str = "api", note: str = ""):
     _auth_or_401(request)
@@ -93,3 +101,13 @@ def api_alert_resolve(request: Request, alert_id: int, actor: str = "api", note:
 def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
     _auth_or_401(request)
     return refresh_alert_instances(trigger_reason=trigger_reason)
+
+
+@app.get("/api/refresh-runs")
+def api_refresh_runs(limit: int = 20):
+    return list_refresh_runs(limit=limit)
+
+
+@app.get("/api/refresh-runs/{refresh_run_id}")
+def api_refresh_run_detail(refresh_run_id: int):
+    return get_refresh_run(refresh_run_id)
