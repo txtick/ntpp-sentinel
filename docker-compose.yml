@@ -36,6 +36,24 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  web-backend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: ntpp-web-backend
+    restart: unless-stopped
+    env_file: .env
+    command: ["/app/web_backend_start.sh"]
+    expose:
+      - "8020"
+    volumes:
+      - ./logs:/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   caddy:
     image: caddy:2
     container_name: ntpp-caddy

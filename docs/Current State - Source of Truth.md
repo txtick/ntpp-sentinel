@@ -9,6 +9,7 @@ If a different doc disagrees with this one, this document wins.
 Top-level `docs/` is intentionally limited to:
 
 - `Current State - Source of Truth.md`
+- `Web Backend Architecture Plan.md`
 - `START UP & RECOVERY.md`
 - `Sentinel - Manager Guide.md`
 

@@ -15,11 +15,13 @@ Today it handles:
 Current Docker Compose services:
 - `sentinel`
 - `ingest-worker`
+- `web-backend`
 - `caddy`
 
 Roles:
 - `sentinel`: public API, webhooks, job endpoints, customer sync, Skimmer download trigger
 - `ingest-worker`: validation, `sk_*` source-ingest import, normalized upserts, derived views
+- `web-backend`: dashboard/query API surface and backend-owned alert tracking schema
 - `caddy`: public reverse proxy to `sentinel:8000`
 
 Persistence:
