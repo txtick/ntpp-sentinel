@@ -8,6 +8,10 @@ from pg import DATABASE_URL, ensure_pg_schema, pg, pg_healthcheck
 MANAGED_ALERT_CATEGORIES = ("pool", "process", "revenue")
 
 
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, default=str)
+
+
 def _view_exists(cur, view_name: str) -> bool:
     cur.execute("SELECT to_regclass(%s) AS exists_name", (f"public.{view_name}",))
     row = cur.fetchone()
@@ -295,7 +299,7 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                 for item in candidates:
                     title = _alert_title(str(item["category"]), item)
                     summary = _alert_summary(str(item["category"]), item)
-                    metadata_json = json.dumps(item["metadata_json"])
+                    metadata_json = _json_dumps(item["metadata_json"])
 
                     cur.execute(
                         """
@@ -410,8 +414,8 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                                 payload_json
                             ) VALUES (%s, 'detected', %s, %s::jsonb)
                             """,
-                            (inserted["id"], "refresh", metadata_json),
-                        )
+                        (inserted["id"], "refresh", metadata_json),
+                    )
 
                 cur.execute(
                     """
@@ -458,7 +462,7 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                             payload_json
                         ) VALUES (%s, 'cleared_by_refresh', %s, %s::jsonb)
                         """,
-                        (alert_id, "refresh", json.dumps({"refresh_run_id": refresh_run_id})),
+                        (alert_id, "refresh", _json_dumps({"refresh_run_id": refresh_run_id})),
                     )
                     cleared_count += 1
 
@@ -477,7 +481,7 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                         metrics_json = %s::jsonb
                     WHERE id = %s
                     """,
-                    (json.dumps(metrics), refresh_run_id),
+                    (_json_dumps(metrics), refresh_run_id),
                 )
                 conn.commit()
                 return {
