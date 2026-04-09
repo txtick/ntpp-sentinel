@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 from services.dashboard_backend import (
     get_dashboard_summary,
@@ -16,6 +16,16 @@ app = FastAPI(
     title="NTPP Web Backend",
     version="0.1.0",
 )
+
+WEB_BACKEND_SECRET = os.getenv("WEB_BACKEND_SECRET", "").strip() or os.getenv("WEBHOOK_SECRET", "").strip()
+
+
+def _auth_or_401(request: Request) -> None:
+    if not WEB_BACKEND_SECRET:
+        raise HTTPException(status_code=500, detail="WEB_BACKEND_SECRET is not configured")
+    provided = (request.headers.get("X-NTPP-Secret") or "").strip()
+    if provided != WEB_BACKEND_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 @app.on_event("startup")
@@ -58,7 +68,8 @@ def api_alert_detail(alert_id: int):
 
 
 @app.post("/api/alerts/{alert_id}/ack")
-def api_alert_ack(alert_id: int, actor: str = "api", note: str = ""):
+def api_alert_ack(request: Request, alert_id: int, actor: str = "api", note: str = ""):
+    _auth_or_401(request)
     return update_alert_instance_status(
         alert_id,
         next_status="acknowledged",
@@ -68,7 +79,8 @@ def api_alert_ack(alert_id: int, actor: str = "api", note: str = ""):
 
 
 @app.post("/api/alerts/{alert_id}/resolve")
-def api_alert_resolve(alert_id: int, actor: str = "api", note: str = ""):
+def api_alert_resolve(request: Request, alert_id: int, actor: str = "api", note: str = ""):
+    _auth_or_401(request)
     return update_alert_instance_status(
         alert_id,
         next_status="resolved",
@@ -78,5 +90,6 @@ def api_alert_resolve(alert_id: int, actor: str = "api", note: str = ""):
 
 
 @app.post("/jobs/dashboard/refresh")
-def job_dashboard_refresh(trigger_reason: str = "manual"):
+def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
+    _auth_or_401(request)
     return refresh_alert_instances(trigger_reason=trigger_reason)

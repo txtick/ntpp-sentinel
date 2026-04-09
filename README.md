@@ -69,6 +69,7 @@ Required core values:
 
 ```env
 WEBHOOK_SECRET=<shared_secret>
+WEB_BACKEND_SECRET=<shared_secret_optional_defaults_to_WEBHOOK_SECRET>
 GHL_TOKEN=<leadconnector_private_integration_token>
 GHL_LOCATION_ID=<ghl_location_id>
 DATABASE_URL=<postgres_connection_string>
