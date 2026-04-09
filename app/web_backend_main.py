@@ -5,11 +5,14 @@ from fastapi import FastAPI, HTTPException, Request
 from services.dashboard_backend import (
     get_dashboard_summary,
     get_alert_instance,
+    get_customer_detail,
     get_refresh_run,
     get_postgres_health,
     ensure_web_backend_schema,
     list_alert_events,
     list_alert_instances,
+    list_alert_rule_configs,
+    list_customers,
     list_refresh_runs,
     refresh_alert_instances,
     update_alert_instance_status,
@@ -53,6 +56,28 @@ def api_home_summary():
         "ok": True,
         "summary": get_dashboard_summary(),
     }
+
+
+@app.get("/api/customers")
+def api_customers(
+    status: str = "",
+    search: str = "",
+    operational_only: int = 0,
+    limit: int = 100,
+    offset: int = 0,
+):
+    return list_customers(
+        status=status or None,
+        search=search or None,
+        operational_only=bool(operational_only),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/customers/{customer_id}")
+def api_customer_detail(customer_id: int):
+    return get_customer_detail(customer_id)
 
 
 @app.get("/api/alerts")
@@ -111,3 +136,8 @@ def api_refresh_runs(limit: int = 20):
 @app.get("/api/refresh-runs/{refresh_run_id}")
 def api_refresh_run_detail(refresh_run_id: int):
     return get_refresh_run(refresh_run_id)
+
+
+@app.get("/api/config/alerts")
+def api_config_alerts():
+    return list_alert_rule_configs()

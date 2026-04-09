@@ -17,7 +17,7 @@ Older planning, master-state, and architecture drafts are preserved under `docs/
 
 ## What The Platform Is Today
 
-The platform currently has two live backend services and one future-facing read layer plan.
+The platform currently has three backend services and one frontend service boundary plan.
 
 ### Sentinel
 
@@ -43,15 +43,26 @@ Responsibilities:
 - preserve historical chemistry and dosage events
 - maintain `inactive_since`
 - prune normalized/dashboard scope for customers inactive more than 60 days
-- refresh derived operational analytics views
+
+It must not own dashboard/business interpretation long-term.
+
+### Web Backend
+
+The web backend is now the live dashboard/backend API and tracking service boundary.
+
+Responsibilities:
+- own dashboard config and derived analytics definitions
+- refresh tracked alert state from dashboard detections
+- provide dashboard/backend read APIs
+- provide alert lifecycle APIs for ack/resolve and event history
 
 ### Dashboard / App Layer
 
-Not built yet.
+Web frontend not built yet.
 
-The future dashboard must read:
+The future frontend must read:
 - normalized tables
-- derived views
+- derived views and backend-owned tracking APIs
 
 It must not treat `sk_*` tables as the final application model.
 
@@ -61,11 +72,13 @@ It must not treat `sk_*` tables as the final application model.
 
 - Caddy proxies public traffic to `sentinel:8000`
 - `ingest-worker` stays internal on Docker networking
+- `web-backend` currently stays internal on Docker networking
 
 ### Containers
 
 - `sentinel`
 - `ingest-worker`
+- `web-backend`
 - `caddy`
 
 ### Persistence
@@ -119,6 +132,10 @@ Purpose:
 - avoid scattering hard-coded thresholds
 - allow future seasonal tuning and operational changes without rewriting view logic
 
+Ownership:
+- backend-owned
+- ingest may support compatibility bootstrap only when explicitly enabled
+
 ### 4. Derived Analytics Layer
 
 Current derived views:
@@ -126,6 +143,22 @@ Current derived views:
 - `chemistry_trend_alerts_v`
 - `revenue_opportunities_v`
 - `dashboard_summary_v`
+
+Ownership:
+- backend-owned
+- refreshed/used by the web backend tracking layer
+
+### 5. Backend Tracking Layer
+
+Current backend tracking tables:
+- `alert_refresh_runs`
+- `alert_instances`
+- `alert_instance_events`
+
+Purpose:
+- keep stable alert IDs across refreshes
+- support alert ack/resolve workflow
+- preserve alert event history
 
 ## Current Skimmer Pipeline Flow
 
@@ -135,7 +168,9 @@ Primary path:
 2. Sentinel saves it to `SKIMMER_DB_PATH`.
 3. Sentinel calls the internal ingest worker.
 4. Worker accepts the job quickly and spawns the pipeline in the background.
-5. Worker validates, imports `sk_*`, upserts normalized tables, and refreshes derived views.
+5. Worker validates, imports `sk_*`, and upserts normalized tables.
+6. After successful normalization, worker triggers the web backend refresh job.
+7. Web backend evaluates current dashboard detections and updates tracked alert state.
 
 Fallback path:
 
@@ -234,12 +269,13 @@ Missing pool linkage for those records is a fatal validation problem.
 - source-ingest import into `sk_*`
 - Skimmer → GHL customer sync
 - ingest worker normalization pipeline
-- config-driven alert/trend/revenue rule tables
-- derived analytics views for dashboard use
+- backend-owned config-driven alert/trend/revenue rule tables
+- backend-owned derived analytics views for dashboard use
+- backend-owned tracked alert refresh runs and alert instances
+- backend alert detail / ack / resolve APIs
 
 ### Not Built Yet
 
-- dashboard backend API layer
 - dashboard frontend
 - alert config UI
 - reminder workflows on top of normalized/dashboard data
@@ -257,8 +293,9 @@ Missing pool linkage for those records is a fatal validation problem.
 ## Near-Term Next Steps
 
 1. Validate the full two-container flow on the droplet end-to-end.
-2. Add a small set of read-only validation endpoints or SQL checks for normalized/dashboard data.
-3. Build dashboard backend read APIs on top of normalized tables and derived views.
+2. Add web frontend container and first frontend scaffold.
+3. Expand dashboard/backend read APIs on top of normalized tables, derived views, and tracked alert state.
+4. Add config mutation and reminder workflows in the backend.
 4. Build the first dashboard UI pages.
 
 ## Out Of Scope For Now

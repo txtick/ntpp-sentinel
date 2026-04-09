@@ -381,7 +381,34 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
 
             cur.execute("SELECT * FROM dashboard_summary_v")
             summary = cur.fetchone()
-            return dict(summary) if summary else None
+            if not summary:
+                return None
+
+            cur.execute(
+                """
+                SELECT category, status, COUNT(*) AS count
+                FROM alert_instances
+                GROUP BY category, status
+                ORDER BY category, status
+                """
+            )
+            status_counts = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT category, severity, COUNT(*) AS count
+                FROM alert_instances
+                WHERE status <> 'cleared'
+                GROUP BY category, severity
+                ORDER BY category, severity
+                """
+            )
+            severity_counts = [dict(row) for row in cur.fetchall()]
+
+            payload = dict(summary)
+            payload["tracked_alert_counts_by_status"] = status_counts
+            payload["tracked_alert_counts_by_severity"] = severity_counts
+            return payload
 
 
 def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
@@ -845,6 +872,238 @@ def get_refresh_run(refresh_run_id: int) -> Dict[str, Any]:
             if not row:
                 raise HTTPException(status_code=404, detail="Refresh run not found")
     return {"ok": True, "item": dict(row)}
+
+
+def list_customers(
+    *,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    operational_only: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    safe_limit = max(1, min(int(limit), 500))
+    safe_offset = max(0, int(offset))
+    filters: List[str] = []
+    params: List[Any] = []
+
+    normalized_status = _normalize_status(status)
+    if normalized_status:
+        filters.append("lower(c.customer_status) = %s")
+        params.append(normalized_status)
+
+    if operational_only:
+        filters.append("c.is_operationally_active = TRUE")
+
+    search_value = (search or "").strip()
+    if search_value:
+        filters.append(
+            """
+            (
+                c.first_name ILIKE %s
+                OR c.last_name ILIKE %s
+                OR c.company_name ILIKE %s
+                OR c.email ILIKE %s
+                OR c.phone ILIKE %s
+                OR c.mobile_phone ILIKE %s
+            )
+            """
+        )
+        pattern = f"%{search_value}%"
+        params.extend([pattern, pattern, pattern, pattern, pattern, pattern])
+
+    where_sql = ""
+    if filters:
+        where_sql = "WHERE " + " AND ".join(filters)
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM customers c
+                {where_sql}
+                """,
+                params,
+            )
+            total = int(cur.fetchone()["total"])
+
+            cur.execute(
+                f"""
+                SELECT
+                    c.id,
+                    c.source_system,
+                    c.source_customer_id,
+                    c.first_name,
+                    c.last_name,
+                    c.company_name,
+                    c.email,
+                    c.phone,
+                    c.mobile_phone,
+                    c.city,
+                    c.state,
+                    c.customer_status,
+                    c.is_lead,
+                    c.is_inactive,
+                    c.is_operationally_active,
+                    c.inactive_since,
+                    c.has_pool,
+                    c.pool_count,
+                    c.created_at,
+                    c.updated_at,
+                    COALESCE(alerts.open_alert_count, 0) AS open_alert_count,
+                    COALESCE(alerts.critical_alert_count, 0) AS critical_alert_count
+                FROM customers c
+                LEFT JOIN (
+                    SELECT
+                        customer_id,
+                        COUNT(*) FILTER (WHERE status <> 'cleared') AS open_alert_count,
+                        COUNT(*) FILTER (WHERE status <> 'cleared' AND severity = 'critical') AS critical_alert_count
+                    FROM alert_instances
+                    GROUP BY customer_id
+                ) alerts ON alerts.customer_id = c.id
+                {where_sql}
+                ORDER BY
+                    c.is_operationally_active DESC,
+                    COALESCE(c.company_name, '') = '' ASC,
+                    COALESCE(NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''), c.company_name, c.source_customer_id) ASC,
+                    c.id ASC
+                LIMIT %s OFFSET %s
+                """,
+                params + [safe_limit, safe_offset],
+            )
+            items = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "ok": True,
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
+    }
+
+
+def get_customer_detail(customer_id: int) -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    c.*,
+                    COALESCE(alerts.open_alert_count, 0) AS open_alert_count,
+                    COALESCE(alerts.critical_alert_count, 0) AS critical_alert_count
+                FROM customers c
+                LEFT JOIN (
+                    SELECT
+                        customer_id,
+                        COUNT(*) FILTER (WHERE status <> 'cleared') AS open_alert_count,
+                        COUNT(*) FILTER (WHERE status <> 'cleared' AND severity = 'critical') AS critical_alert_count
+                    FROM alert_instances
+                    GROUP BY customer_id
+                ) alerts ON alerts.customer_id = c.id
+                WHERE c.id = %s
+                """,
+                (int(customer_id),),
+            )
+            customer = cur.fetchone()
+            if not customer:
+                raise HTTPException(status_code=404, detail="Customer not found")
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    source_pool_id,
+                    name,
+                    gallons,
+                    baseline_filter_pressure,
+                    address,
+                    city,
+                    state,
+                    zip,
+                    is_operationally_active,
+                    created_at,
+                    updated_at
+                FROM pools
+                WHERE customer_id = %s
+                ORDER BY id ASC
+                """,
+                (int(customer_id),),
+            )
+            pools = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    category,
+                    rule_code,
+                    entity_type,
+                    entity_id,
+                    pool_id,
+                    status,
+                    severity,
+                    title,
+                    summary,
+                    first_detected_at,
+                    last_detected_at,
+                    last_evaluated_at,
+                    resolved_at,
+                    cleared_at
+                FROM alert_instances
+                WHERE customer_id = %s
+                ORDER BY
+                    CASE status
+                        WHEN 'open' THEN 0
+                        WHEN 'acknowledged' THEN 1
+                        WHEN 'snoozed' THEN 2
+                        WHEN 'resolved' THEN 3
+                        WHEN 'cleared' THEN 4
+                        ELSE 5
+                    END,
+                    CASE severity
+                        WHEN 'critical' THEN 0
+                        WHEN 'warning' THEN 1
+                        ELSE 2
+                    END,
+                    id DESC
+                LIMIT 200
+                """,
+                (int(customer_id),),
+            )
+            alerts = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    MAX(service_date) AS latest_service_date
+                FROM chemistry_readings
+                WHERE customer_id = %s
+                """,
+                (int(customer_id),),
+            )
+            chemistry_summary = cur.fetchone()
+
+    return {
+        "ok": True,
+        "item": dict(customer),
+        "pools": pools,
+        "alerts": alerts,
+        "latest_chemistry_service_date": chemistry_summary["latest_service_date"] if chemistry_summary else None,
+    }
+
+
+def list_alert_rule_configs() -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            payload: Dict[str, List[Dict[str, Any]]] = {}
+            for table_name in ("alert_rule_config", "trend_rule_config", "revenue_rule_config"):
+                cur.execute(f"SELECT * FROM {table_name} ORDER BY rule_code")
+                payload[table_name] = [dict(row) for row in cur.fetchall()]
+    return {"ok": True, "items": payload}
 
 
 def update_alert_instance_status(

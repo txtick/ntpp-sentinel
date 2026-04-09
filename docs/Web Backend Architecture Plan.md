@@ -17,6 +17,27 @@ The next phase is:
 - expose stable APIs for a separate web frontend
 - support configurable tracking and alert lifecycle without re-ingesting history
 
+## Status
+
+This plan is now partially implemented.
+
+Implemented:
+
+- dedicated `web-backend` service boundary
+- backend-owned dashboard schema/bootstrap module
+- backend-owned alert tracking tables
+- backend refresh job
+- backend refresh diagnostics endpoints
+- alert detail / ack / resolve APIs
+- ingest-worker -> web-backend refresh hook after successful normalization
+
+Still pending:
+
+- separate `web-frontend` service
+- alert config write APIs/UI
+- reminder workflows
+- broader customer/technician/reminder API surface
+
 ## Target Runtime
 
 Target containers:
