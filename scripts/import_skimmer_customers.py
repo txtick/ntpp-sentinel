@@ -841,6 +841,7 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
 def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
     started_at = time.perf_counter()
     ensure_pg_schema()
+    normalized_tables = [str(t).strip().lower() for t in tables if str(t).strip()]
     sqlite_conn = open_skimmer_sqlite(sqlite_path)
     with pg() as pg_conn:
         run_id = insert_import_run(pg_conn, os.path.basename(sqlite_path), sqlite_path)
@@ -848,23 +849,23 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
         success = True
         error_message = None
         try:
-            if "customers" in tables:
+            if "customers" in normalized_tables:
                 imported, identity_count = import_customers(sqlite_conn, pg_conn, source_system=source_system)
                 counts["customers_imported"] = imported
                 counts["identity_records"] = identity_count
-            if "pools" in tables:
+            if "pools" in normalized_tables:
                 counts["pools_imported"] = import_pools(pg_conn, sqlite_conn, source_system=source_system)
-            if "locations" in tables:
+            if "locations" in normalized_tables:
                 counts["service_locations_imported"] = import_service_locations(pg_conn, sqlite_conn, source_system=source_system)
-            if "accounts" in tables:
+            if "accounts" in normalized_tables:
                 counts["accounts_imported"] = import_accounts(pg_conn, sqlite_conn, source_system=source_system)
-            if "route_assignments" in tables:
+            if "route_assignments" in normalized_tables:
                 counts["route_assignments_imported"] = import_route_assignments(pg_conn, sqlite_conn, source_system=source_system)
-            if "route_stops" in tables:
+            if "route_stops" in normalized_tables:
                 counts["route_stops_imported"] = import_route_stops(pg_conn, sqlite_conn, source_system=source_system)
-            if "entry_descriptions" in tables:
+            if "entry_descriptions" in normalized_tables:
                 counts["entry_descriptions_imported"] = import_entry_descriptions(pg_conn, sqlite_conn, source_system=source_system)
-            if "service_stop_entries" in tables:
+            if "service_stop_entries" in normalized_tables:
                 counts["service_stop_entries_imported"] = import_service_stop_entries(pg_conn, sqlite_conn, source_system=source_system)
             pg_conn.commit()
         except Exception as exc:
@@ -877,7 +878,7 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
             pg_conn.commit()
     sqlite_conn.close()
     log(
-        f"import complete tables={','.join(tables)} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
+        f"import complete tables={','.join(normalized_tables)} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
     )
     counts["import_run_id"] = run_id
     return counts
