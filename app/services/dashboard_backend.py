@@ -1130,37 +1130,63 @@ def list_technicians(
         params.extend([pattern, pattern])
 
     base_cte = """
-    WITH tech_rows AS (
+    WITH assignment_rollup AS (
         SELECT
-            COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) AS tech_id,
-            btrim(
-                concat_ws(
-                    ' ',
-                    COALESCE(NULLIF(elem->>'techFirstName', ''), NULLIF(elem->>'TechFirstName', '')),
-                    COALESCE(NULLIF(elem->>'techLastName', ''), NULLIF(elem->>'TechLastName', ''))
-                )
-            ) AS tech_name,
-            sl.id AS service_location_id,
-            sl.source_location_id,
-            sl.source_customer_id,
-            c.id AS customer_id,
-            c.is_operationally_active
-        FROM sk_service_location sl
-        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl.route_assignments, '[]'::jsonb)) AS elem
-        LEFT JOIN customers c
-          ON c.source_system = sl.source_system
-         AND c.source_customer_id = sl.source_customer_id
-        WHERE COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) IS NOT NULL
+            a.technician_id,
+            COUNT(DISTINCT a.source_service_location_id) FILTER (
+                WHERE a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+            ) AS service_location_count,
+            COUNT(DISTINCT a.customer_id) FILTER (
+                WHERE a.customer_id IS NOT NULL
+                  AND a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+            ) AS customer_count,
+            COUNT(DISTINCT a.customer_id) FILTER (
+                WHERE a.customer_id IS NOT NULL
+                  AND a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                  AND c.is_operationally_active = TRUE
+            ) AS active_customer_count
+        FROM service_location_technician_assignments a
+        LEFT JOIN customers c ON c.id = a.customer_id
+        GROUP BY a.technician_id
+    ),
+    route_stop_rollup AS (
+        SELECT
+            s.technician_id,
+            MAX(s.service_date) FILTER (WHERE s.is_skipped = FALSE) AS latest_service_date,
+            COUNT(*) FILTER (
+                WHERE s.is_skipped = FALSE
+                  AND s.service_date >= NOW() - INTERVAL '30 days'
+            ) AS route_stop_count_30d
+        FROM technician_route_stops s
+        GROUP BY s.technician_id
     ),
     grouped AS (
         SELECT
-            tech_id,
-            COALESCE(NULLIF(MAX(tech_name), ''), tech_id) AS tech_name,
-            COUNT(DISTINCT service_location_id) AS service_location_count,
-            COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL) AS customer_count,
-            COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL AND is_operationally_active = TRUE) AS active_customer_count
-        FROM tech_rows
-        GROUP BY tech_id
+            t.id AS technician_id,
+            t.source_account_id AS tech_id,
+            COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
+            t.first_name,
+            t.last_name,
+            t.username,
+            t.role_type,
+            t.is_active,
+            COALESCE(ar.service_location_count, 0) AS service_location_count,
+            COALESCE(ar.customer_count, 0) AS customer_count,
+            COALESCE(ar.active_customer_count, 0) AS active_customer_count,
+            rs.latest_service_date,
+            COALESCE(rs.route_stop_count_30d, 0) AS route_stop_count_30d
+        FROM technicians t
+        LEFT JOIN assignment_rollup ar ON ar.technician_id = t.id
+        LEFT JOIN route_stop_rollup rs ON rs.technician_id = t.id
+        WHERE t.source_system = 'skimmer'
+          AND (
+              COALESCE(t.role_type, '') = 'Tech'
+              OR COALESCE(ar.service_location_count, 0) > 0
+              OR COALESCE(rs.route_stop_count_30d, 0) > 0
+          )
     )
     """
 
@@ -1183,9 +1209,16 @@ def list_technicians(
                 SELECT
                     tech_id,
                     tech_name,
+                    first_name,
+                    last_name,
+                    username,
+                    role_type,
+                    is_active,
                     service_location_count,
                     customer_count,
-                    active_customer_count
+                    active_customer_count,
+                    latest_service_date,
+                    route_stop_count_30d
                 FROM grouped
                 {search_sql}
                 ORDER BY tech_name ASC, tech_id ASC
@@ -1201,7 +1234,7 @@ def list_technicians(
         "limit": safe_limit,
         "offset": safe_offset,
         "items": items,
-        "source": "sk_service_location.route_assignments",
+        "source": "technicians + service_location_technician_assignments",
     }
 
 
@@ -1211,52 +1244,62 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
     if not tech_id_value:
         raise HTTPException(status_code=400, detail="tech_id is required")
 
-    base_cte = """
-    WITH tech_rows AS (
-        SELECT
-            COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) AS tech_id,
-            btrim(
-                concat_ws(
-                    ' ',
-                    COALESCE(NULLIF(elem->>'techFirstName', ''), NULLIF(elem->>'TechFirstName', '')),
-                    COALESCE(NULLIF(elem->>'techLastName', ''), NULLIF(elem->>'TechLastName', ''))
-                )
-            ) AS tech_name,
-            sl.id AS service_location_id,
-            sl.source_location_id,
-            sl.address,
-            sl.city,
-            sl.state,
-            sl.zip,
-            sl.source_customer_id,
-            c.id AS customer_id,
-            c.first_name,
-            c.last_name,
-            c.company_name,
-            c.customer_status,
-            c.is_operationally_active
-        FROM sk_service_location sl
-        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl.route_assignments, '[]'::jsonb)) AS elem
-        LEFT JOIN customers c
-          ON c.source_system = sl.source_system
-         AND c.source_customer_id = sl.source_customer_id
-        WHERE COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) = %s
-    )
-    """
-
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                base_cte
-                + """
+                """
                 SELECT
-                    tech_id,
-                    COALESCE(NULLIF(MAX(tech_name), ''), tech_id) AS tech_name,
-                    COUNT(DISTINCT service_location_id) AS service_location_count,
-                    COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL) AS customer_count,
-                    COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL AND is_operationally_active = TRUE) AS active_customer_count
-                FROM tech_rows
-                GROUP BY tech_id
+                    t.id AS technician_id,
+                    t.source_account_id AS tech_id,
+                    COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
+                    t.first_name,
+                    t.last_name,
+                    t.username,
+                    t.email,
+                    t.mobile_phone,
+                    t.role_type,
+                    t.is_active,
+                    COALESCE(assignment_rollup.service_location_count, 0) AS service_location_count,
+                    COALESCE(assignment_rollup.customer_count, 0) AS customer_count,
+                    COALESCE(assignment_rollup.active_customer_count, 0) AS active_customer_count,
+                    route_stop_rollup.latest_service_date,
+                    COALESCE(route_stop_rollup.route_stop_count_30d, 0) AS route_stop_count_30d
+                FROM technicians t
+                LEFT JOIN (
+                    SELECT
+                        a.technician_id,
+                        COUNT(DISTINCT a.source_service_location_id) FILTER (
+                            WHERE a.is_deleted = FALSE
+                              AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                        ) AS service_location_count,
+                        COUNT(DISTINCT a.customer_id) FILTER (
+                            WHERE a.customer_id IS NOT NULL
+                              AND a.is_deleted = FALSE
+                              AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                        ) AS customer_count,
+                        COUNT(DISTINCT a.customer_id) FILTER (
+                            WHERE a.customer_id IS NOT NULL
+                              AND a.is_deleted = FALSE
+                              AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                              AND c.is_operationally_active = TRUE
+                        ) AS active_customer_count
+                    FROM service_location_technician_assignments a
+                    LEFT JOIN customers c ON c.id = a.customer_id
+                    GROUP BY a.technician_id
+                ) AS assignment_rollup ON assignment_rollup.technician_id = t.id
+                LEFT JOIN (
+                    SELECT
+                        s.technician_id,
+                        MAX(s.service_date) FILTER (WHERE s.is_skipped = FALSE) AS latest_service_date,
+                        COUNT(*) FILTER (
+                            WHERE s.is_skipped = FALSE
+                              AND s.service_date >= NOW() - INTERVAL '30 days'
+                        ) AS route_stop_count_30d
+                    FROM technician_route_stops s
+                    GROUP BY s.technician_id
+                ) AS route_stop_rollup ON route_stop_rollup.technician_id = t.id
+                WHERE t.source_system = 'skimmer'
+                  AND t.source_account_id = %s
                 """,
                 (tech_id_value,),
             )
@@ -1265,20 +1308,25 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                 raise HTTPException(status_code=404, detail="Technician not found")
 
             cur.execute(
-                base_cte
-                + """
+                """
                 SELECT DISTINCT
-                    customer_id,
-                    source_customer_id,
+                    a.customer_id,
+                    a.source_customer_id,
                     COALESCE(
-                        NULLIF(trim(concat_ws(' ', first_name, last_name)), ''),
-                        NULLIF(company_name, ''),
-                        source_customer_id
+                        NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(c.company_name, ''),
+                        a.source_customer_id
                     ) AS customer_name,
-                    customer_status,
-                    is_operationally_active
-                FROM tech_rows
-                WHERE customer_id IS NOT NULL
+                    c.customer_status,
+                    c.is_operationally_active
+                FROM service_location_technician_assignments a
+                LEFT JOIN customers c ON c.id = a.customer_id
+                JOIN technicians t ON t.id = a.technician_id
+                WHERE t.source_system = 'skimmer'
+                  AND t.source_account_id = %s
+                  AND a.customer_id IS NOT NULL
+                  AND a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
                 ORDER BY customer_name ASC
                 LIMIT 200
                 """,
@@ -1287,30 +1335,76 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
             customers = [dict(row) for row in cur.fetchall()]
 
             cur.execute(
-                base_cte
-                + """
+                """
                 SELECT DISTINCT
-                    service_location_id,
-                    source_location_id,
-                    address,
-                    city,
-                    state,
-                    zip,
-                    source_customer_id
-                FROM tech_rows
-                ORDER BY city ASC, address ASC, service_location_id ASC
+                    a.sk_service_location_id AS service_location_id,
+                    a.source_service_location_id AS source_location_id,
+                    sl.address,
+                    sl.city,
+                    sl.state,
+                    sl.zip,
+                    a.source_customer_id,
+                    a.day_of_week,
+                    a.frequency,
+                    a.start_date,
+                    a.end_date,
+                    a.sequence,
+                    a.status
+                FROM service_location_technician_assignments a
+                LEFT JOIN sk_service_location sl
+                  ON sl.source_system = a.source_system
+                 AND sl.source_location_id = a.source_service_location_id
+                JOIN technicians t ON t.id = a.technician_id
+                WHERE t.source_system = 'skimmer'
+                  AND t.source_account_id = %s
+                  AND a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                ORDER BY sl.city ASC, sl.address ASC, a.sk_service_location_id ASC
                 LIMIT 200
                 """,
                 (tech_id_value,),
             )
             service_locations = [dict(row) for row in cur.fetchall()]
 
+            cur.execute(
+                """
+                SELECT
+                    s.service_date,
+                    s.is_skipped,
+                    s.sequence,
+                    s.minutes_at_stop,
+                    s.source_service_location_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(c.company_name, ''),
+                        s.source_customer_id
+                    ) AS customer_name,
+                    sl.address,
+                    sl.city,
+                    sl.state,
+                    sl.zip
+                FROM technician_route_stops s
+                JOIN technicians t ON t.id = s.technician_id
+                LEFT JOIN customers c ON c.id = s.customer_id
+                LEFT JOIN sk_service_location sl
+                  ON sl.source_system = s.source_system
+                 AND sl.source_location_id = s.source_service_location_id
+                WHERE t.source_system = 'skimmer'
+                  AND t.source_account_id = %s
+                ORDER BY s.service_date DESC, s.sequence ASC NULLS LAST
+                LIMIT 50
+                """,
+                (tech_id_value,),
+            )
+            recent_route_stops = [dict(row) for row in cur.fetchall()]
+
     return {
         "ok": True,
         "item": dict(item),
         "customers": customers,
         "service_locations": service_locations,
-        "source": "sk_service_location.route_assignments",
+        "recent_route_stops": recent_route_stops,
+        "source": "technicians + service_location_technician_assignments",
     }
 
 

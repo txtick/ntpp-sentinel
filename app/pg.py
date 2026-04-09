@@ -173,6 +173,112 @@ def ensure_pg_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS sk_account (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_account_id TEXT NOT NULL,
+                    username TEXT,
+                    email TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    role_type TEXT,
+                    is_active BOOLEAN,
+                    mobile_phone TEXT,
+                    address TEXT,
+                    city TEXT,
+                    state TEXT,
+                    zip TEXT,
+                    company_id TEXT,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_account_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_route_assignment (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_route_assignment_id TEXT NOT NULL,
+                    source_service_location_id TEXT,
+                    source_account_id TEXT,
+                    day_of_week TEXT,
+                    frequency TEXT,
+                    start_date TIMESTAMPTZ,
+                    end_date TIMESTAMPTZ,
+                    sequence INTEGER,
+                    company_id TEXT,
+                    status TEXT,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_route_assignment_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_route_assignment_location
+                ON sk_route_assignment(source_system, source_service_location_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_route_assignment_account
+                ON sk_route_assignment(source_system, source_account_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_route_stop (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_route_stop_id TEXT NOT NULL,
+                    source_account_id TEXT,
+                    source_service_location_id TEXT,
+                    source_route_assignment_id TEXT,
+                    service_date TIMESTAMPTZ,
+                    start_time TIMESTAMPTZ,
+                    complete_time TIMESTAMPTZ,
+                    is_skipped BOOLEAN NOT NULL DEFAULT FALSE,
+                    skipped_stop_reason_id TEXT,
+                    is_off_biweekly BOOLEAN NOT NULL DEFAULT FALSE,
+                    sequence INTEGER,
+                    minutes_at_stop INTEGER,
+                    source_route_move_id TEXT,
+                    email_status TEXT,
+                    email_sent_date TIMESTAMPTZ,
+                    company_id TEXT,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_route_stop_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_route_stop_service_date
+                ON sk_route_stop(source_system, service_date DESC)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_route_stop_account
+                ON sk_route_stop(source_system, source_account_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_route_stop_location
+                ON sk_route_stop(source_system, source_service_location_id)
+                """
+            )
+            cur.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_sk_pool_source_service_location
                 ON sk_pool(source_system, source_service_location_id)
                 """

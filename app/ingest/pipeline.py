@@ -63,6 +63,45 @@ REQUIRED_TABLE_COLUMNS: Dict[str, List[str]] = {
         "RecurringWorkItems",
         "CompanyId",
     ],
+    "Account": [
+        "id",
+        "Username",
+        "Email",
+        "FirstName",
+        "LastName",
+        "RoleType",
+        "IsActive",
+        "MobilePhone",
+        "Address",
+        "City",
+        "State",
+        "Zip",
+        "CompanyId",
+    ],
+    "RouteAssignment": [
+        "id",
+        "ServiceLocationId",
+        "AccountId",
+        "DayOfWeek",
+        "Frequency",
+        "StartDate",
+        "EndDate",
+        "Sequence",
+        "CompanyId",
+    ],
+    "RouteStop": [
+        "id",
+        "AccountId",
+        "ServiceLocationId",
+        "RouteAssignmentId",
+        "ServiceDate",
+        "StartTime",
+        "CompleteTime",
+        "IsSkipped",
+        "Sequence",
+        "MinutesAtStop",
+        "CompanyId",
+    ],
     "EntryDescription": [
         "id",
         "Description",
@@ -103,6 +142,9 @@ IMPORT_TABLES = [
     "Customer",
     "ServiceLocation",
     "Pool",
+    "Account",
+    "RouteAssignment",
+    "RouteStop",
     "EntryDescription",
     "ServiceStopEntry",
 ]
@@ -726,6 +768,125 @@ def ensure_operational_schema() -> None:
                 """
             )
 
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS technicians (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_account_id TEXT NOT NULL,
+                    sk_account_id BIGINT REFERENCES sk_account(id) ON DELETE SET NULL,
+                    username TEXT,
+                    email TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    role_type TEXT,
+                    is_active BOOLEAN NOT NULL DEFAULT FALSE,
+                    mobile_phone TEXT,
+                    address TEXT,
+                    city TEXT,
+                    state TEXT,
+                    zip TEXT,
+                    company_id TEXT,
+                    last_seen_import_run_id BIGINT REFERENCES skimmer_import_runs(id) ON DELETE SET NULL,
+                    last_seen_pipeline_run_id BIGINT REFERENCES ingest_pipeline_runs(id) ON DELETE SET NULL,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_account_id),
+                    UNIQUE (sk_account_id)
+                )
+                """
+            )
+            cur.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS last_seen_import_run_id BIGINT")
+            cur.execute("ALTER TABLE technicians ADD COLUMN IF NOT EXISTS last_seen_pipeline_run_id BIGINT")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_technicians_role_active
+                ON technicians(source_system, role_type, is_active)
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS service_location_technician_assignments (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_route_assignment_id TEXT NOT NULL,
+                    sk_route_assignment_id BIGINT REFERENCES sk_route_assignment(id) ON DELETE SET NULL,
+                    technician_id BIGINT REFERENCES technicians(id) ON DELETE CASCADE,
+                    source_account_id TEXT,
+                    customer_id BIGINT REFERENCES customers(id) ON DELETE CASCADE,
+                    source_customer_id TEXT,
+                    source_service_location_id TEXT,
+                    sk_service_location_id BIGINT REFERENCES sk_service_location(id) ON DELETE SET NULL,
+                    day_of_week TEXT,
+                    frequency TEXT,
+                    start_date TIMESTAMPTZ,
+                    end_date TIMESTAMPTZ,
+                    sequence INTEGER,
+                    status TEXT,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    company_id TEXT,
+                    last_seen_import_run_id BIGINT REFERENCES skimmer_import_runs(id) ON DELETE SET NULL,
+                    last_seen_pipeline_run_id BIGINT REFERENCES ingest_pipeline_runs(id) ON DELETE SET NULL,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_route_assignment_id),
+                    UNIQUE (sk_route_assignment_id)
+                )
+                """
+            )
+            cur.execute("ALTER TABLE service_location_technician_assignments ADD COLUMN IF NOT EXISTS last_seen_import_run_id BIGINT")
+            cur.execute("ALTER TABLE service_location_technician_assignments ADD COLUMN IF NOT EXISTS last_seen_pipeline_run_id BIGINT")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_service_location_technician_assignments_tech
+                ON service_location_technician_assignments(source_system, technician_id)
+                """
+            )
+
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS technician_route_stops (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_route_stop_id TEXT NOT NULL,
+                    sk_route_stop_id BIGINT REFERENCES sk_route_stop(id) ON DELETE SET NULL,
+                    technician_id BIGINT REFERENCES technicians(id) ON DELETE CASCADE,
+                    source_account_id TEXT,
+                    customer_id BIGINT REFERENCES customers(id) ON DELETE CASCADE,
+                    source_customer_id TEXT,
+                    source_service_location_id TEXT,
+                    sk_service_location_id BIGINT REFERENCES sk_service_location(id) ON DELETE SET NULL,
+                    source_route_assignment_id TEXT,
+                    service_date TIMESTAMPTZ NOT NULL,
+                    start_time TIMESTAMPTZ,
+                    complete_time TIMESTAMPTZ,
+                    is_skipped BOOLEAN NOT NULL DEFAULT FALSE,
+                    sequence INTEGER,
+                    minutes_at_stop INTEGER,
+                    source_route_move_id TEXT,
+                    company_id TEXT,
+                    last_seen_import_run_id BIGINT REFERENCES skimmer_import_runs(id) ON DELETE SET NULL,
+                    last_seen_pipeline_run_id BIGINT REFERENCES ingest_pipeline_runs(id) ON DELETE SET NULL,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_route_stop_id),
+                    UNIQUE (sk_route_stop_id)
+                )
+                """
+            )
+            cur.execute("ALTER TABLE technician_route_stops ADD COLUMN IF NOT EXISTS last_seen_import_run_id BIGINT")
+            cur.execute("ALTER TABLE technician_route_stops ADD COLUMN IF NOT EXISTS last_seen_pipeline_run_id BIGINT")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_technician_route_stops_tech_date
+                ON technician_route_stops(source_system, technician_id, service_date DESC)
+                """
+            )
+
             if not INGEST_OWNS_DASHBOARD_SCHEMA:
                 conn.commit()
                 return
@@ -1346,6 +1507,427 @@ def _upsert_chemical_dose_events(
         return int(row["count"] if row else 0)
 
 
+def _upsert_technicians(conn, source_system: str, import_run_id: Optional[int], pipeline_run_id: int) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH scoped AS (
+                SELECT
+                    a.source_system,
+                    a.source_account_id,
+                    a.id AS sk_account_id,
+                    a.username,
+                    a.email,
+                    a.first_name,
+                    a.last_name,
+                    a.role_type,
+                    COALESCE(a.is_active, FALSE) AS is_active,
+                    a.mobile_phone,
+                    a.address,
+                    a.city,
+                    a.state,
+                    a.zip,
+                    a.company_id,
+                    a.raw_json
+                FROM sk_account a
+                WHERE a.source_system = %s
+            ),
+            upserted AS (
+                INSERT INTO technicians (
+                    source_system,
+                    source_account_id,
+                    sk_account_id,
+                    username,
+                    email,
+                    first_name,
+                    last_name,
+                    role_type,
+                    is_active,
+                    mobile_phone,
+                    address,
+                    city,
+                    state,
+                    zip,
+                    company_id,
+                    last_seen_import_run_id,
+                    last_seen_pipeline_run_id,
+                    raw_json,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    source_system,
+                    source_account_id,
+                    sk_account_id,
+                    username,
+                    email,
+                    first_name,
+                    last_name,
+                    role_type,
+                    is_active,
+                    mobile_phone,
+                    address,
+                    city,
+                    state,
+                    zip,
+                    company_id,
+                    %s,
+                    %s,
+                    raw_json,
+                    NOW(),
+                    NOW()
+                FROM scoped
+                ON CONFLICT (source_system, source_account_id) DO UPDATE
+                SET
+                    sk_account_id = EXCLUDED.sk_account_id,
+                    username = EXCLUDED.username,
+                    email = EXCLUDED.email,
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    role_type = EXCLUDED.role_type,
+                    is_active = EXCLUDED.is_active,
+                    mobile_phone = EXCLUDED.mobile_phone,
+                    address = EXCLUDED.address,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    zip = EXCLUDED.zip,
+                    company_id = EXCLUDED.company_id,
+                    last_seen_import_run_id = EXCLUDED.last_seen_import_run_id,
+                    last_seen_pipeline_run_id = EXCLUDED.last_seen_pipeline_run_id,
+                    raw_json = EXCLUDED.raw_json,
+                    updated_at = NOW()
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS count FROM upserted
+            """,
+            (source_system, import_run_id, pipeline_run_id),
+        )
+        row = cur.fetchone()
+        return int(row["count"] if row else 0)
+
+
+def _prune_technicians(conn, source_system: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH doomed AS (
+                SELECT t.id
+                FROM technicians t
+                LEFT JOIN sk_account a
+                  ON a.source_system = t.source_system
+                 AND a.source_account_id = t.source_account_id
+                WHERE t.source_system = %s
+                  AND a.id IS NULL
+            ),
+            deleted AS (
+                DELETE FROM technicians t
+                USING doomed d
+                WHERE t.id = d.id
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS count FROM deleted
+            """,
+            (source_system,),
+        )
+        row = cur.fetchone()
+        return int(row["count"] if row else 0)
+
+
+def _upsert_service_location_technician_assignments(
+    conn, source_system: str, import_run_id: Optional[int], pipeline_run_id: int
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH scoped AS (
+                SELECT
+                    ra.source_system,
+                    ra.source_route_assignment_id,
+                    ra.id AS sk_route_assignment_id,
+                    t.id AS technician_id,
+                    ra.source_account_id,
+                    c.id AS customer_id,
+                    sl.source_customer_id,
+                    ra.source_service_location_id,
+                    sl.id AS sk_service_location_id,
+                    ra.day_of_week,
+                    ra.frequency,
+                    ra.start_date,
+                    ra.end_date,
+                    ra.sequence,
+                    ra.status,
+                    COALESCE(ra.is_deleted, FALSE) AS is_deleted,
+                    ra.company_id,
+                    ra.raw_json
+                FROM sk_route_assignment ra
+                LEFT JOIN technicians t
+                  ON t.source_system = ra.source_system
+                 AND t.source_account_id = ra.source_account_id
+                LEFT JOIN sk_service_location sl
+                  ON sl.source_system = ra.source_system
+                 AND sl.source_location_id = ra.source_service_location_id
+                LEFT JOIN customers c
+                  ON c.source_system = sl.source_system
+                 AND c.source_customer_id = sl.source_customer_id
+                WHERE ra.source_system = %s
+            ),
+            upserted AS (
+                INSERT INTO service_location_technician_assignments (
+                    source_system,
+                    source_route_assignment_id,
+                    sk_route_assignment_id,
+                    technician_id,
+                    source_account_id,
+                    customer_id,
+                    source_customer_id,
+                    source_service_location_id,
+                    sk_service_location_id,
+                    day_of_week,
+                    frequency,
+                    start_date,
+                    end_date,
+                    sequence,
+                    status,
+                    is_deleted,
+                    company_id,
+                    last_seen_import_run_id,
+                    last_seen_pipeline_run_id,
+                    raw_json,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    source_system,
+                    source_route_assignment_id,
+                    sk_route_assignment_id,
+                    technician_id,
+                    source_account_id,
+                    customer_id,
+                    source_customer_id,
+                    source_service_location_id,
+                    sk_service_location_id,
+                    day_of_week,
+                    frequency,
+                    start_date,
+                    end_date,
+                    sequence,
+                    status,
+                    is_deleted,
+                    company_id,
+                    %s,
+                    %s,
+                    raw_json,
+                    NOW(),
+                    NOW()
+                FROM scoped
+                ON CONFLICT (source_system, source_route_assignment_id) DO UPDATE
+                SET
+                    sk_route_assignment_id = EXCLUDED.sk_route_assignment_id,
+                    technician_id = EXCLUDED.technician_id,
+                    source_account_id = EXCLUDED.source_account_id,
+                    customer_id = EXCLUDED.customer_id,
+                    source_customer_id = EXCLUDED.source_customer_id,
+                    source_service_location_id = EXCLUDED.source_service_location_id,
+                    sk_service_location_id = EXCLUDED.sk_service_location_id,
+                    day_of_week = EXCLUDED.day_of_week,
+                    frequency = EXCLUDED.frequency,
+                    start_date = EXCLUDED.start_date,
+                    end_date = EXCLUDED.end_date,
+                    sequence = EXCLUDED.sequence,
+                    status = EXCLUDED.status,
+                    is_deleted = EXCLUDED.is_deleted,
+                    company_id = EXCLUDED.company_id,
+                    last_seen_import_run_id = EXCLUDED.last_seen_import_run_id,
+                    last_seen_pipeline_run_id = EXCLUDED.last_seen_pipeline_run_id,
+                    raw_json = EXCLUDED.raw_json,
+                    updated_at = NOW()
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS count FROM upserted
+            """,
+            (source_system, import_run_id, pipeline_run_id),
+        )
+        row = cur.fetchone()
+        return int(row["count"] if row else 0)
+
+
+def _prune_service_location_technician_assignments(conn, source_system: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH doomed AS (
+                SELECT a.id
+                FROM service_location_technician_assignments a
+                LEFT JOIN sk_route_assignment ra
+                  ON ra.source_system = a.source_system
+                 AND ra.source_route_assignment_id = a.source_route_assignment_id
+                WHERE a.source_system = %s
+                  AND ra.id IS NULL
+            ),
+            deleted AS (
+                DELETE FROM service_location_technician_assignments a
+                USING doomed d
+                WHERE a.id = d.id
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS count FROM deleted
+            """,
+            (source_system,),
+        )
+        row = cur.fetchone()
+        return int(row["count"] if row else 0)
+
+
+def _upsert_technician_route_stops(
+    conn, source_system: str, import_run_id: Optional[int], pipeline_run_id: int
+) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH scoped AS (
+                SELECT
+                    rs.source_system,
+                    rs.source_route_stop_id,
+                    rs.id AS sk_route_stop_id,
+                    t.id AS technician_id,
+                    rs.source_account_id,
+                    c.id AS customer_id,
+                    sl.source_customer_id,
+                    rs.source_service_location_id,
+                    sl.id AS sk_service_location_id,
+                    rs.source_route_assignment_id,
+                    rs.service_date,
+                    rs.start_time,
+                    rs.complete_time,
+                    COALESCE(rs.is_skipped, FALSE) AS is_skipped,
+                    rs.sequence,
+                    rs.minutes_at_stop,
+                    rs.source_route_move_id,
+                    rs.company_id,
+                    rs.raw_json
+                FROM sk_route_stop rs
+                LEFT JOIN technicians t
+                  ON t.source_system = rs.source_system
+                 AND t.source_account_id = rs.source_account_id
+                LEFT JOIN sk_service_location sl
+                  ON sl.source_system = rs.source_system
+                 AND sl.source_location_id = rs.source_service_location_id
+                LEFT JOIN customers c
+                  ON c.source_system = sl.source_system
+                 AND c.source_customer_id = sl.source_customer_id
+                WHERE rs.source_system = %s
+                  AND rs.service_date IS NOT NULL
+            ),
+            upserted AS (
+                INSERT INTO technician_route_stops (
+                    source_system,
+                    source_route_stop_id,
+                    sk_route_stop_id,
+                    technician_id,
+                    source_account_id,
+                    customer_id,
+                    source_customer_id,
+                    source_service_location_id,
+                    sk_service_location_id,
+                    source_route_assignment_id,
+                    service_date,
+                    start_time,
+                    complete_time,
+                    is_skipped,
+                    sequence,
+                    minutes_at_stop,
+                    source_route_move_id,
+                    company_id,
+                    last_seen_import_run_id,
+                    last_seen_pipeline_run_id,
+                    raw_json,
+                    created_at,
+                    updated_at
+                )
+                SELECT
+                    source_system,
+                    source_route_stop_id,
+                    sk_route_stop_id,
+                    technician_id,
+                    source_account_id,
+                    customer_id,
+                    source_customer_id,
+                    source_service_location_id,
+                    sk_service_location_id,
+                    source_route_assignment_id,
+                    service_date,
+                    start_time,
+                    complete_time,
+                    is_skipped,
+                    sequence,
+                    minutes_at_stop,
+                    source_route_move_id,
+                    company_id,
+                    %s,
+                    %s,
+                    raw_json,
+                    NOW(),
+                    NOW()
+                FROM scoped
+                ON CONFLICT (source_system, source_route_stop_id) DO UPDATE
+                SET
+                    sk_route_stop_id = EXCLUDED.sk_route_stop_id,
+                    technician_id = EXCLUDED.technician_id,
+                    source_account_id = EXCLUDED.source_account_id,
+                    customer_id = EXCLUDED.customer_id,
+                    source_customer_id = EXCLUDED.source_customer_id,
+                    source_service_location_id = EXCLUDED.source_service_location_id,
+                    sk_service_location_id = EXCLUDED.sk_service_location_id,
+                    source_route_assignment_id = EXCLUDED.source_route_assignment_id,
+                    service_date = EXCLUDED.service_date,
+                    start_time = EXCLUDED.start_time,
+                    complete_time = EXCLUDED.complete_time,
+                    is_skipped = EXCLUDED.is_skipped,
+                    sequence = EXCLUDED.sequence,
+                    minutes_at_stop = EXCLUDED.minutes_at_stop,
+                    source_route_move_id = EXCLUDED.source_route_move_id,
+                    company_id = EXCLUDED.company_id,
+                    last_seen_import_run_id = EXCLUDED.last_seen_import_run_id,
+                    last_seen_pipeline_run_id = EXCLUDED.last_seen_pipeline_run_id,
+                    raw_json = EXCLUDED.raw_json,
+                    updated_at = NOW()
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS count FROM upserted
+            """,
+            (source_system, import_run_id, pipeline_run_id),
+        )
+        row = cur.fetchone()
+        return int(row["count"] if row else 0)
+
+
+def _prune_technician_route_stops(conn, source_system: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH doomed AS (
+                SELECT s.id
+                FROM technician_route_stops s
+                LEFT JOIN sk_route_stop rs
+                  ON rs.source_system = s.source_system
+                 AND rs.source_route_stop_id = s.source_route_stop_id
+                WHERE s.source_system = %s
+                  AND rs.id IS NULL
+            ),
+            deleted AS (
+                DELETE FROM technician_route_stops s
+                USING doomed d
+                WHERE s.id = d.id
+                RETURNING 1
+            )
+            SELECT COUNT(*) AS count FROM deleted
+            """,
+            (source_system,),
+        )
+        row = cur.fetchone()
+        return int(row["count"] if row else 0)
+
+
 def _prune_chemical_dose_events(conn, source_system: str) -> int:
     with conn.cursor() as cur:
         cur.execute(
@@ -1386,6 +1968,14 @@ def _refresh_operational_tables(
         customer_prunes = _prune_customers(conn, source_system)
         pool_upserts = _upsert_pools(conn, source_system, import_run_id, pipeline_run_id)
         pool_prunes = _prune_pools(conn, source_system)
+        technician_upserts = _upsert_technicians(conn, source_system, import_run_id, pipeline_run_id)
+        technician_prunes = _prune_technicians(conn, source_system)
+        assignment_upserts = _upsert_service_location_technician_assignments(
+            conn, source_system, import_run_id, pipeline_run_id
+        )
+        assignment_prunes = _prune_service_location_technician_assignments(conn, source_system)
+        route_stop_upserts = _upsert_technician_route_stops(conn, source_system, import_run_id, pipeline_run_id)
+        route_stop_prunes = _prune_technician_route_stops(conn, source_system)
         chemistry_upserts = _upsert_chemistry_readings(conn, source_system, import_run_id, pipeline_run_id)
         chemistry_prunes = _prune_chemistry_readings(conn, source_system)
         dose_upserts = _upsert_chemical_dose_events(conn, source_system, import_run_id, pipeline_run_id)
@@ -1397,6 +1987,12 @@ def _refresh_operational_tables(
         "customers_pruned": customer_prunes,
         "pools_upserted": pool_upserts,
         "pools_pruned": pool_prunes,
+        "technicians_upserted": technician_upserts,
+        "technicians_pruned": technician_prunes,
+        "service_location_technician_assignments_upserted": assignment_upserts,
+        "service_location_technician_assignments_pruned": assignment_prunes,
+        "technician_route_stops_upserted": route_stop_upserts,
+        "technician_route_stops_pruned": route_stop_prunes,
         "chemistry_readings_upserted": chemistry_upserts,
         "chemistry_readings_pruned": chemistry_prunes,
         "chemical_dose_events_upserted": dose_upserts,

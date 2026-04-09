@@ -10,9 +10,9 @@ from datetime import datetime
 # Support being called directly (cron/subprocess) or imported from within the app.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
-    from pg import pg
+    from pg import ensure_pg_schema, pg
 except ImportError:
-    from app.pg import pg
+    from app.pg import ensure_pg_schema, pg
 
 
 def open_skimmer_sqlite(path: str) -> sqlite3.Connection:
@@ -336,6 +336,119 @@ SERVICE_LOCATION_UPSERT_SQL = """
 """
 
 
+ACCOUNT_UPSERT_SQL = """
+    INSERT INTO sk_account (
+        source_system,
+        source_account_id,
+        username,
+        email,
+        first_name,
+        last_name,
+        role_type,
+        is_active,
+        mobile_phone,
+        address,
+        city,
+        state,
+        zip,
+        company_id,
+        raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_account_id)
+    DO UPDATE SET
+        username = EXCLUDED.username,
+        email = EXCLUDED.email,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        role_type = EXCLUDED.role_type,
+        is_active = EXCLUDED.is_active,
+        mobile_phone = EXCLUDED.mobile_phone,
+        address = EXCLUDED.address,
+        city = EXCLUDED.city,
+        state = EXCLUDED.state,
+        zip = EXCLUDED.zip,
+        company_id = EXCLUDED.company_id,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
+ROUTE_ASSIGNMENT_UPSERT_SQL = """
+    INSERT INTO sk_route_assignment (
+        source_system,
+        source_route_assignment_id,
+        source_service_location_id,
+        source_account_id,
+        day_of_week,
+        frequency,
+        start_date,
+        end_date,
+        sequence,
+        company_id,
+        status,
+        is_deleted,
+        raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_route_assignment_id)
+    DO UPDATE SET
+        source_service_location_id = EXCLUDED.source_service_location_id,
+        source_account_id = EXCLUDED.source_account_id,
+        day_of_week = EXCLUDED.day_of_week,
+        frequency = EXCLUDED.frequency,
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date,
+        sequence = EXCLUDED.sequence,
+        company_id = EXCLUDED.company_id,
+        status = EXCLUDED.status,
+        is_deleted = EXCLUDED.is_deleted,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
+ROUTE_STOP_UPSERT_SQL = """
+    INSERT INTO sk_route_stop (
+        source_system,
+        source_route_stop_id,
+        source_account_id,
+        source_service_location_id,
+        source_route_assignment_id,
+        service_date,
+        start_time,
+        complete_time,
+        is_skipped,
+        skipped_stop_reason_id,
+        is_off_biweekly,
+        sequence,
+        minutes_at_stop,
+        source_route_move_id,
+        email_status,
+        email_sent_date,
+        company_id,
+        raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_route_stop_id)
+    DO UPDATE SET
+        source_account_id = EXCLUDED.source_account_id,
+        source_service_location_id = EXCLUDED.source_service_location_id,
+        source_route_assignment_id = EXCLUDED.source_route_assignment_id,
+        service_date = EXCLUDED.service_date,
+        start_time = EXCLUDED.start_time,
+        complete_time = EXCLUDED.complete_time,
+        is_skipped = EXCLUDED.is_skipped,
+        skipped_stop_reason_id = EXCLUDED.skipped_stop_reason_id,
+        is_off_biweekly = EXCLUDED.is_off_biweekly,
+        sequence = EXCLUDED.sequence,
+        minutes_at_stop = EXCLUDED.minutes_at_stop,
+        source_route_move_id = EXCLUDED.source_route_move_id,
+        email_status = EXCLUDED.email_status,
+        email_sent_date = EXCLUDED.email_sent_date,
+        company_id = EXCLUDED.company_id,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
 _IMPORT_CHUNK_SIZE = max(1, int(os.getenv("SKIMMER_IMPORT_CHUNK_SIZE", "500")))
 
 
@@ -396,6 +509,67 @@ def _service_location_params(row, source_system="skimmer"):
         row_get(row, "RouteMoves"),
         row_get(row, "WorkOrderModels"),
         row_get(row, "RecurringWorkItems"),
+        row_get(row, "CompanyId"),
+        row_json(row),
+    )
+
+
+def _account_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "Username"),
+        row_get(row, "Email"),
+        row_get(row, "FirstName"),
+        row_get(row, "LastName"),
+        row_get(row, "RoleType"),
+        bool(row_get(row, "IsActive")),
+        row_get(row, "MobilePhone"),
+        row_get(row, "Address"),
+        row_get(row, "City"),
+        row_get(row, "State"),
+        row_get(row, "Zip"),
+        row_get(row, "CompanyId"),
+        row_json(row),
+    )
+
+
+def _route_assignment_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "ServiceLocationId"),
+        row_get(row, "AccountId"),
+        row_get(row, "DayOfWeek"),
+        row_get(row, "Frequency"),
+        row_get(row, "StartDate"),
+        row_get(row, "EndDate"),
+        row_get(row, "Sequence"),
+        row_get(row, "CompanyId"),
+        row_get(row, "Status"),
+        bool(row_get(row, "Deleted")),
+        row_json(row),
+    )
+
+
+def _route_stop_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "AccountId"),
+        row_get(row, "ServiceLocationId"),
+        row_get(row, "RouteAssignmentId"),
+        row_get(row, "ServiceDate"),
+        row_get(row, "StartTime"),
+        row_get(row, "CompleteTime"),
+        bool(row_get(row, "IsSkipped")),
+        row_get(row, "SkippedStopReasonId"),
+        bool(row_get(row, "IsOffBiweekly")),
+        row_get(row, "Sequence"),
+        row_get(row, "MinutesAtStop"),
+        row_get(row, "RouteMoveId"),
+        row_get(row, "EmailStatus"),
+        row_get(row, "EmailSentDate"),
         row_get(row, "CompanyId"),
         row_json(row),
     )
@@ -516,6 +690,79 @@ def import_entry_descriptions(pg_conn, sqlite_conn, source_system="skimmer"):
     return imported
 
 
+def import_accounts(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        "SELECT id, Username, Email, FirstName, LastName, RoleType, IsActive, MobilePhone, Address, City, State, Zip, CompanyId FROM Account",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            ACCOUNT_UPSERT_SQL,
+            [_account_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(
+            f"accounts chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}"
+        )
+    log(f"accounts imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}")
+    return imported
+
+
+def import_route_assignments(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        "SELECT id, ServiceLocationId, AccountId, DayOfWeek, Frequency, StartDate, EndDate, Sequence, CompanyId, Status, Deleted FROM RouteAssignment",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            ROUTE_ASSIGNMENT_UPSERT_SQL,
+            [_route_assignment_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(
+            f"route_assignments chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}"
+        )
+    log(
+        f"route_assignments imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
+    )
+    return imported
+
+
+def import_route_stops(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        "SELECT id, AccountId, ServiceLocationId, RouteAssignmentId, ServiceDate, StartTime, CompleteTime, IsSkipped, SkippedStopReasonId, IsOffBiweekly, Sequence, MinutesAtStop, RouteMoveId, EmailStatus, EmailSentDate, CompanyId FROM RouteStop",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            ROUTE_STOP_UPSERT_SQL,
+            [_route_stop_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(
+            f"route_stops chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}"
+        )
+    log(
+        f"route_stops imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
+    )
+    return imported
+
+
 def import_service_stop_entries(pg_conn, sqlite_conn, source_system="skimmer"):
     imported = 0
     started_at = time.perf_counter()
@@ -593,6 +840,7 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
 
 def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
     started_at = time.perf_counter()
+    ensure_pg_schema()
     sqlite_conn = open_skimmer_sqlite(sqlite_path)
     with pg() as pg_conn:
         run_id = insert_import_run(pg_conn, os.path.basename(sqlite_path), sqlite_path)
@@ -608,6 +856,12 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
                 counts["pools_imported"] = import_pools(pg_conn, sqlite_conn, source_system=source_system)
             if "locations" in tables:
                 counts["service_locations_imported"] = import_service_locations(pg_conn, sqlite_conn, source_system=source_system)
+            if "accounts" in tables:
+                counts["accounts_imported"] = import_accounts(pg_conn, sqlite_conn, source_system=source_system)
+            if "route_assignments" in tables:
+                counts["route_assignments_imported"] = import_route_assignments(pg_conn, sqlite_conn, source_system=source_system)
+            if "route_stops" in tables:
+                counts["route_stops_imported"] = import_route_stops(pg_conn, sqlite_conn, source_system=source_system)
             if "entry_descriptions" in tables:
                 counts["entry_descriptions_imported"] = import_entry_descriptions(pg_conn, sqlite_conn, source_system=source_system)
             if "service_stop_entries" in tables:
@@ -635,7 +889,7 @@ def parse_args():
     parser.add_argument(
         "--tables",
         default="customers",
-        help="Comma-separated tables to import: customers,pools,locations,entry_descriptions,service_stop_entries,all",
+        help="Comma-separated tables to import: customers,pools,locations,accounts,route_assignments,route_stops,entry_descriptions,service_stop_entries,all",
     )
     parser.add_argument("--source-system", default="skimmer", help="Source system identifier.")
     return parser.parse_args()
@@ -654,7 +908,16 @@ def main():
     if not tables:
         tables = ["customers"]
     if "all" in tables:
-        tables = ["customers", "pools", "locations", "entry_descriptions", "service_stop_entries"]
+        tables = [
+            "customers",
+            "locations",
+            "pools",
+            "accounts",
+            "route_assignments",
+            "route_stops",
+            "entry_descriptions",
+            "service_stop_entries",
+        ]
 
     counts = import_skimmer_data(args.sqlite, tables, source_system=args.source_system)
     print(f"Imported {counts} from {args.sqlite}")
