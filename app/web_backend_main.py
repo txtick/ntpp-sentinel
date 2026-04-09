@@ -7,12 +7,14 @@ from services.dashboard_backend import (
     get_alert_instance,
     get_customer_detail,
     get_refresh_run,
+    get_technician_detail,
     get_postgres_health,
     ensure_web_backend_schema,
     list_alert_events,
     list_alert_instances,
     list_alert_rule_configs,
     list_customers,
+    list_technicians,
     list_refresh_runs,
     refresh_alert_instances,
     update_alert_instance_status,
@@ -78,6 +80,20 @@ def api_customers(
 @app.get("/api/customers/{customer_id}")
 def api_customer_detail(customer_id: int):
     return get_customer_detail(customer_id)
+
+
+@app.get("/api/technicians")
+def api_technicians(search: str = "", limit: int = 100, offset: int = 0):
+    return list_technicians(
+        search=search or None,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/technicians/{tech_id}")
+def api_technician_detail(tech_id: str):
+    return get_technician_detail(tech_id)
 
 
 @app.get("/api/alerts")

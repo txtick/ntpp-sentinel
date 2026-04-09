@@ -1106,6 +1106,214 @@ def list_alert_rule_configs() -> Dict[str, Any]:
     return {"ok": True, "items": payload}
 
 
+def list_technicians(
+    *,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    safe_limit = max(1, min(int(limit), 500))
+    safe_offset = max(0, int(offset))
+    params: List[Any] = []
+    search_sql = ""
+
+    search_value = (search or "").strip()
+    if search_value:
+        search_sql = """
+        WHERE (
+            tech_id ILIKE %s
+            OR tech_name ILIKE %s
+        )
+        """
+        pattern = f"%{search_value}%"
+        params.extend([pattern, pattern])
+
+    base_cte = """
+    WITH tech_rows AS (
+        SELECT
+            COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) AS tech_id,
+            btrim(
+                concat_ws(
+                    ' ',
+                    COALESCE(NULLIF(elem->>'techFirstName', ''), NULLIF(elem->>'TechFirstName', '')),
+                    COALESCE(NULLIF(elem->>'techLastName', ''), NULLIF(elem->>'TechLastName', ''))
+                )
+            ) AS tech_name,
+            sl.id AS service_location_id,
+            sl.source_location_id,
+            sl.source_customer_id,
+            c.id AS customer_id,
+            c.is_operationally_active
+        FROM sk_service_location sl
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl.route_assignments, '[]'::jsonb)) AS elem
+        LEFT JOIN customers c
+          ON c.source_system = sl.source_system
+         AND c.source_customer_id = sl.source_customer_id
+        WHERE COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) IS NOT NULL
+    ),
+    grouped AS (
+        SELECT
+            tech_id,
+            COALESCE(NULLIF(MAX(tech_name), ''), tech_id) AS tech_name,
+            COUNT(DISTINCT service_location_id) AS service_location_count,
+            COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL) AS customer_count,
+            COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL AND is_operationally_active = TRUE) AS active_customer_count
+        FROM tech_rows
+        GROUP BY tech_id
+    )
+    """
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                base_cte
+                + f"""
+                SELECT COUNT(*) AS total
+                FROM grouped
+                {search_sql}
+                """,
+                params,
+            )
+            total = int(cur.fetchone()["total"])
+
+            cur.execute(
+                base_cte
+                + f"""
+                SELECT
+                    tech_id,
+                    tech_name,
+                    service_location_count,
+                    customer_count,
+                    active_customer_count
+                FROM grouped
+                {search_sql}
+                ORDER BY tech_name ASC, tech_id ASC
+                LIMIT %s OFFSET %s
+                """,
+                params + [safe_limit, safe_offset],
+            )
+            items = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "ok": True,
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
+        "source": "sk_service_location.route_assignments",
+    }
+
+
+def get_technician_detail(tech_id: str) -> Dict[str, Any]:
+    require_postgres_configured()
+    tech_id_value = str(tech_id).strip()
+    if not tech_id_value:
+        raise HTTPException(status_code=400, detail="tech_id is required")
+
+    base_cte = """
+    WITH tech_rows AS (
+        SELECT
+            COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) AS tech_id,
+            btrim(
+                concat_ws(
+                    ' ',
+                    COALESCE(NULLIF(elem->>'techFirstName', ''), NULLIF(elem->>'TechFirstName', '')),
+                    COALESCE(NULLIF(elem->>'techLastName', ''), NULLIF(elem->>'TechLastName', ''))
+                )
+            ) AS tech_name,
+            sl.id AS service_location_id,
+            sl.source_location_id,
+            sl.address,
+            sl.city,
+            sl.state,
+            sl.zip,
+            sl.source_customer_id,
+            c.id AS customer_id,
+            c.first_name,
+            c.last_name,
+            c.company_name,
+            c.customer_status,
+            c.is_operationally_active
+        FROM sk_service_location sl
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl.route_assignments, '[]'::jsonb)) AS elem
+        LEFT JOIN customers c
+          ON c.source_system = sl.source_system
+         AND c.source_customer_id = sl.source_customer_id
+        WHERE COALESCE(NULLIF(elem->>'techId', ''), NULLIF(elem->>'TechId', '')) = %s
+    )
+    """
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                base_cte
+                + """
+                SELECT
+                    tech_id,
+                    COALESCE(NULLIF(MAX(tech_name), ''), tech_id) AS tech_name,
+                    COUNT(DISTINCT service_location_id) AS service_location_count,
+                    COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL) AS customer_count,
+                    COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL AND is_operationally_active = TRUE) AS active_customer_count
+                FROM tech_rows
+                GROUP BY tech_id
+                """,
+                (tech_id_value,),
+            )
+            item = cur.fetchone()
+            if not item:
+                raise HTTPException(status_code=404, detail="Technician not found")
+
+            cur.execute(
+                base_cte
+                + """
+                SELECT DISTINCT
+                    customer_id,
+                    source_customer_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', first_name, last_name)), ''),
+                        NULLIF(company_name, ''),
+                        source_customer_id
+                    ) AS customer_name,
+                    customer_status,
+                    is_operationally_active
+                FROM tech_rows
+                WHERE customer_id IS NOT NULL
+                ORDER BY customer_name ASC
+                LIMIT 200
+                """,
+                (tech_id_value,),
+            )
+            customers = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                base_cte
+                + """
+                SELECT DISTINCT
+                    service_location_id,
+                    source_location_id,
+                    address,
+                    city,
+                    state,
+                    zip,
+                    source_customer_id
+                FROM tech_rows
+                ORDER BY city ASC, address ASC, service_location_id ASC
+                LIMIT 200
+                """,
+                (tech_id_value,),
+            )
+            service_locations = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "ok": True,
+        "item": dict(item),
+        "customers": customers,
+        "service_locations": service_locations,
+        "source": "sk_service_location.route_assignments",
+    }
+
+
 def update_alert_instance_status(
     alert_id: int,
     *,
