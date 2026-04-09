@@ -4,10 +4,12 @@ from fastapi import FastAPI
 
 from services.dashboard_backend import (
     get_dashboard_summary,
+    get_alert_instance,
     get_postgres_health,
     ensure_web_backend_schema,
     list_alert_instances,
     refresh_alert_instances,
+    update_alert_instance_status,
 )
 
 app = FastAPI(
@@ -47,6 +49,31 @@ def api_alerts(status: str = "", category: str = "", limit: int = 100, offset: i
         category=category or None,
         limit=limit,
         offset=offset,
+    )
+
+
+@app.get("/api/alerts/{alert_id}")
+def api_alert_detail(alert_id: int):
+    return get_alert_instance(alert_id)
+
+
+@app.post("/api/alerts/{alert_id}/ack")
+def api_alert_ack(alert_id: int, actor: str = "api", note: str = ""):
+    return update_alert_instance_status(
+        alert_id,
+        next_status="acknowledged",
+        actor=actor,
+        note=note or None,
+    )
+
+
+@app.post("/api/alerts/{alert_id}/resolve")
+def api_alert_resolve(alert_id: int, actor: str = "api", note: str = ""):
+    return update_alert_instance_status(
+        alert_id,
+        next_status="resolved",
+        actor=actor,
+        note=note or None,
     )
 
 

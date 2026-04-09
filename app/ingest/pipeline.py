@@ -3,6 +3,8 @@ import json
 import os
 import sqlite3
 import time
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 from pg import ensure_pg_schema, pg
@@ -121,6 +123,15 @@ MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
 SKIP_DUPLICATE_SOURCE_SUCCESS = os.getenv(
     "INGEST_SKIP_DUPLICATE_SOURCE_SUCCESS", "1"
 ).lower() in ("1", "true", "yes", "on")
+WEB_BACKEND_BASE_URL = os.getenv("WEB_BACKEND_BASE_URL", "http://web-backend:8020").rstrip("/")
+WEB_BACKEND_REFRESH_ENABLED = os.getenv("WEB_BACKEND_REFRESH_ENABLED", "1").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+WEB_BACKEND_REFRESH_TIMEOUT_SECONDS = float(os.getenv("WEB_BACKEND_REFRESH_TIMEOUT_SECONDS", "30"))
+WEB_BACKEND_SECRET = os.getenv("WEB_BACKEND_SECRET", "").strip() or os.getenv("WEBHOOK_SECRET", "").strip()
 
 
 class PipelineValidationError(RuntimeError):
@@ -133,6 +144,50 @@ class PipelineBusyError(RuntimeError):
 
 def _log(msg: str) -> None:
     print(f"[ingest-worker] {msg}")
+
+
+def _trigger_web_backend_refresh(
+    *,
+    pipeline_run_id: int,
+    source_system: str,
+    trigger_reason: str,
+) -> Dict[str, Any]:
+    if not WEB_BACKEND_REFRESH_ENABLED:
+        return {"status": "skipped", "reason": "WEB_BACKEND_REFRESH_ENABLED is false"}
+    if not WEB_BACKEND_BASE_URL:
+        return {"status": "skipped", "reason": "WEB_BACKEND_BASE_URL is not configured"}
+
+    payload = json.dumps(
+        {
+            "trigger_reason": f"ingest_pipeline:{trigger_reason}",
+            "pipeline_run_id": pipeline_run_id,
+            "source_system": source_system,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{WEB_BACKEND_BASE_URL}/jobs/dashboard/refresh?trigger_reason=ingest_pipeline",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            **({"X-NTPP-Secret": WEB_BACKEND_SECRET} if WEB_BACKEND_SECRET else {}),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=WEB_BACKEND_REFRESH_TIMEOUT_SECONDS) as response:
+            body = response.read().decode("utf-8").strip()
+            if not body:
+                return {"status": "ok"}
+            try:
+                parsed = json.loads(body)
+                return parsed if isinstance(parsed, dict) else {"status": "ok", "body": body}
+            except Exception:
+                return {"status": "ok", "body": body}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {"status": "error", "code": exc.code, "detail": detail[:1000]}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)[:1000]}
 
 
 def _open_sqlite(path: str) -> sqlite3.Connection:
@@ -2016,6 +2071,11 @@ def run_pipeline(
             validation_summary=validation_summary,
             refresh_counts=refresh_counts,
         )
+        dashboard_refresh = _trigger_web_backend_refresh(
+            pipeline_run_id=pipeline_run_id,
+            source_system=source_system,
+            trigger_reason=trigger_reason,
+        )
         return {
             "status": "ok",
             "pipeline_run_id": pipeline_run_id,
@@ -2023,6 +2083,7 @@ def run_pipeline(
             "source_file_sha256": file_hash,
             "validation_summary": validation_summary,
             "refresh_counts": refresh_counts,
+            "dashboard_refresh": dashboard_refresh,
         }
     except Exception as exc:
         if pipeline_run_id is not None:

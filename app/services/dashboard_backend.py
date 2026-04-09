@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from pg import DATABASE_URL, ensure_pg_schema, pg, pg_healthcheck
 
 MANAGED_ALERT_CATEGORIES = ("pool", "process", "revenue")
+ACTIONABLE_ALERT_STATUSES = ("open", "acknowledged", "snoozed", "resolved", "cleared")
 
 
 def _json_dumps(value: Any) -> str:
@@ -16,6 +17,47 @@ def _view_exists(cur, view_name: str) -> bool:
     cur.execute("SELECT to_regclass(%s) AS exists_name", (f"public.{view_name}",))
     row = cur.fetchone()
     return bool(row and row.get("exists_name"))
+
+
+def _normalize_status(status: Optional[str]) -> Optional[str]:
+    if status is None:
+        return None
+    value = str(status).strip().lower()
+    return value or None
+
+
+def _fetch_alert_instance(cur, alert_id: int) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            id,
+            category,
+            rule_code,
+            entity_type,
+            entity_id,
+            customer_id,
+            pool_id,
+            status,
+            severity,
+            title,
+            summary,
+            first_detected_at,
+            last_detected_at,
+            last_evaluated_at,
+            cleared_at,
+            assigned_to,
+            acknowledged_at,
+            snoozed_until,
+            metadata_json,
+            created_at,
+            updated_at
+        FROM alert_instances
+        WHERE id = %s
+        """,
+        (alert_id,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
 
 
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
@@ -517,12 +559,17 @@ def list_alert_instances(
     filters: List[str] = []
     params: List[Any] = []
 
-    if status:
+    normalized_status = _normalize_status(status)
+    normalized_category = _normalize_status(category)
+
+    if normalized_status:
+        if normalized_status not in ACTIONABLE_ALERT_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Unsupported status '{normalized_status}'")
         filters.append("status = %s")
-        params.append(status)
-    if category:
+        params.append(normalized_status)
+    if normalized_category:
         filters.append("category = %s")
-        params.append(category)
+        params.append(normalized_category)
 
     where_sql = ""
     if filters:
@@ -593,3 +640,94 @@ def list_alert_instances(
         "offset": safe_offset,
         "items": rows,
     }
+
+
+def get_alert_instance(alert_id: int) -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            item = _fetch_alert_instance(cur, int(alert_id))
+            if not item:
+                raise HTTPException(status_code=404, detail="Alert not found")
+
+            cur.execute(
+                """
+                SELECT id, event_type, event_ts, actor, payload_json
+                FROM alert_instance_events
+                WHERE alert_instance_id = %s
+                ORDER BY event_ts DESC, id DESC
+                LIMIT 100
+                """,
+                (int(alert_id),),
+            )
+            events = [dict(row) for row in cur.fetchall()]
+
+    return {"ok": True, "item": item, "events": events}
+
+
+def update_alert_instance_status(
+    alert_id: int,
+    *,
+    next_status: str,
+    actor: str,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    normalized_status = _normalize_status(next_status)
+    if normalized_status not in ("acknowledged", "resolved"):
+        raise HTTPException(status_code=400, detail=f"Unsupported next status '{next_status}'")
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            item = _fetch_alert_instance(cur, int(alert_id))
+            if not item:
+                raise HTTPException(status_code=404, detail="Alert not found")
+
+            now_field_updates = []
+            params: List[Any] = []
+
+            if normalized_status == "acknowledged":
+                now_field_updates.append("status = %s")
+                params.append("acknowledged")
+                now_field_updates.append("acknowledged_at = COALESCE(acknowledged_at, NOW())")
+                now_field_updates.append("snoozed_until = NULL")
+                now_field_updates.append("updated_at = NOW()")
+                event_type = "acknowledged"
+            else:
+                now_field_updates.append("status = %s")
+                params.append("resolved")
+                now_field_updates.append("snoozed_until = NULL")
+                now_field_updates.append("updated_at = NOW()")
+                event_type = "resolved"
+
+            params.append(int(alert_id))
+            cur.execute(
+                f"""
+                UPDATE alert_instances
+                SET {", ".join(now_field_updates)}
+                WHERE id = %s
+                """,
+                params,
+            )
+
+            payload = {"status": normalized_status}
+            if note:
+                payload["note"] = str(note).strip()[:1000]
+            cur.execute(
+                """
+                INSERT INTO alert_instance_events (
+                    alert_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (int(alert_id), event_type, actor, _json_dumps(payload)),
+            )
+            conn.commit()
+
+            updated = _fetch_alert_instance(cur, int(alert_id))
+            if not updated:
+                raise HTTPException(status_code=404, detail="Alert not found after update")
+
+    return {"ok": True, "item": updated}
