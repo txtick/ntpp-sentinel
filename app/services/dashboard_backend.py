@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -87,6 +88,20 @@ def _metadata_source_refresh_id(item: Dict[str, Any]) -> Optional[int]:
         return int(raw) if raw is not None else None
     except Exception:
         return None
+
+
+def _ensure_backend_owned_dashboard_definitions() -> None:
+    previous = os.environ.get("INGEST_OWNS_DASHBOARD_SCHEMA")
+    os.environ["INGEST_OWNS_DASHBOARD_SCHEMA"] = "1"
+    try:
+        from ingest.pipeline import ensure_operational_schema
+
+        ensure_operational_schema()
+    finally:
+        if previous is None:
+            os.environ.pop("INGEST_OWNS_DASHBOARD_SCHEMA", None)
+        else:
+            os.environ["INGEST_OWNS_DASHBOARD_SCHEMA"] = previous
 
 
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
@@ -242,6 +257,7 @@ def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
 
 
 def ensure_web_backend_schema() -> None:
+    _ensure_backend_owned_dashboard_definitions()
     ensure_pg_schema()
     with pg() as conn:
         with conn.cursor() as cur:

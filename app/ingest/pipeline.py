@@ -123,6 +123,12 @@ MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
 SKIP_DUPLICATE_SOURCE_SUCCESS = os.getenv(
     "INGEST_SKIP_DUPLICATE_SOURCE_SUCCESS", "1"
 ).lower() in ("1", "true", "yes", "on")
+INGEST_OWNS_DASHBOARD_SCHEMA = os.getenv("INGEST_OWNS_DASHBOARD_SCHEMA", "0").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 WEB_BACKEND_BASE_URL = os.getenv("WEB_BACKEND_BASE_URL", "http://web-backend:8020").rstrip("/")
 WEB_BACKEND_REFRESH_ENABLED = os.getenv("WEB_BACKEND_REFRESH_ENABLED", "1").lower() in (
     "1",
@@ -718,6 +724,10 @@ def ensure_operational_schema() -> None:
                 ON chemical_dose_events(source_system, dosage_key)
                 """
             )
+
+            if not INGEST_OWNS_DASHBOARD_SCHEMA:
+                conn.commit()
+                return
 
             cur.execute(
                 """
