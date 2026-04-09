@@ -81,6 +81,14 @@ def _detection_evidence_ts(item: Dict[str, Any]) -> Optional[datetime]:
     return _parse_dt(item.get("service_date"))
 
 
+def _metadata_source_refresh_id(item: Dict[str, Any]) -> Optional[int]:
+    try:
+        raw = (item.get("metadata_json") or {}).get("refresh_run_id")
+        return int(raw) if raw is not None else None
+    except Exception:
+        return None
+
+
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
     customer_name = row.get("customer_name") or "Unknown Customer"
     pool_name = row.get("pool_name") or "No Pool"
@@ -410,6 +418,12 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                         else:
                             new_status = existing_status
 
+                        existing_item = _fetch_alert_instance(cur, int(existing["id"])) or {}
+                        previous_evidence_ts = _parse_dt((existing_item.get("metadata_json") or {}).get("service_date"))
+                        severity_changed = str(existing_item.get("severity") or "") != str(item["severity"])
+                        evidence_changed = evidence_ts != previous_evidence_ts
+                        status_reopened = existing_status == "cleared" or reopen_resolved
+
                         set_clauses = [
                             "customer_id = %s",
                             "pool_id = %s",
@@ -447,20 +461,43 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                             update_params + [existing["id"]],
                         )
                         updated_count += 1
-                        event_type = "reopened" if existing_status == "cleared" or reopen_resolved else "detected"
-                        if event_type == "reopened":
+                        if status_reopened:
                             reopened_count += 1
-                        cur.execute(
-                            """
-                            INSERT INTO alert_instance_events (
-                                alert_instance_id,
-                                event_type,
-                                actor,
-                                payload_json
-                            ) VALUES (%s, %s, %s, %s::jsonb)
-                            """,
-                            (existing["id"], event_type, "refresh", metadata_json),
-                        )
+                            cur.execute(
+                                """
+                                INSERT INTO alert_instance_events (
+                                    alert_instance_id,
+                                    event_type,
+                                    actor,
+                                    payload_json
+                                ) VALUES (%s, %s, %s, %s::jsonb)
+                                """,
+                                (existing["id"], "reopened", "refresh", metadata_json),
+                            )
+                        elif severity_changed:
+                            cur.execute(
+                                """
+                                INSERT INTO alert_instance_events (
+                                    alert_instance_id,
+                                    event_type,
+                                    actor,
+                                    payload_json
+                                ) VALUES (%s, 'severity_changed', %s, %s::jsonb)
+                                """,
+                                (existing["id"], "refresh", metadata_json),
+                            )
+                        elif evidence_changed:
+                            cur.execute(
+                                """
+                                INSERT INTO alert_instance_events (
+                                    alert_instance_id,
+                                    event_type,
+                                    actor,
+                                    payload_json
+                                ) VALUES (%s, 'detected', %s, %s::jsonb)
+                                """,
+                                (existing["id"], "refresh", metadata_json),
+                            )
                     else:
                         cur.execute(
                             """
@@ -790,6 +827,10 @@ def update_alert_instance_status(
             item = _fetch_alert_instance(cur, int(alert_id))
             if not item:
                 raise HTTPException(status_code=404, detail="Alert not found")
+
+            current_status = _normalize_status(item.get("status"))
+            if normalized_status == "acknowledged" and current_status == "resolved":
+                return {"ok": True, "item": item}
 
             now_field_updates = []
             params: List[Any] = []
