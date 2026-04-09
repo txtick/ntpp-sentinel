@@ -451,6 +451,27 @@ ROUTE_STOP_UPSERT_SQL = """
 
 _IMPORT_CHUNK_SIZE = max(1, int(os.getenv("SKIMMER_IMPORT_CHUNK_SIZE", "500")))
 
+TABLE_NAME_ALIASES = {
+    "customer": "customers",
+    "customers": "customers",
+    "pool": "pools",
+    "pools": "pools",
+    "location": "locations",
+    "locations": "locations",
+    "servicelocation": "locations",
+    "service_location": "locations",
+    "account": "accounts",
+    "accounts": "accounts",
+    "routeassignment": "route_assignments",
+    "route_assignments": "route_assignments",
+    "routestop": "route_stops",
+    "route_stops": "route_stops",
+    "entrydescription": "entry_descriptions",
+    "entry_descriptions": "entry_descriptions",
+    "servicestopentry": "service_stop_entries",
+    "service_stop_entries": "service_stop_entries",
+}
+
 
 def _iter_sqlite_rows(sqlite_conn, query: str):
     sqlite_cur = sqlite_conn.cursor()
@@ -841,7 +862,12 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
 def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
     started_at = time.perf_counter()
     ensure_pg_schema()
-    normalized_tables = [str(t).strip().lower() for t in tables if str(t).strip()]
+    normalized_tables = []
+    for raw_name in tables:
+        key = str(raw_name).strip().lower()
+        if not key:
+            continue
+        normalized_tables.append(TABLE_NAME_ALIASES.get(key, key))
     sqlite_conn = open_skimmer_sqlite(sqlite_path)
     with pg() as pg_conn:
         run_id = insert_import_run(pg_conn, os.path.basename(sqlite_path), sqlite_path)
