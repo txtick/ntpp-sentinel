@@ -83,9 +83,23 @@ def api_customer_detail(customer_id: int):
 
 
 @app.get("/api/technicians")
-def api_technicians(search: str = "", limit: int = 100, offset: int = 0):
+def api_technicians(
+    search: str = "",
+    active_only: int = 0,
+    with_current_assignments_only: int = 0,
+    with_recent_route_activity_only: int = 0,
+    field_only: int = 0,
+    role_type: str = "",
+    limit: int = 100,
+    offset: int = 0,
+):
     return list_technicians(
         search=search or None,
+        active_only=bool(active_only),
+        with_current_assignments_only=bool(with_current_assignments_only),
+        with_recent_route_activity_only=bool(with_recent_route_activity_only),
+        field_only=bool(field_only),
+        role_type=role_type or None,
         limit=limit,
         offset=offset,
     )

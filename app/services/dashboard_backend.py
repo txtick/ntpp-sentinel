@@ -1109,6 +1109,11 @@ def list_alert_rule_configs() -> Dict[str, Any]:
 def list_technicians(
     *,
     search: Optional[str] = None,
+    active_only: bool = False,
+    with_current_assignments_only: bool = False,
+    with_recent_route_activity_only: bool = False,
+    field_only: bool = False,
+    role_type: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -1116,18 +1121,39 @@ def list_technicians(
     safe_limit = max(1, min(int(limit), 500))
     safe_offset = max(0, int(offset))
     params: List[Any] = []
-    search_sql = ""
+    where_clauses: List[str] = []
 
     search_value = (search or "").strip()
     if search_value:
-        search_sql = """
-        WHERE (
+        where_clauses.append(
+            """(
             tech_id ILIKE %s
             OR tech_name ILIKE %s
+        )"""
         )
-        """
         pattern = f"%{search_value}%"
         params.extend([pattern, pattern])
+
+    normalized_role_type = (role_type or "").strip()
+    if normalized_role_type:
+        where_clauses.append("COALESCE(role_type, '') = %s")
+        params.append(normalized_role_type)
+
+    if active_only:
+        where_clauses.append("is_active = TRUE")
+
+    if with_current_assignments_only:
+        where_clauses.append("has_current_assignments = TRUE")
+
+    if with_recent_route_activity_only:
+        where_clauses.append("has_recent_route_activity = TRUE")
+
+    if field_only:
+        where_clauses.append("is_field_operator = TRUE")
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
 
     base_cte = """
     WITH assignment_rollup AS (
@@ -1177,7 +1203,14 @@ def list_technicians(
             COALESCE(ar.customer_count, 0) AS customer_count,
             COALESCE(ar.active_customer_count, 0) AS active_customer_count,
             rs.latest_service_date,
-            COALESCE(rs.route_stop_count_30d, 0) AS route_stop_count_30d
+            COALESCE(rs.route_stop_count_30d, 0) AS route_stop_count_30d,
+            (COALESCE(ar.service_location_count, 0) > 0) AS has_current_assignments,
+            (COALESCE(rs.route_stop_count_30d, 0) > 0) AS has_recent_route_activity,
+            (
+                COALESCE(t.role_type, '') = 'Tech'
+                OR COALESCE(ar.service_location_count, 0) > 0
+                OR COALESCE(rs.route_stop_count_30d, 0) > 0
+            ) AS is_field_operator
         FROM technicians t
         LEFT JOIN assignment_rollup ar ON ar.technician_id = t.id
         LEFT JOIN route_stop_rollup rs ON rs.technician_id = t.id
@@ -1197,7 +1230,7 @@ def list_technicians(
                 + f"""
                 SELECT COUNT(*) AS total
                 FROM grouped
-                {search_sql}
+                {where_sql}
                 """,
                 params,
             )
@@ -1218,9 +1251,12 @@ def list_technicians(
                     customer_count,
                     active_customer_count,
                     latest_service_date,
-                    route_stop_count_30d
+                    route_stop_count_30d,
+                    has_current_assignments,
+                    has_recent_route_activity,
+                    is_field_operator
                 FROM grouped
-                {search_sql}
+                {where_sql}
                 ORDER BY tech_name ASC, tech_id ASC
                 LIMIT %s OFFSET %s
                 """,
@@ -1228,12 +1264,35 @@ def list_technicians(
             )
             items = [dict(row) for row in cur.fetchall()]
 
+            cur.execute(
+                base_cte
+                + """
+                SELECT
+                    COUNT(*) AS total_visible,
+                    COUNT(*) FILTER (WHERE is_active = TRUE) AS active_count,
+                    COUNT(*) FILTER (WHERE has_current_assignments = TRUE) AS current_assignment_count,
+                    COUNT(*) FILTER (WHERE has_recent_route_activity = TRUE) AS recent_route_activity_count,
+                    COUNT(*) FILTER (WHERE is_field_operator = TRUE) AS field_operator_count
+                FROM grouped
+                """,
+            )
+            summary = dict(cur.fetchone())
+
     return {
         "ok": True,
         "total": total,
         "limit": safe_limit,
         "offset": safe_offset,
         "items": items,
+        "summary": summary,
+        "filters": {
+            "search": search_value or None,
+            "active_only": bool(active_only),
+            "with_current_assignments_only": bool(with_current_assignments_only),
+            "with_recent_route_activity_only": bool(with_recent_route_activity_only),
+            "field_only": bool(field_only),
+            "role_type": normalized_role_type or None,
+        },
         "source": "technicians + service_location_technician_assignments",
     }
 
@@ -1263,7 +1322,14 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                     COALESCE(assignment_rollup.customer_count, 0) AS customer_count,
                     COALESCE(assignment_rollup.active_customer_count, 0) AS active_customer_count,
                     route_stop_rollup.latest_service_date,
-                    COALESCE(route_stop_rollup.route_stop_count_30d, 0) AS route_stop_count_30d
+                    COALESCE(route_stop_rollup.route_stop_count_30d, 0) AS route_stop_count_30d,
+                    (COALESCE(assignment_rollup.service_location_count, 0) > 0) AS has_current_assignments,
+                    (COALESCE(route_stop_rollup.route_stop_count_30d, 0) > 0) AS has_recent_route_activity,
+                    (
+                        COALESCE(t.role_type, '') = 'Tech'
+                        OR COALESCE(assignment_rollup.service_location_count, 0) > 0
+                        OR COALESCE(route_stop_rollup.route_stop_count_30d, 0) > 0
+                    ) AS is_field_operator
                 FROM technicians t
                 LEFT JOIN (
                     SELECT
