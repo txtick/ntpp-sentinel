@@ -176,6 +176,31 @@ function currency(value) {
   }).format(number);
 }
 
+function formatMetricLabel(seriesItem) {
+  const raw = seriesItem.readingKey || seriesItem.description || "value";
+  return String(raw)
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatShortDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatAxisValue(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  if (Math.abs(number) >= 100) return number.toFixed(0);
+  if (Math.abs(number) >= 10) return number.toFixed(1);
+  return number.toFixed(2);
+}
+
 function formatAlertSummary(item) {
   const metadata = item.metadata_json || {};
   if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
@@ -743,33 +768,77 @@ async function loadCustomerDetail(customerId) {
   `;
 }
 
-function buildLineChart(points) {
+function buildLineChart(seriesItem) {
+  const points = seriesItem.points || [];
   if (!points.length) {
     return `<div class="empty-state">No chart data.</div>`;
   }
-  const width = 360;
-  const height = 150;
-  const padding = 16;
+  const width = 420;
+  const height = 220;
+  const margin = { top: 20, right: 18, bottom: 42, left: 54 };
   const values = points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
   if (!values.length) {
     return `<div class="empty-state">No numeric values to chart.</div>`;
   }
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const stepX = points.length === 1 ? width / 2 : (width - padding * 2) / (points.length - 1);
-  const path = points
-    .map((point, index) => {
-      const x = padding + stepX * index;
-      const y = height - padding - ((Number(point.value) - min) / span) * (height - padding * 2);
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+  const xMin = margin.left;
+  const xMax = width - margin.right;
+  const yMin = margin.top;
+  const yMax = height - margin.bottom;
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const span = rawMax - rawMin || Math.max(Math.abs(rawMax) * 0.1, 1);
+  const paddedMin = rawMin - span * 0.08;
+  const paddedMax = rawMax + span * 0.08;
+  const valueRange = paddedMax - paddedMin || 1;
+  const stepX = points.length === 1 ? 0 : (xMax - xMin) / (points.length - 1);
+  const yTicks = Array.from({ length: 5 }, (_, index) => paddedMin + (valueRange * (4 - index)) / 4);
+  const xTickIndexes = Array.from(new Set([
+    0,
+    Math.max(0, Math.floor((points.length - 1) / 2)),
+    Math.max(0, points.length - 1),
+  ])).sort((a, b) => a - b);
+
+  const xForIndex = (index) => (points.length === 1 ? (xMin + xMax) / 2 : xMin + stepX * index);
+  const yForValue = (value) => yMax - ((Number(value) - paddedMin) / valueRange) * (yMax - yMin);
+
+  const path = points.map((point, index) => {
+    const x = xForIndex(index);
+    const y = yForValue(point.value);
+    return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(" ");
+
+  const dots = points.map((point, index) => {
+    const x = xForIndex(index);
+    const y = yForValue(point.value);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" class="chart-dot">
+      <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value)} ${seriesItem.unitOfMeasure || ""}`.trim())}</title>
+    </circle>`;
+  }).join("");
+
+  const metricLabel = formatMetricLabel(seriesItem);
+  const unitLabel = seriesItem.unitOfMeasure ? ` (${seriesItem.unitOfMeasure})` : "";
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Chemistry trend chart">
-      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(24,34,45,0.12)" />
-      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(24,34,45,0.12)" />
+      ${yTicks.map((tick) => {
+        const y = yForValue(tick);
+        return `
+          <line x1="${xMin}" y1="${y.toFixed(1)}" x2="${xMax}" y2="${y.toFixed(1)}" class="chart-gridline" />
+          <text x="${xMin - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="chart-tick-label">${escapeHtml(formatAxisValue(tick))}</text>
+        `;
+      }).join("")}
+      ${xTickIndexes.map((index) => {
+        const x = xForIndex(index);
+        return `
+          <line x1="${x.toFixed(1)}" y1="${yMax}" x2="${x.toFixed(1)}" y2="${(yMax + 6).toFixed(1)}" class="chart-axis" />
+          <text x="${x.toFixed(1)}" y="${height - 14}" text-anchor="middle" class="chart-tick-label">${escapeHtml(formatShortDate(points[index]?.service_date))}</text>
+        `;
+      }).join("")}
+      <line x1="${xMin}" y1="${yMax}" x2="${xMax}" y2="${yMax}" class="chart-axis" />
+      <line x1="${xMin}" y1="${yMin}" x2="${xMin}" y2="${yMax}" class="chart-axis" />
+      <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(`${metricLabel}${unitLabel}`)}</text>
+      <text x="${(width / 2)}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
       <path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      ${dots}
     </svg>
   `;
 }
@@ -836,10 +905,10 @@ async function loadCustomerProfile() {
                 <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(seriesItem.readingKey || seriesItem.description || "metric")}</h4>
                 <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")} · ${escapeHtml(seriesItem.unitOfMeasure || "value")}</div>
               </div>
-              ${buildLineChart(seriesItem.points)}
+              ${buildLineChart(seriesItem)}
               <div class="chart-caption">
-                <span>Latest ${escapeHtml(String(latest?.value ?? "—"))}</span>
-                <span>Min ${escapeHtml(String(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(String(values.length ? Math.max(...values) : "—"))}</span>
+                <span>Latest ${escapeHtml(formatAxisValue(latest?.value))}${seriesItem.unitOfMeasure ? ` ${escapeHtml(seriesItem.unitOfMeasure)}` : ""}</span>
+                <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—"))}</span>
               </div>
             </article>
           `;

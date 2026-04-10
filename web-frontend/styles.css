@@ -302,11 +302,44 @@ textarea {
 
 .chart-svg {
   width: 100%;
-  height: 150px;
+  height: 220px;
   border-radius: var(--radius-sm);
   background:
     linear-gradient(180deg, rgba(31, 107, 114, 0.06), rgba(181, 81, 45, 0.02)),
     rgba(24, 34, 45, 0.03);
+}
+
+.chart-gridline {
+  stroke: rgba(24, 34, 45, 0.1);
+  stroke-dasharray: 4 4;
+}
+
+.chart-axis {
+  stroke: rgba(24, 34, 45, 0.24);
+  stroke-width: 1.2;
+}
+
+.chart-axis-label,
+.chart-tick-label {
+  fill: var(--muted);
+  font-family: var(--font-body);
+}
+
+.chart-axis-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chart-tick-label {
+  font-size: 10px;
+}
+
+.chart-dot {
+  fill: var(--accent);
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.5;
 }
 
 .chart-caption {
