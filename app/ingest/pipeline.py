@@ -181,6 +181,18 @@ WEB_BACKEND_REFRESH_ENABLED = os.getenv("WEB_BACKEND_REFRESH_ENABLED", "1").lowe
 )
 WEB_BACKEND_REFRESH_TIMEOUT_SECONDS = float(os.getenv("WEB_BACKEND_REFRESH_TIMEOUT_SECONDS", "30"))
 WEB_BACKEND_SECRET = os.getenv("WEB_BACKEND_SECRET", "").strip() or os.getenv("WEBHOOK_SECRET", "").strip()
+SENTINEL_BASE_URL = os.getenv("SENTINEL_BASE_URL", "http://sentinel:8000").rstrip("/")
+CUSTOMER_SYNC_AFTER_INGEST_ENABLED = os.getenv("CUSTOMER_SYNC_AFTER_INGEST_ENABLED", "1").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+CUSTOMER_SYNC_AFTER_INGEST_LIMIT = int(os.getenv("CUSTOMER_SYNC_AFTER_INGEST_LIMIT", "1000"))
+CUSTOMER_SYNC_AFTER_INGEST_TIMEOUT_SECONDS = float(
+    os.getenv("CUSTOMER_SYNC_AFTER_INGEST_TIMEOUT_SECONDS", "300")
+)
+CUSTOMER_SYNC_SECRET = os.getenv("CUSTOMER_SYNC_SECRET", "").strip() or os.getenv("WEBHOOK_SECRET", "").strip()
 
 
 class PipelineValidationError(RuntimeError):
@@ -224,6 +236,53 @@ def _trigger_web_backend_refresh(
     )
     try:
         with urllib.request.urlopen(request, timeout=WEB_BACKEND_REFRESH_TIMEOUT_SECONDS) as response:
+            body = response.read().decode("utf-8").strip()
+            if not body:
+                return {"status": "ok"}
+            try:
+                parsed = json.loads(body)
+                return parsed if isinstance(parsed, dict) else {"status": "ok", "body": body}
+            except Exception:
+                return {"status": "ok", "body": body}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        return {"status": "error", "code": exc.code, "detail": detail[:1000]}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)[:1000]}
+
+
+def _trigger_customer_sync_after_ingest(
+    *,
+    pipeline_run_id: int,
+    source_system: str,
+    trigger_reason: str,
+) -> Dict[str, Any]:
+    if not CUSTOMER_SYNC_AFTER_INGEST_ENABLED:
+        return {"status": "skipped", "reason": "CUSTOMER_SYNC_AFTER_INGEST_ENABLED is false"}
+    if not SENTINEL_BASE_URL:
+        return {"status": "skipped", "reason": "SENTINEL_BASE_URL is not configured"}
+
+    payload = json.dumps(
+        {
+            "trigger_reason": f"ingest_pipeline:{trigger_reason}",
+            "pipeline_run_id": pipeline_run_id,
+            "source_system": source_system,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        (
+            f"{SENTINEL_BASE_URL}/jobs/skimmer_customer_sync"
+            f"?dry_run=0&limit={max(1, CUSTOMER_SYNC_AFTER_INGEST_LIMIT)}"
+        ),
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            **({"X-NTPP-Secret": CUSTOMER_SYNC_SECRET} if CUSTOMER_SYNC_SECRET else {}),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=CUSTOMER_SYNC_AFTER_INGEST_TIMEOUT_SECONDS) as response:
             body = response.read().decode("utf-8").strip()
             if not body:
                 return {"status": "ok"}
@@ -2076,6 +2135,11 @@ def run_pipeline(
             source_system=source_system,
             trigger_reason=trigger_reason,
         )
+        customer_sync = _trigger_customer_sync_after_ingest(
+            pipeline_run_id=pipeline_run_id,
+            source_system=source_system,
+            trigger_reason=trigger_reason,
+        )
         return {
             "status": "ok",
             "pipeline_run_id": pipeline_run_id,
@@ -2084,6 +2148,7 @@ def run_pipeline(
             "validation_summary": validation_summary,
             "refresh_counts": refresh_counts,
             "dashboard_refresh": dashboard_refresh,
+            "customer_sync": customer_sync,
         }
     except Exception as exc:
         if pipeline_run_id is not None:
