@@ -226,6 +226,14 @@ def _build_metadata(category: str, row: Dict[str, Any], refresh_run_id: int) -> 
     return metadata
 
 
+def _build_pool_alert_metadata(cur, category: str, row: Dict[str, Any], refresh_run_id: int) -> Dict[str, Any]:
+    metadata = _build_metadata(category, row, refresh_run_id)
+    tech_context = _fetch_revenue_technician_context(cur, row.get("pool_id"))
+    if tech_context:
+        metadata.update(tech_context)
+    return metadata
+
+
 def _fetch_revenue_rule_context(cur, rule_code: Optional[str]) -> Dict[str, Any]:
     if not rule_code:
         return {}
@@ -446,7 +454,7 @@ def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
             item = dict(row)
             item["entity_type"] = "pool"
             item["entity_id"] = str(item["pool_id"])
-            item["metadata_json"] = _build_metadata("pool", item, refresh_run_id)
+            item["metadata_json"] = _build_pool_alert_metadata(cur, "pool", item, refresh_run_id)
             candidates.append(item)
 
     if _view_exists(cur, "chemistry_trend_alerts_v"):
@@ -477,7 +485,7 @@ def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
             item = dict(row)
             item["entity_type"] = "pool"
             item["entity_id"] = str(item["pool_id"])
-            item["metadata_json"] = _build_metadata("process", item, refresh_run_id)
+            item["metadata_json"] = _build_pool_alert_metadata(cur, "process", item, refresh_run_id)
             candidates.append(item)
 
     if _view_exists(cur, "revenue_opportunities_v"):
@@ -2422,12 +2430,43 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
             )
             recent_route_stops = [dict(row) for row in cur.fetchall()]
 
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(
+                        SUM(d.estimated_cost) FILTER (
+                            WHERE d.service_date >= date_trunc('month', CURRENT_DATE)
+                        ),
+                        0
+                    ) AS cost_month_to_date,
+                    COALESCE(
+                        SUM(d.estimated_cost) FILTER (
+                            WHERE d.service_date >= NOW() - INTERVAL '30 days'
+                        ),
+                        0
+                    ) AS cost_30d,
+                    COALESCE(SUM(d.estimated_cost), 0) AS lifetime_cost
+                FROM chemical_dose_events d
+                JOIN technician_route_stops s
+                  ON s.source_system = d.source_system
+                 AND s.source_service_location_id = d.source_service_location_id
+                 AND s.service_date::date = d.service_date::date
+                 AND s.is_skipped = FALSE
+                JOIN technicians t ON t.id = s.technician_id
+                WHERE t.source_system = 'skimmer'
+                  AND t.source_account_id = %s
+                """,
+                (tech_id_value,),
+            )
+            chemical_spend_summary = dict(cur.fetchone() or {})
+
     return {
         "ok": True,
         "item": dict(item),
         "customers": customers,
         "service_locations": service_locations,
         "recent_route_stops": recent_route_stops,
+        "chemical_spend_summary": chemical_spend_summary,
         "source": "technicians + service_location_technician_assignments",
     }
 

@@ -177,7 +177,20 @@ function currency(value) {
 }
 
 function formatMetricLabel(seriesItem) {
-  const raw = seriesItem.readingKey || seriesItem.description || "value";
+  const raw = String(seriesItem.readingKey || seriesItem.description || "value").toLowerCase();
+  const labels = {
+    ph: "pH",
+    total_chlorine: "Total Chlorine",
+    combined_chlorine: "Combined Chlorine",
+    cya: "CYA",
+    alkalinity: "Alkalinity",
+    calcium_hardness: "Calcium Hardness",
+    filter_pressure: "Filter Pressure",
+    salt: "Salt",
+    phosphates: "Phosphates",
+    temperature: "Temperature",
+  };
+  if (labels[raw]) return labels[raw];
   return String(raw)
     .replaceAll("_", " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
@@ -199,6 +212,23 @@ function formatAxisValue(value) {
   if (Math.abs(number) >= 100) return number.toFixed(0);
   if (Math.abs(number) >= 10) return number.toFixed(1);
   return number.toFixed(2);
+}
+
+function chemistrySeriesMeta(seriesItem) {
+  const readingKey = String(seriesItem.readingKey || "").toLowerCase();
+  return {
+    hide: readingKey === "free_chlorine",
+    unitLabel: "",
+  };
+}
+
+function alertReasonBadge(item) {
+  const metadata = item.metadata_json || {};
+  if (item.rule_code === "filter_clean_missing_psi") {
+    const windowDays = metadata.window_days || 90;
+    return badge(`No PSI in ${windowDays}d`, "info");
+  }
+  return "";
 }
 
 function formatAlertSummary(item) {
@@ -229,7 +259,7 @@ function formatAlertSubline(item) {
 }
 
 function badge(value, typeHint = "") {
-  const normalized = String(value || typeHint || "muted").toLowerCase().replace(/\s+/g, "-");
+  const normalized = String(typeHint || value || "muted").toLowerCase().replace(/\s+/g, "-");
   const klass = [
     "critical",
     "high",
@@ -551,7 +581,7 @@ function renderAlerts() {
                 <h4>${escapeHtml(item.title)}</h4>
                 <div class="muted">${escapeHtml(formatAlertSummary(item))}</div>
               </div>
-              <div class="meta-stack">${badge(item.severity)} ${badge(item.status)}</div>
+              <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)}</div>
             </div>
             <div class="meta-row">
               <span>${escapeHtml(formatAlertSubline(item))}</span>
@@ -592,7 +622,7 @@ function renderAlertDetail(detail) {
             <h3>${escapeHtml(item.title)}</h3>
             <p class="muted">${escapeHtml(formatAlertSummary(item))}</p>
           </div>
-          <div class="meta-stack">${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div>
+          <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div>
         </div>
         <div class="meta-stack">
           <div class="meta-row"><span>Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></div>
@@ -741,6 +771,14 @@ async function loadCustomerDetail(customerId) {
   const detail = await api(`/api/customers/${customerId}`);
   const item = detail.item;
   const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
+  const poolsSummary = detail.pools.length
+    ? detail.pools
+        .map((pool) => {
+          const location = [pool.city, pool.state].filter(Boolean).join(", ");
+          return `${pool.name || `Pool ${pool.id}`}${location ? ` · ${location}` : ""}`;
+        })
+        .join(" | ")
+    : "No pools on file.";
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -750,11 +788,9 @@ async function loadCustomerDetail(customerId) {
           <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
           <div class="meta-row"><span>Phone</span><strong>${escapeHtml(item.mobile_phone || item.phone || "—")}</strong></div>
           <div class="meta-row"><span>Latest Chemistry Service</span><strong>${formatDateTime(detail.latest_chemistry_service_date)}</strong></div>
+          <div class="meta-row"><span>Pools</span><strong>${escapeHtml(String(detail.pools.length || 0))}</strong></div>
         </div>
-      </section>
-      <section class="detail-card">
-        <h3>Pools</h3>
-        <div class="event-list">${detail.pools.map((pool) => `<div class="item-card"><strong>${escapeHtml(pool.name || `Pool ${pool.id}`)}</strong><div class="muted">${escapeHtml(pool.city || "")}${pool.city && pool.state ? ", " : ""}${escapeHtml(pool.state || "")}</div></div>`).join("") || `<div class="empty-state">No pools on file.</div>`}</div>
+        <p class="muted">${escapeHtml(poolsSummary)}</p>
       </section>
       <section class="detail-card">
         <h3>Alerts</h3>
@@ -811,12 +847,11 @@ function buildLineChart(seriesItem) {
     const x = xForIndex(index);
     const y = yForValue(point.value);
     return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" class="chart-dot">
-      <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value)} ${seriesItem.unitOfMeasure || ""}`.trim())}</title>
+      <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value)}`)}</title>
     </circle>`;
   }).join("");
 
   const metricLabel = formatMetricLabel(seriesItem);
-  const unitLabel = seriesItem.unitOfMeasure ? ` (${seriesItem.unitOfMeasure})` : "";
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Chemistry trend chart">
       ${yTicks.map((tick) => {
@@ -835,7 +870,7 @@ function buildLineChart(seriesItem) {
       }).join("")}
       <line x1="${xMin}" y1="${yMax}" x2="${xMax}" y2="${yMax}" class="chart-axis" />
       <line x1="${xMin}" y1="${yMin}" x2="${xMin}" y2="${yMax}" class="chart-axis" />
-      <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(`${metricLabel}${unitLabel}`)}</text>
+      <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(metricLabel)}</text>
       <text x="${(width / 2)}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
       <path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       ${dots}
@@ -846,6 +881,7 @@ function buildLineChart(seriesItem) {
 function groupChemistrySeries(rows) {
   const groups = new Map();
   rows.forEach((row) => {
+    if (String(row.reading_key || "").toLowerCase() === "free_chlorine") return;
     const key = `${row.pool_id}::${row.reading_key}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -897,17 +933,19 @@ async function loadCustomerProfile() {
       <h3>Chemistry Trend Charts</h3>
       <div class="chart-grid">
         ${series.length ? series.map((seriesItem) => {
+          const meta = chemistrySeriesMeta(seriesItem);
           const latest = seriesItem.points[seriesItem.points.length - 1];
           const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+          if (meta.hide) return "";
           return `
             <article class="chart-card">
               <div>
-                <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(seriesItem.readingKey || seriesItem.description || "metric")}</h4>
-                <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")} · ${escapeHtml(seriesItem.unitOfMeasure || "value")}</div>
+                <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(formatMetricLabel(seriesItem))}</h4>
+                <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")}</div>
               </div>
               ${buildLineChart(seriesItem)}
               <div class="chart-caption">
-                <span>Latest ${escapeHtml(formatAxisValue(latest?.value))}${seriesItem.unitOfMeasure ? ` ${escapeHtml(seriesItem.unitOfMeasure)}` : ""}</span>
+                <span>Latest ${escapeHtml(formatAxisValue(latest?.value))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
                 <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—"))}</span>
               </div>
             </article>
@@ -999,6 +1037,7 @@ function renderTechnicians() {
 async function loadTechnicianDetail(techId) {
   const detail = await api(`/api/technicians/${encodeURIComponent(techId)}`);
   const item = detail.item;
+  const spend = detail.chemical_spend_summary || {};
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -1008,6 +1047,8 @@ async function loadTechnicianDetail(techId) {
           <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
           <div class="meta-row"><span>Current Assignments</span><strong>${escapeHtml(item.service_location_count)}</strong></div>
           <div class="meta-row"><span>Recent Route Activity</span><strong>${escapeHtml(item.route_stop_count_30d)}</strong></div>
+          <div class="meta-row"><span>Spend This Month</span><strong>${escapeHtml(currency(spend.cost_month_to_date) || "$0.00")}</strong></div>
+          <div class="meta-row"><span>Spend Last 30 Days</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></div>
         </div>
       </section>
       <section class="detail-card">

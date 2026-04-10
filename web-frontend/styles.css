@@ -272,12 +272,10 @@ textarea {
 
 .panel-detail {
   align-self: stretch;
-  position: sticky;
-  top: 8px;
-  height: calc(100vh - 16px);
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  overflow-x: hidden;
+  position: static;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .stat-grid {

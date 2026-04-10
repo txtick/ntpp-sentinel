@@ -178,6 +178,20 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("psi_rise_8_60d", "filter_pressure", "baseline_or_window_delta", None, "critical", 20, None, None, None, 60, 8, 8, True, None, None, "PSI rising 8+"),
             ],
         )
+        cur.execute(
+            """
+            DELETE FROM alert_rule_config
+            WHERE rule_code IN ('fc_below_2', 'fc_below_1')
+               OR reading_key = 'free_chlorine'
+            """
+        )
+        cur.execute(
+            """
+            DELETE FROM trend_rule_config
+            WHERE rule_code IN ('fc_bad_3_of_5')
+               OR reading_key = 'free_chlorine'
+            """
+        )
         cur.executemany(
             """
             INSERT INTO revenue_rule_config (
