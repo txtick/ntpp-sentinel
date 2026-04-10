@@ -3,10 +3,12 @@ import os
 from fastapi import FastAPI, HTTPException, Request
 
 from services.dashboard_backend import (
+    create_alert_reminder,
     get_dashboard_summary,
     get_alert_instance,
     get_customer_detail,
     get_refresh_run,
+    get_reminder_detail,
     get_technician_detail,
     get_postgres_health,
     ensure_web_backend_schema,
@@ -14,10 +16,12 @@ from services.dashboard_backend import (
     list_alert_instances,
     list_alert_rule_configs,
     list_customers,
+    list_reminders,
     list_technicians,
     list_refresh_runs,
     refresh_alert_instances,
     update_alert_instance_status,
+    update_reminder_status,
 )
 
 app = FastAPI(
@@ -130,6 +134,27 @@ def api_alert_events(alert_id: int, limit: int = 100):
     return list_alert_events(alert_id, limit=limit)
 
 
+@app.post("/api/alerts/{alert_id}/reminder")
+def api_alert_create_reminder(
+    request: Request,
+    alert_id: int,
+    actor: str = "api",
+    due_at: str = "",
+    assigned_to: str = "",
+    title: str = "",
+    note: str = "",
+):
+    _auth_or_401(request)
+    return create_alert_reminder(
+        alert_id,
+        actor=actor,
+        due_at=due_at or None,
+        assigned_to=assigned_to or None,
+        title=title or None,
+        note=note or None,
+    )
+
+
 @app.post("/api/alerts/{alert_id}/ack")
 def api_alert_ack(request: Request, alert_id: int, actor: str = "api", note: str = ""):
     _auth_or_401(request)
@@ -171,3 +196,62 @@ def api_refresh_run_detail(refresh_run_id: int):
 @app.get("/api/config/alerts")
 def api_config_alerts():
     return list_alert_rule_configs()
+
+
+@app.get("/api/reminders")
+def api_reminders(
+    status: str = "",
+    assigned_to: str = "",
+    source_type: str = "",
+    overdue_only: int = 0,
+    search: str = "",
+    limit: int = 100,
+    offset: int = 0,
+):
+    return list_reminders(
+        status=status or None,
+        assigned_to=assigned_to or None,
+        source_type=source_type or None,
+        overdue_only=bool(overdue_only),
+        search=search or None,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/reminders/{reminder_id}")
+def api_reminder_detail(reminder_id: int):
+    return get_reminder_detail(reminder_id)
+
+
+@app.post("/api/reminders/{reminder_id}/ack")
+def api_reminder_ack(request: Request, reminder_id: int, actor: str = "api", note: str = ""):
+    _auth_or_401(request)
+    return update_reminder_status(
+        reminder_id,
+        next_status="acknowledged",
+        actor=actor,
+        note=note or None,
+    )
+
+
+@app.post("/api/reminders/{reminder_id}/complete")
+def api_reminder_complete(request: Request, reminder_id: int, actor: str = "api", note: str = ""):
+    _auth_or_401(request)
+    return update_reminder_status(
+        reminder_id,
+        next_status="completed",
+        actor=actor,
+        note=note or None,
+    )
+
+
+@app.post("/api/reminders/{reminder_id}/cancel")
+def api_reminder_cancel(request: Request, reminder_id: int, actor: str = "api", note: str = ""):
+    _auth_or_401(request)
+    return update_reminder_status(
+        reminder_id,
+        next_status="canceled",
+        actor=actor,
+        note=note or None,
+    )

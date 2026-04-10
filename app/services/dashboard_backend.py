@@ -67,6 +67,56 @@ def _fetch_alert_instance(cur, alert_id: int) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def _fetch_reminder_instance(cur, reminder_id: int) -> Optional[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT
+            r.id,
+            r.source_type,
+            r.source_alert_instance_id,
+            r.customer_id,
+            r.pool_id,
+            r.technician_id,
+            r.status,
+            r.priority,
+            r.title,
+            r.summary,
+            r.due_at,
+            r.completed_at,
+            r.canceled_at,
+            r.assigned_to,
+            r.created_by,
+            r.metadata_json,
+            r.created_at,
+            r.updated_at,
+            a.category AS source_alert_category,
+            a.rule_code AS source_alert_rule_code,
+            a.severity AS source_alert_severity,
+            a.title AS source_alert_title,
+            COALESCE(
+                NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                NULLIF(c.company_name, ''),
+                NULL
+            ) AS customer_name,
+            p.name AS pool_name,
+            COALESCE(
+                NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''),
+                NULLIF(t.username, ''),
+                NULL
+            ) AS technician_name
+        FROM reminder_instances r
+        LEFT JOIN alert_instances a ON a.id = r.source_alert_instance_id
+        LEFT JOIN customers c ON c.id = r.customer_id
+        LEFT JOIN pools p ON p.id = r.pool_id
+        LEFT JOIN technicians t ON t.id = r.technician_id
+        WHERE r.id = %s
+        """,
+        (reminder_id,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def _parse_dt(value: Any) -> Optional[datetime]:
     if value is None:
         return None
@@ -355,6 +405,67 @@ def ensure_web_backend_schema() -> None:
                 ON alert_instance_events(alert_instance_id, event_ts DESC)
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reminder_instances (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_type TEXT NOT NULL DEFAULT 'manual',
+                    source_alert_instance_id BIGINT REFERENCES alert_instances(id) ON DELETE SET NULL,
+                    customer_id BIGINT REFERENCES customers(id) ON DELETE CASCADE,
+                    pool_id BIGINT REFERENCES pools(id) ON DELETE CASCADE,
+                    technician_id BIGINT REFERENCES technicians(id) ON DELETE SET NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    priority TEXT NOT NULL DEFAULT 'normal',
+                    title TEXT NOT NULL,
+                    summary TEXT,
+                    due_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ,
+                    canceled_at TIMESTAMPTZ,
+                    assigned_to TEXT,
+                    created_by TEXT,
+                    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_reminder_instances_status
+                ON reminder_instances(status, priority, due_at)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_reminder_instances_customer
+                ON reminder_instances(customer_id, pool_id, technician_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_instances_source_alert
+                ON reminder_instances(source_alert_instance_id)
+                WHERE source_alert_instance_id IS NOT NULL
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reminder_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    reminder_instance_id BIGINT NOT NULL REFERENCES reminder_instances(id) ON DELETE CASCADE,
+                    event_type TEXT NOT NULL,
+                    event_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    actor TEXT,
+                    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_reminder_events_reminder
+                ON reminder_events(reminder_instance_id, event_ts DESC)
+                """
+            )
         conn.commit()
 
 
@@ -408,6 +519,21 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
             payload = dict(summary)
             payload["tracked_alert_counts_by_status"] = status_counts
             payload["tracked_alert_counts_by_severity"] = severity_counts
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE status IN ('open', 'acknowledged')) AS open_reminder_count,
+                    COUNT(*) FILTER (
+                        WHERE status IN ('open', 'acknowledged')
+                          AND due_at IS NOT NULL
+                          AND due_at < NOW()
+                    ) AS overdue_reminder_count,
+                    COUNT(*) FILTER (WHERE status = 'completed') AS completed_reminder_count
+                FROM reminder_instances
+                """
+            )
+            reminder_counts = dict(cur.fetchone())
+            payload["reminder_counts"] = reminder_counts
             return payload
 
 
@@ -1078,6 +1204,37 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
             cur.execute(
                 """
                 SELECT
+                    r.id,
+                    r.status,
+                    r.priority,
+                    r.title,
+                    r.summary,
+                    r.due_at,
+                    r.completed_at,
+                    r.assigned_to,
+                    r.source_type,
+                    r.source_alert_instance_id
+                FROM reminder_instances r
+                WHERE r.customer_id = %s
+                ORDER BY
+                    CASE r.status
+                        WHEN 'open' THEN 0
+                        WHEN 'acknowledged' THEN 1
+                        WHEN 'completed' THEN 2
+                        WHEN 'canceled' THEN 3
+                        ELSE 4
+                    END,
+                    r.due_at ASC NULLS LAST,
+                    r.id DESC
+                LIMIT 100
+                """,
+                (int(customer_id),),
+            )
+            reminders = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
                     MAX(service_date) AS latest_service_date
                 FROM chemistry_readings
                 WHERE customer_id = %s
@@ -1091,8 +1248,378 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
         "item": dict(customer),
         "pools": pools,
         "alerts": alerts,
+        "reminders": reminders,
         "latest_chemistry_service_date": chemistry_summary["latest_service_date"] if chemistry_summary else None,
     }
+
+
+def list_reminders(
+    *,
+    status: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    source_type: Optional[str] = None,
+    overdue_only: bool = False,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    safe_limit = max(1, min(int(limit), 500))
+    safe_offset = max(0, int(offset))
+    params: List[Any] = []
+    where_clauses: List[str] = []
+
+    normalized_status = _normalize_status(status)
+    if normalized_status:
+        where_clauses.append("r.status = %s")
+        params.append(normalized_status)
+
+    assigned_to_value = (assigned_to or "").strip()
+    if assigned_to_value:
+        where_clauses.append("COALESCE(r.assigned_to, '') = %s")
+        params.append(assigned_to_value)
+
+    source_type_value = (source_type or "").strip()
+    if source_type_value:
+        where_clauses.append("COALESCE(r.source_type, '') = %s")
+        params.append(source_type_value)
+
+    if overdue_only:
+        where_clauses.append(
+            "r.status IN ('open', 'acknowledged') AND r.due_at IS NOT NULL AND r.due_at < NOW()"
+        )
+
+    search_value = (search or "").strip()
+    if search_value:
+        pattern = f"%{search_value}%"
+        where_clauses.append(
+            """
+            (
+                r.title ILIKE %s
+                OR r.summary ILIKE %s
+                OR COALESCE(NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''), c.company_name, '') ILIKE %s
+                OR p.name ILIKE %s
+                OR COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), t.username, '') ILIKE %s
+            )
+            """
+        )
+        params.extend([pattern, pattern, pattern, pattern, pattern])
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    from_sql = f"""
+        FROM reminder_instances r
+        LEFT JOIN customers c ON c.id = r.customer_id
+        LEFT JOIN pools p ON p.id = r.pool_id
+        LEFT JOIN technicians t ON t.id = r.technician_id
+        LEFT JOIN alert_instances a ON a.id = r.source_alert_instance_id
+        {where_sql}
+    """
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS total " + from_sql, params)
+            total = int(cur.fetchone()["total"])
+
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE r.status IN ('open', 'acknowledged')) AS actionable_count,
+                    COUNT(*) FILTER (
+                        WHERE r.status IN ('open', 'acknowledged')
+                          AND r.due_at IS NOT NULL
+                          AND r.due_at < NOW()
+                    ) AS overdue_count,
+                    COUNT(*) FILTER (WHERE r.status = 'completed') AS completed_count,
+                    COUNT(*) FILTER (WHERE r.source_alert_instance_id IS NOT NULL) AS linked_alert_count
+                """
+                + from_sql,
+                params,
+            )
+            summary = dict(cur.fetchone())
+
+            cur.execute(
+                """
+                SELECT
+                    r.id,
+                    r.source_type,
+                    r.source_alert_instance_id,
+                    r.customer_id,
+                    r.pool_id,
+                    r.technician_id,
+                    r.status,
+                    r.priority,
+                    r.title,
+                    r.summary,
+                    r.due_at,
+                    r.completed_at,
+                    r.canceled_at,
+                    r.assigned_to,
+                    r.created_by,
+                    r.created_at,
+                    r.updated_at,
+                    a.category AS source_alert_category,
+                    a.rule_code AS source_alert_rule_code,
+                    a.severity AS source_alert_severity,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(c.company_name, ''),
+                        NULL
+                    ) AS customer_name,
+                    p.name AS pool_name,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''),
+                        NULLIF(t.username, ''),
+                        NULL
+                    ) AS technician_name
+                """
+                + from_sql
+                + """
+                ORDER BY
+                    CASE r.status
+                        WHEN 'open' THEN 0
+                        WHEN 'acknowledged' THEN 1
+                        WHEN 'completed' THEN 2
+                        WHEN 'canceled' THEN 3
+                        ELSE 4
+                    END,
+                    CASE r.priority
+                        WHEN 'high' THEN 0
+                        WHEN 'normal' THEN 1
+                        WHEN 'low' THEN 2
+                        ELSE 3
+                    END,
+                    r.due_at ASC NULLS LAST,
+                    r.id DESC
+                LIMIT %s OFFSET %s
+                """,
+                params + [safe_limit, safe_offset],
+            )
+            items = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "ok": True,
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
+        "summary": summary,
+        "filters": {
+            "status": normalized_status,
+            "assigned_to": assigned_to_value or None,
+            "source_type": source_type_value or None,
+            "overdue_only": bool(overdue_only),
+            "search": search_value or None,
+        },
+        "source": "reminder_instances",
+    }
+
+
+def get_reminder_detail(reminder_id: int) -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            item = _fetch_reminder_instance(cur, int(reminder_id))
+            if not item:
+                raise HTTPException(status_code=404, detail="Reminder not found")
+
+            cur.execute(
+                """
+                SELECT
+                    id,
+                    event_type,
+                    event_ts,
+                    actor,
+                    payload_json
+                FROM reminder_events
+                WHERE reminder_instance_id = %s
+                ORDER BY event_ts DESC, id DESC
+                LIMIT 100
+                """,
+                (int(reminder_id),),
+            )
+            events = [dict(row) for row in cur.fetchall()]
+
+            linked_alert = None
+            if item.get("source_alert_instance_id") is not None:
+                linked_alert = _fetch_alert_instance(cur, int(item["source_alert_instance_id"]))
+
+    return {
+        "ok": True,
+        "item": item,
+        "events": events,
+        "linked_alert": linked_alert,
+        "source": "reminder_instances",
+    }
+
+
+def create_alert_reminder(
+    alert_id: int,
+    *,
+    actor: str,
+    due_at: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    title: Optional[str] = None,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            alert = _fetch_alert_instance(cur, int(alert_id))
+            if not alert:
+                raise HTTPException(status_code=404, detail="Alert not found")
+
+            cur.execute(
+                """
+                SELECT id
+                FROM reminder_instances
+                WHERE source_alert_instance_id = %s
+                """,
+                (int(alert_id),),
+            )
+            existing = cur.fetchone()
+            if existing:
+                item = _fetch_reminder_instance(cur, int(existing["id"]))
+                return {"ok": True, "created": False, "item": item}
+
+            due_at_dt = _parse_dt(due_at)
+            assigned_to_value = (assigned_to or "").strip() or None
+            note_value = (note or "").strip() or None
+            title_value = (title or "").strip() or f"Follow up: {alert.get('title') or 'alert'}"
+            summary_value = note_value or alert.get("summary")
+            priority = "high" if str(alert.get("severity") or "").lower() == "critical" else "normal"
+            metadata = {
+                "created_from_alert_id": int(alert_id),
+                "source_alert_category": alert.get("category"),
+                "source_alert_rule_code": alert.get("rule_code"),
+                "source_alert_status": alert.get("status"),
+            }
+            if note_value:
+                metadata["note"] = note_value
+
+            cur.execute(
+                """
+                INSERT INTO reminder_instances (
+                    source_type,
+                    source_alert_instance_id,
+                    customer_id,
+                    pool_id,
+                    status,
+                    priority,
+                    title,
+                    summary,
+                    due_at,
+                    assigned_to,
+                    created_by,
+                    metadata_json
+                ) VALUES (%s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s, %s::jsonb)
+                RETURNING id
+                """,
+                (
+                    "alert",
+                    int(alert_id),
+                    alert.get("customer_id"),
+                    alert.get("pool_id"),
+                    priority,
+                    title_value[:250],
+                    summary_value[:2000] if summary_value else None,
+                    due_at_dt,
+                    assigned_to_value,
+                    actor,
+                    _json_dumps(metadata),
+                ),
+            )
+            reminder_id = int(cur.fetchone()["id"])
+            cur.execute(
+                """
+                INSERT INTO reminder_events (
+                    reminder_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (
+                    reminder_id,
+                    "created_from_alert",
+                    actor,
+                    _json_dumps(
+                        {
+                            "alert_id": int(alert_id),
+                            "assigned_to": assigned_to_value,
+                            "due_at": due_at_dt,
+                            "note": note_value,
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+            item = _fetch_reminder_instance(cur, reminder_id)
+
+    return {"ok": True, "created": True, "item": item}
+
+
+def update_reminder_status(
+    reminder_id: int,
+    *,
+    next_status: str,
+    actor: str,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    normalized_status = _normalize_status(next_status)
+    if normalized_status not in ("acknowledged", "completed", "canceled"):
+        raise HTTPException(status_code=400, detail=f"Unsupported next status '{next_status}'")
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            item = _fetch_reminder_instance(cur, int(reminder_id))
+            if not item:
+                raise HTTPException(status_code=404, detail="Reminder not found")
+
+            updates: List[str] = ["status = %s", "updated_at = NOW()"]
+            params: List[Any] = [normalized_status]
+            event_type = normalized_status
+            if normalized_status == "acknowledged":
+                updates.append("completed_at = NULL")
+                updates.append("canceled_at = NULL")
+            elif normalized_status == "completed":
+                updates.append("completed_at = NOW()")
+                updates.append("canceled_at = NULL")
+            elif normalized_status == "canceled":
+                updates.append("canceled_at = NOW()")
+                updates.append("completed_at = NULL")
+
+            params.append(int(reminder_id))
+            cur.execute(
+                f"""
+                UPDATE reminder_instances
+                SET {", ".join(updates)}
+                WHERE id = %s
+                """,
+                params,
+            )
+
+            payload = {"status": normalized_status}
+            if note:
+                payload["note"] = str(note).strip()[:1000]
+            cur.execute(
+                """
+                INSERT INTO reminder_events (
+                    reminder_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (int(reminder_id), event_type, actor, _json_dumps(payload)),
+            )
+            conn.commit()
+            updated = _fetch_reminder_instance(cur, int(reminder_id))
+
+    return {"ok": True, "item": updated}
 
 
 def list_alert_rule_configs() -> Dict[str, Any]:
