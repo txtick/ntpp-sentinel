@@ -33,6 +33,7 @@ const els = {
 const viewMeta = {
   home: { kicker: "Home", title: "Dashboard Overview" },
   alerts: { kicker: "Alerts", title: "Tracked Alert Queue" },
+  "alert-profile": { kicker: "Alert", title: "Alert Detail" },
   customers: { kicker: "Customers", title: "Customer Operations View" },
   "customer-profile": { kicker: "Customer", title: "Customer Chemistry Profile" },
   technicians: { kicker: "Technicians", title: "Field Operator Snapshot" },
@@ -78,7 +79,7 @@ function init() {
 function setView(view) {
   state.view = view;
   document.querySelectorAll(".nav-link").forEach((button) => {
-    const activeView = view === "customer-profile" ? "customers" : view;
+    const activeView = ["customer-profile"].includes(view) ? "customers" : ["alert-profile"].includes(view) ? "alerts" : view;
     button.classList.toggle("is-active", button.dataset.view === activeView);
   });
   const meta = viewMeta[view];
@@ -176,8 +177,30 @@ function currency(value) {
   }).format(number);
 }
 
+function normalizeMetricKey(seriesItemOrKey, description = "") {
+  const rawValue = typeof seriesItemOrKey === "string"
+    ? seriesItemOrKey
+    : seriesItemOrKey?.readingKey || seriesItemOrKey?.description || "value";
+  const raw = String(rawValue || "").trim().toLowerCase().replace(/[\s_]+/g, "");
+  const desc = String(
+    typeof seriesItemOrKey === "string" ? description : seriesItemOrKey?.description || description || ""
+  ).trim().toLowerCase();
+
+  if (raw === "freechlorine") return "free_chlorine";
+  if (raw === "totalchlorine") return "total_chlorine";
+  if (raw === "combinedchlorine") return "combined_chlorine";
+  if (raw === "cyanuricacid" || raw === "cya") return "cya";
+  if (raw === "totalalkalinity" || raw === "alkalinity") return "alkalinity";
+  if (raw === "totalhardness" || raw === "calciumhardness") return "calcium_hardness";
+  if (raw === "watertemperature" || raw === "temperature") return "temperature";
+  if (raw === "tds") return "tds";
+  if (raw === "none" && desc.includes("filter pressure")) return "filter_pressure";
+  if (raw === "filterpressure" || raw === "psi") return "filter_pressure";
+  return String(rawValue || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
 function formatMetricLabel(seriesItem) {
-  const raw = String(seriesItem.readingKey || seriesItem.description || "value").toLowerCase();
+  const raw = normalizeMetricKey(seriesItem);
   const labels = {
     ph: "pH",
     total_chlorine: "Total Chlorine",
@@ -189,6 +212,7 @@ function formatMetricLabel(seriesItem) {
     salt: "Salt",
     phosphates: "Phosphates",
     temperature: "Temperature",
+    tds: "TDS",
   };
   if (labels[raw]) return labels[raw];
   return String(raw)
@@ -215,7 +239,7 @@ function formatAxisValue(value) {
 }
 
 function chemistrySeriesMeta(seriesItem) {
-  const readingKey = String(seriesItem.readingKey || "").toLowerCase();
+  const readingKey = normalizeMetricKey(seriesItem);
   return {
     hide: readingKey === "free_chlorine",
     unitLabel: "",
@@ -471,6 +495,19 @@ function renderFilters() {
       </div>
     `;
     document.getElementById("customer-profile-back").onclick = () => setView("customers");
+    return;
+  }
+
+  if (state.view === "alert-profile") {
+    setLayout("single");
+    const alertId = state.selections.alertId;
+    els.filters.innerHTML = `
+      <div class="header-actions">
+        <button id="alert-profile-back" class="button button-secondary">Back To Alerts</button>
+        <div class="muted">${alertId ? `Alert ID ${escapeHtml(alertId)}` : "No alert selected"}</div>
+      </div>
+    `;
+    document.getElementById("alert-profile-back").onclick = () => setView("alerts");
   }
 }
 
@@ -479,6 +516,7 @@ async function loadCurrentView(force = false) {
     setStatus("Loading…", "warning");
     if (state.view === "home") await loadHome(force);
     if (state.view === "alerts") await loadAlerts(force);
+    if (state.view === "alert-profile") await loadAlertProfile(force);
     if (state.view === "customers") await loadCustomers(force);
     if (state.view === "customer-profile") await loadCustomerProfile(force);
     if (state.view === "technicians") await loadTechnicians(force);
@@ -595,8 +633,7 @@ function renderAlerts() {
   els.mainPanel.querySelectorAll("[data-alert-id]").forEach((el) => {
     el.addEventListener("click", async () => {
       state.selections.alertId = Number(el.dataset.alertId);
-      renderAlerts();
-      await loadAlertDetail(state.selections.alertId);
+      setView("alert-profile");
     });
   });
 }
@@ -606,13 +643,23 @@ async function loadAlertDetail(alertId) {
   renderAlertDetail(detail);
 }
 
+async function loadAlertProfile() {
+  const alertId = state.selections.alertId;
+  if (!alertId) {
+    els.mainPanel.innerHTML = `<div class="empty-state">Select an alert first.</div>`;
+    return;
+  }
+  const detail = await api(`/api/alerts/${alertId}`);
+  renderAlertProfile(detail);
+}
+
 function renderAlertDetail(detail) {
   const item = detail.item;
   const metadata = item.metadata_json || {};
   const observedCost = currency(metadata.observed_count);
   const thresholdCost = currency(metadata.threshold_value);
-  const assignedTech = metadata.assigned_technician?.tech_name || "—";
-  const recentTech = metadata.recent_service_technician?.tech_name || "—";
+  const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
+  const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
   const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
@@ -706,6 +753,120 @@ function renderAlertDetail(detail) {
     const note = document.getElementById("alert-snooze-note").value.trim();
     await api(`/api/alerts/${item.id}/snooze?actor=${encodeURIComponent(state.actor || "ui")}&snoozed_until=${encodeURIComponent(snoozedUntil)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
     await loadAlerts(true);
+  }, "Alert snoozed.");
+
+  document.getElementById("alert-reminder-button").onclick = () => mutate(async () => {
+    const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
+    const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
+    const note = document.getElementById("alert-reminder-note").value.trim();
+    await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
+    showToast("Reminder created from alert.");
+  }, "Reminder created.");
+}
+
+function renderAlertProfile(detail) {
+  const item = detail.item;
+  const metadata = item.metadata_json || {};
+  const observedCost = currency(metadata.observed_count);
+  const thresholdCost = currency(metadata.threshold_value);
+  const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
+  const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
+  const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
+
+  els.viewKicker.textContent = "Alert";
+  els.viewTitle.textContent = item.title;
+  els.mainPanel.innerHTML = `
+    <section class="section-card">
+      <div class="detail-header">
+        <div>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p class="panel-subtitle">${escapeHtml(formatAlertSummary(item))}</p>
+        </div>
+        <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div>
+      </div>
+      <div class="stat-grid">
+        <article class="stat-card"><span class="muted">Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></article>
+        <article class="stat-card"><span class="muted">Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></article>
+        <article class="stat-card"><span class="muted">Assigned Tech</span><strong>${escapeHtml(assignedTech)}</strong></article>
+        <article class="stat-card"><span class="muted">Recent Tech</span><strong>${escapeHtml(recentTech)}</strong></article>
+      </div>
+      <div class="meta-stack">
+        ${observedCost ? `<div class="meta-row"><span>Observed Cost</span><strong>${escapeHtml(observedCost)}</strong></div>` : ""}
+        ${thresholdCost ? `<div class="meta-row"><span>Threshold</span><strong>${escapeHtml(thresholdCost)}</strong></div>` : ""}
+        <div class="meta-row"><span>Last Detected</span><strong>${formatDateTime(item.last_detected_at)}</strong></div>
+        <div class="meta-row"><span>Snoozed Until</span><strong>${formatDateTime(item.snoozed_until)}</strong></div>
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Alert Actions</h3>
+      <div class="detail-actions">
+        <button class="button button-secondary" data-alert-action="ack">Acknowledge</button>
+        <button class="button button-danger" data-alert-action="resolve">Resolve</button>
+      </div>
+      <div class="split">
+        <label><span>Snooze Until</span><input id="alert-snooze-until" type="datetime-local" /></label>
+        <label><span>Snooze Note</span><textarea id="alert-snooze-note" placeholder="Waiting for the next route or customer callback"></textarea></label>
+        <button class="button button-secondary" id="alert-snooze-button">Snooze Alert</button>
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Create Reminder</h3>
+      <div class="split">
+        <label><span>Assigned To</span><input id="alert-reminder-assigned" value="${escapeHtml(state.actor)}" placeholder="jarrett" /></label>
+        <label><span>Due At</span><input id="alert-reminder-due" type="datetime-local" /></label>
+        <label><span>Reminder Note</span><textarea id="alert-reminder-note" placeholder="Follow up with customer"></textarea></label>
+        <button class="button button-primary" id="alert-reminder-button">Create Reminder</button>
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Visit Breakdown</h3>
+      <div class="event-list">
+        ${visitBreakdown.length ? visitBreakdown.map((visit) => `
+          <div class="item-card">
+            <div class="item-card-header">
+              <strong>${formatDateTime(visit.service_date)}</strong>
+              <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || String(visit.visit_estimated_cost || "—"))}</span>
+            </div>
+            <div class="muted">${escapeHtml(visit.technician_name || "No technician linked")}</div>
+            <div class="chem-list">
+              ${(visit.chemicals || []).map((chem) => `
+                <div class="chem-chip">
+                  <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
+                  <span class="dense">${escapeHtml(currency(chem.estimated_cost) || String(chem.estimated_cost || "—"))}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `).join("") : `<div class="empty-state">No visit-level chemical detail linked for this alert yet.</div>`}
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Event History</h3>
+      <div class="event-list">
+        ${detail.events.map((event) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(event.event_type)}</strong><span class="dense">${formatDateTime(event.event_ts)}</span></div><div class="muted">${escapeHtml(event.actor || "system")}</div></div>`).join("")}
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Metadata</h3>
+      <pre>${escapeHtml(JSON.stringify(item.metadata_json || {}, null, 2))}</pre>
+    </section>
+  `;
+
+  els.mainPanel.querySelector('[data-alert-action="ack"]').onclick = () => mutate(async () => {
+    await api(`/api/alerts/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
+    await loadAlertProfile(true);
+  }, "Alert acknowledged.");
+
+  els.mainPanel.querySelector('[data-alert-action="resolve"]').onclick = () => mutate(async () => {
+    await api(`/api/alerts/${item.id}/resolve?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
+    await loadAlertProfile(true);
+  }, "Alert resolved.");
+
+  document.getElementById("alert-snooze-button").onclick = () => mutate(async () => {
+    const snoozedUntil = toUtcIso(document.getElementById("alert-snooze-until").value);
+    const note = document.getElementById("alert-snooze-note").value.trim();
+    await api(`/api/alerts/${item.id}/snooze?actor=${encodeURIComponent(state.actor || "ui")}&snoozed_until=${encodeURIComponent(snoozedUntil)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
+    await loadAlertProfile(true);
   }, "Alert snoozed.");
 
   document.getElementById("alert-reminder-button").onclick = () => mutate(async () => {
@@ -822,12 +983,15 @@ function buildLineChart(seriesItem) {
   const yMax = height - margin.bottom;
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
-  const span = rawMax - rawMin || Math.max(Math.abs(rawMax) * 0.1, 1);
-  const paddedMin = rawMin - span * 0.08;
-  const paddedMax = rawMax + span * 0.08;
+  const span = rawMax - rawMin;
+  const padding = span === 0 ? Math.max(Math.abs(rawMax) * 0.08, 1) : span * 0.08;
+  const paddedMin = rawMin - padding;
+  const paddedMax = rawMax + padding;
   const valueRange = paddedMax - paddedMin || 1;
   const stepX = points.length === 1 ? 0 : (xMax - xMin) / (points.length - 1);
-  const yTicks = Array.from({ length: 5 }, (_, index) => paddedMin + (valueRange * (4 - index)) / 4);
+  const yTicks = span === 0
+    ? [rawMax + padding, rawMax, rawMax, rawMax, rawMin - padding]
+    : Array.from({ length: 5 }, (_, index) => rawMax - (span * index) / 4);
   const xTickIndexes = Array.from(new Set([
     0,
     Math.max(0, Math.floor((points.length - 1) / 2)),
@@ -881,7 +1045,7 @@ function buildLineChart(seriesItem) {
 function groupChemistrySeries(rows) {
   const groups = new Map();
   rows.forEach((row) => {
-    if (String(row.reading_key || "").toLowerCase() === "free_chlorine") return;
+    if (chemistrySeriesMeta({ readingKey: row.reading_key, description: row.description }).hide) return;
     const key = `${row.pool_id}::${row.reading_key}`;
     if (!groups.has(key)) {
       groups.set(key, {
