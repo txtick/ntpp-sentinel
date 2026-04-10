@@ -267,10 +267,11 @@ textarea {
 }
 
 .panel-detail {
-  align-self: start;
+  align-self: stretch;
   position: sticky;
-  top: 12px;
-  max-height: calc(100vh - 12px);
+  top: 8px;
+  height: calc(100vh - 16px);
+  max-height: calc(100vh - 16px);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -464,6 +465,8 @@ textarea {
   .rail,
   .panel-detail {
     position: static;
+    height: auto;
+    max-height: none;
   }
 
   .content-grid {

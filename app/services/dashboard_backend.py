@@ -253,6 +253,21 @@ def _fetch_revenue_technician_context(cur, pool_id: Optional[int]) -> Dict[str, 
 
     cur.execute(
         """
+        SELECT source_system, source_service_location_id
+        FROM pools
+        WHERE id = %s
+        """,
+        (int(pool_id),),
+    )
+    pool_row = cur.fetchone()
+    if not pool_row or not pool_row.get("source_service_location_id"):
+        return payload
+
+    source_system = pool_row.get("source_system")
+    source_service_location_id = pool_row.get("source_service_location_id")
+
+    cur.execute(
+        """
         SELECT
             t.id AS technician_id,
             t.source_account_id AS tech_id,
@@ -264,7 +279,8 @@ def _fetch_revenue_technician_context(cur, pool_id: Optional[int]) -> Dict[str, 
             a.end_date
         FROM service_location_technician_assignments a
         JOIN technicians t ON t.id = a.technician_id
-        WHERE a.pool_id = %s
+        WHERE a.source_system = %s
+          AND a.source_service_location_id = %s
           AND a.is_deleted = FALSE
           AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
         ORDER BY
@@ -273,7 +289,7 @@ def _fetch_revenue_technician_context(cur, pool_id: Optional[int]) -> Dict[str, 
             a.id DESC
         LIMIT 1
         """,
-        (int(pool_id),),
+        (source_system, source_service_location_id),
     )
     current_assignment = cur.fetchone()
     if current_assignment:
@@ -289,12 +305,13 @@ def _fetch_revenue_technician_context(cur, pool_id: Optional[int]) -> Dict[str, 
             s.service_date
         FROM technician_route_stops s
         JOIN technicians t ON t.id = s.technician_id
-        WHERE s.pool_id = %s
+        WHERE s.source_system = %s
+          AND s.source_service_location_id = %s
           AND s.is_skipped = FALSE
         ORDER BY s.service_date DESC, s.sequence ASC NULLS LAST
         LIMIT 1
         """,
-        (int(pool_id),),
+        (source_system, source_service_location_id),
     )
     recent_service = cur.fetchone()
     if recent_service:
@@ -325,8 +342,10 @@ def _fetch_revenue_visit_breakdown(cur, pool_id: Optional[int], window_days: Opt
             ) AS technician_name,
             t.source_account_id AS technician_tech_id
         FROM chemical_dose_events d
+        JOIN pools p ON p.id = d.pool_id
         LEFT JOIN technician_route_stops s
-          ON s.pool_id = d.pool_id
+          ON s.source_system = p.source_system
+         AND s.source_service_location_id = p.source_service_location_id
          AND s.is_skipped = FALSE
          AND s.service_date::date = d.service_date::date
         LEFT JOIN technicians t ON t.id = s.technician_id
