@@ -82,6 +82,7 @@ def _fetch_reminder_instance(cur, reminder_id: int) -> Optional[Dict[str, Any]]:
             r.title,
             r.summary,
             r.due_at,
+            r.snoozed_until,
             r.completed_at,
             r.canceled_at,
             r.assigned_to,
@@ -419,6 +420,7 @@ def ensure_web_backend_schema() -> None:
                     title TEXT NOT NULL,
                     summary TEXT,
                     due_at TIMESTAMPTZ,
+                    snoozed_until TIMESTAMPTZ,
                     completed_at TIMESTAMPTZ,
                     canceled_at TIMESTAMPTZ,
                     assigned_to TEXT,
@@ -433,6 +435,12 @@ def ensure_web_backend_schema() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS idx_reminder_instances_status
                 ON reminder_instances(status, priority, due_at)
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE reminder_instances
+                ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMPTZ
                 """
             )
             cur.execute(
@@ -524,7 +532,7 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
                 SELECT
                     COUNT(*) FILTER (WHERE status IN ('open', 'acknowledged')) AS open_reminder_count,
                     COUNT(*) FILTER (
-                        WHERE status IN ('open', 'acknowledged')
+                        WHERE status IN ('open', 'acknowledged', 'snoozed')
                           AND due_at IS NOT NULL
                           AND due_at < NOW()
                     ) AS overdue_reminder_count,
@@ -1210,6 +1218,7 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
                     r.title,
                     r.summary,
                     r.due_at,
+                    r.snoozed_until,
                     r.completed_at,
                     r.assigned_to,
                     r.source_type,
@@ -1220,9 +1229,10 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
                     CASE r.status
                         WHEN 'open' THEN 0
                         WHEN 'acknowledged' THEN 1
-                        WHEN 'completed' THEN 2
-                        WHEN 'canceled' THEN 3
-                        ELSE 4
+                        WHEN 'snoozed' THEN 2
+                        WHEN 'completed' THEN 3
+                        WHEN 'canceled' THEN 4
+                        ELSE 5
                     END,
                     r.due_at ASC NULLS LAST,
                     r.id DESC
@@ -1286,7 +1296,7 @@ def list_reminders(
 
     if overdue_only:
         where_clauses.append(
-            "r.status IN ('open', 'acknowledged') AND r.due_at IS NOT NULL AND r.due_at < NOW()"
+            "r.status IN ('open', 'acknowledged', 'snoozed') AND r.due_at IS NOT NULL AND r.due_at < NOW()"
         )
 
     search_value = (search or "").strip()
@@ -1328,7 +1338,7 @@ def list_reminders(
                 SELECT
                     COUNT(*) FILTER (WHERE r.status IN ('open', 'acknowledged')) AS actionable_count,
                     COUNT(*) FILTER (
-                        WHERE r.status IN ('open', 'acknowledged')
+                        WHERE r.status IN ('open', 'acknowledged', 'snoozed')
                           AND r.due_at IS NOT NULL
                           AND r.due_at < NOW()
                     ) AS overdue_count,
@@ -1354,6 +1364,7 @@ def list_reminders(
                     r.title,
                     r.summary,
                     r.due_at,
+                    r.snoozed_until,
                     r.completed_at,
                     r.canceled_at,
                     r.assigned_to,
@@ -1381,9 +1392,10 @@ def list_reminders(
                     CASE r.status
                         WHEN 'open' THEN 0
                         WHEN 'acknowledged' THEN 1
-                        WHEN 'completed' THEN 2
-                        WHEN 'canceled' THEN 3
-                        ELSE 4
+                        WHEN 'snoozed' THEN 2
+                        WHEN 'completed' THEN 3
+                        WHEN 'canceled' THEN 4
+                        ELSE 5
                     END,
                     CASE r.priority
                         WHEN 'high' THEN 0
@@ -1511,10 +1523,11 @@ def create_alert_reminder(
                     title,
                     summary,
                     due_at,
+                    snoozed_until,
                     assigned_to,
                     created_by,
                     metadata_json
-                ) VALUES (%s, %s, %s, %s, 'open', %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ) VALUES (%s, %s, %s, %s, 'open', %s, %s, %s, %s, NULL, %s, %s, %s::jsonb)
                 RETURNING id
                 """,
                 (
@@ -1585,12 +1598,15 @@ def update_reminder_status(
             if normalized_status == "acknowledged":
                 updates.append("completed_at = NULL")
                 updates.append("canceled_at = NULL")
+                updates.append("snoozed_until = NULL")
             elif normalized_status == "completed":
                 updates.append("completed_at = NOW()")
                 updates.append("canceled_at = NULL")
+                updates.append("snoozed_until = NULL")
             elif normalized_status == "canceled":
                 updates.append("canceled_at = NOW()")
                 updates.append("completed_at = NULL")
+                updates.append("snoozed_until = NULL")
 
             params.append(int(reminder_id))
             cur.execute(
@@ -1615,6 +1631,133 @@ def update_reminder_status(
                 ) VALUES (%s, %s, %s, %s::jsonb)
                 """,
                 (int(reminder_id), event_type, actor, _json_dumps(payload)),
+            )
+            conn.commit()
+            updated = _fetch_reminder_instance(cur, int(reminder_id))
+
+    return {"ok": True, "item": updated}
+
+
+def update_reminder_fields(
+    reminder_id: int,
+    *,
+    actor: str,
+    assigned_to: Optional[str] = None,
+    due_at: Optional[str] = None,
+    title: Optional[str] = None,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            current = _fetch_reminder_instance(cur, int(reminder_id))
+            if not current:
+                raise HTTPException(status_code=404, detail="Reminder not found")
+
+            updates: List[str] = []
+            params: List[Any] = []
+            payload: Dict[str, Any] = {}
+
+            if assigned_to is not None:
+                assigned_to_value = str(assigned_to).strip() or None
+                updates.append("assigned_to = %s")
+                params.append(assigned_to_value)
+                payload["assigned_to"] = assigned_to_value
+
+            if due_at is not None:
+                due_at_value = _parse_dt(due_at)
+                updates.append("due_at = %s")
+                params.append(due_at_value)
+                payload["due_at"] = due_at_value
+
+            if title is not None:
+                title_value = str(title).strip()
+                if not title_value:
+                    raise HTTPException(status_code=400, detail="title cannot be empty")
+                updates.append("title = %s")
+                params.append(title_value[:250])
+                payload["title"] = title_value[:250]
+
+            if note is not None:
+                note_value = str(note).strip() or None
+                updates.append("summary = %s")
+                params.append(note_value[:2000] if note_value else None)
+                payload["summary"] = note_value[:2000] if note_value else None
+
+            if not updates:
+                return {"ok": True, "item": current}
+
+            updates.append("updated_at = NOW()")
+            params.append(int(reminder_id))
+            cur.execute(
+                f"""
+                UPDATE reminder_instances
+                SET {", ".join(updates)}
+                WHERE id = %s
+                """,
+                params,
+            )
+            cur.execute(
+                """
+                INSERT INTO reminder_events (
+                    reminder_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (int(reminder_id), "updated", actor, _json_dumps(payload)),
+            )
+            conn.commit()
+            updated = _fetch_reminder_instance(cur, int(reminder_id))
+
+    return {"ok": True, "item": updated}
+
+
+def snooze_reminder(
+    reminder_id: int,
+    *,
+    actor: str,
+    snoozed_until: str,
+    note: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    snooze_dt = _parse_dt(snoozed_until)
+    if not snooze_dt:
+        raise HTTPException(status_code=400, detail="snoozed_until must be a valid ISO datetime")
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            item = _fetch_reminder_instance(cur, int(reminder_id))
+            if not item:
+                raise HTTPException(status_code=404, detail="Reminder not found")
+
+            cur.execute(
+                """
+                UPDATE reminder_instances
+                SET
+                    status = 'snoozed',
+                    snoozed_until = %s,
+                    completed_at = NULL,
+                    canceled_at = NULL,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (snooze_dt, int(reminder_id)),
+            )
+            payload = {"snoozed_until": snooze_dt}
+            if note:
+                payload["note"] = str(note).strip()[:1000]
+            cur.execute(
+                """
+                INSERT INTO reminder_events (
+                    reminder_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (int(reminder_id), "snoozed", actor, _json_dumps(payload)),
             )
             conn.commit()
             updated = _fetch_reminder_instance(cur, int(reminder_id))

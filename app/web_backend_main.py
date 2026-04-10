@@ -20,7 +20,9 @@ from services.dashboard_backend import (
     list_technicians,
     list_refresh_runs,
     refresh_alert_instances,
+    snooze_reminder,
     update_alert_instance_status,
+    update_reminder_fields,
     update_reminder_status,
 )
 
@@ -231,6 +233,44 @@ def api_reminder_ack(request: Request, reminder_id: int, actor: str = "api", not
         reminder_id,
         next_status="acknowledged",
         actor=actor,
+        note=note or None,
+    )
+
+
+@app.post("/api/reminders/{reminder_id}/update")
+def api_reminder_update(
+    request: Request,
+    reminder_id: int,
+    actor: str = "api",
+    assigned_to: str = "",
+    due_at: str = "",
+    title: str = "",
+    note: str = "",
+):
+    _auth_or_401(request)
+    return update_reminder_fields(
+        reminder_id,
+        actor=actor,
+        assigned_to=assigned_to if assigned_to != "" else None,
+        due_at=due_at if due_at != "" else None,
+        title=title if title != "" else None,
+        note=note if note != "" else None,
+    )
+
+
+@app.post("/api/reminders/{reminder_id}/snooze")
+def api_reminder_snooze(
+    request: Request,
+    reminder_id: int,
+    snoozed_until: str,
+    actor: str = "api",
+    note: str = "",
+):
+    _auth_or_401(request)
+    return snooze_reminder(
+        reminder_id,
+        actor=actor,
+        snoozed_until=snoozed_until,
         note=note or None,
     )
 
