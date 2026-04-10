@@ -20,6 +20,7 @@ const state = {
 const els = {
   mainPanel: document.getElementById("main-panel"),
   detailPanel: document.getElementById("detail-panel"),
+  contentGrid: document.querySelector(".content-grid"),
   viewTitle: document.getElementById("view-title"),
   viewKicker: document.getElementById("view-kicker"),
   statusPill: document.getElementById("status-pill"),
@@ -33,6 +34,7 @@ const viewMeta = {
   home: { kicker: "Home", title: "Dashboard Overview" },
   alerts: { kicker: "Alerts", title: "Tracked Alert Queue" },
   customers: { kicker: "Customers", title: "Customer Operations View" },
+  "customer-profile": { kicker: "Customer", title: "Customer Chemistry Profile" },
   technicians: { kicker: "Technicians", title: "Field Operator Snapshot" },
   reminders: { kicker: "Reminders", title: "Follow-Up Queue" },
 };
@@ -76,7 +78,8 @@ function init() {
 function setView(view) {
   state.view = view;
   document.querySelectorAll(".nav-link").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === view);
+    const activeView = view === "customer-profile" ? "customers" : view;
+    button.classList.toggle("is-active", button.dataset.view === activeView);
   });
   const meta = viewMeta[view];
   els.viewKicker.textContent = meta.kicker;
@@ -155,6 +158,13 @@ function toUtcIso(localValue) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
+function setLayout(mode = "split") {
+  const single = mode === "single";
+  els.contentGrid.classList.toggle("is-single", single);
+  els.detailPanel.style.display = single ? "none" : "block";
+  els.mainPanel.style.gridColumn = single ? "1 / -1" : "";
+}
+
 function currency(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
@@ -223,11 +233,13 @@ function escapeHtml(value) {
 
 function renderFilters() {
   if (state.view === "home") {
+    setLayout("split");
     els.filters.innerHTML = `<div class="muted">Live snapshot of backend summary, recent alerts, and reminder pressure.</div>`;
     return;
   }
 
   if (state.view === "alerts") {
+    setLayout("split");
     const f = filters.alerts;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Status</span>
@@ -280,6 +292,7 @@ function renderFilters() {
   }
 
   if (state.view === "customers") {
+    setLayout("split");
     const f = filters.customers;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Search</span><input id="filter-customer-search" value="${escapeHtml(f.search)}" placeholder="Name, email, or phone" /></label>
@@ -314,6 +327,7 @@ function renderFilters() {
   }
 
   if (state.view === "technicians") {
+    setLayout("split");
     const f = filters.technicians;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Search</span><input id="filter-tech-search" value="${escapeHtml(f.search)}" placeholder="Name or tech id" /></label>
@@ -351,6 +365,7 @@ function renderFilters() {
   }
 
   if (state.view === "reminders") {
+    setLayout("split");
     const f = filters.reminders;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Status</span>
@@ -388,6 +403,19 @@ function renderFilters() {
       filters.reminders.overdue_only = Number(e.target.value);
       loadReminders(true);
     };
+    return;
+  }
+
+  if (state.view === "customer-profile") {
+    setLayout("single");
+    const customerId = state.selections.customerId;
+    els.filters.innerHTML = `
+      <div class="header-actions">
+        <button id="customer-profile-back" class="button button-secondary">Back To Customers</button>
+        <div class="muted">${customerId ? `Customer ID ${escapeHtml(customerId)}` : "No customer selected"}</div>
+      </div>
+    `;
+    document.getElementById("customer-profile-back").onclick = () => setView("customers");
   }
 }
 
@@ -397,6 +425,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "home") await loadHome(force);
     if (state.view === "alerts") await loadAlerts(force);
     if (state.view === "customers") await loadCustomers(force);
+    if (state.view === "customer-profile") await loadCustomerProfile(force);
     if (state.view === "technicians") await loadTechnicians(force);
     if (state.view === "reminders") await loadReminders(force);
     setStatus("Live", "info");
@@ -646,7 +675,7 @@ function renderCustomers() {
   els.mainPanel.innerHTML = `
     <section class="section-card">
       <h3>Customer List</h3>
-      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope.</p>
+      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Click any customer to open the full chemistry profile.</p>
       <div class="item-list">
         ${result.items.map((item) => {
           const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
@@ -669,10 +698,18 @@ function renderCustomers() {
   els.mainPanel.querySelectorAll("[data-customer-id]").forEach((el) => {
     el.onclick = async () => {
       state.selections.customerId = Number(el.dataset.customerId);
-      renderCustomers();
-      await loadCustomerDetail(state.selections.customerId);
+      setView("customer-profile");
     };
   });
+
+  els.detailPanel.innerHTML = `
+    <div class="detail-stack">
+      <section class="detail-card">
+        <h3>Customer Profiles</h3>
+        <p class="muted">Each customer profile will show chemistry trend charts, chemical spend by visit, current alerts, and reminder context on a full-width page.</p>
+      </section>
+    </div>
+  `;
 }
 
 async function loadCustomerDetail(customerId) {
@@ -703,6 +740,146 @@ async function loadCustomerDetail(customerId) {
         <div class="event-list">${(detail.reminders || []).slice(0, 8).map((reminder) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") || `<div class="empty-state">No reminders for this customer.</div>`}</div>
       </section>
     </div>
+  `;
+}
+
+function buildLineChart(points) {
+  if (!points.length) {
+    return `<div class="empty-state">No chart data.</div>`;
+  }
+  const width = 360;
+  const height = 150;
+  const padding = 16;
+  const values = points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+  if (!values.length) {
+    return `<div class="empty-state">No numeric values to chart.</div>`;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const stepX = points.length === 1 ? width / 2 : (width - padding * 2) / (points.length - 1);
+  const path = points
+    .map((point, index) => {
+      const x = padding + stepX * index;
+      const y = height - padding - ((Number(point.value) - min) / span) * (height - padding * 2);
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return `
+    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Chemistry trend chart">
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(24,34,45,0.12)" />
+      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" stroke="rgba(24,34,45,0.12)" />
+      <path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  `;
+}
+
+function groupChemistrySeries(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = `${row.pool_id}::${row.reading_key}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        poolId: row.pool_id,
+        poolName: row.pool_name || `Pool ${row.pool_id}`,
+        readingKey: row.reading_key,
+        readingType: row.reading_type,
+        description: row.description,
+        unitOfMeasure: row.unit_of_measure,
+        points: [],
+      });
+    }
+    groups.get(key).points.push(row);
+  });
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.poolName !== b.poolName) return a.poolName.localeCompare(b.poolName);
+    return String(a.readingKey).localeCompare(String(b.readingKey));
+  });
+}
+
+async function loadCustomerProfile() {
+  const customerId = state.selections.customerId;
+  if (!customerId) {
+    els.mainPanel.innerHTML = `<div class="empty-state">Select a customer first.</div>`;
+    return;
+  }
+  const detail = await api(`/api/customers/${customerId}`);
+  const item = detail.item;
+  const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
+  const series = groupChemistrySeries(detail.chemistry_history || []);
+  const spend = detail.chemical_spend_summary || {};
+  const visits = detail.chemical_spend_by_visit || [];
+
+  els.viewKicker.textContent = "Customer";
+  els.viewTitle.textContent = `${name}`;
+
+  els.mainPanel.innerHTML = `
+    <section class="section-card">
+      <h3>${escapeHtml(name)}</h3>
+      <p class="panel-subtitle">Chemistry trend view, chemical spend, and tracked workflow context for this customer.</p>
+      <div class="stat-grid">
+        <article class="stat-card"><span class="muted">30 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></article>
+        <article class="stat-card"><span class="muted">60 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_60d) || "$0.00")}</strong></article>
+        <article class="stat-card"><span class="muted">90 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_90d) || "$0.00")}</strong></article>
+        <article class="stat-card"><span class="muted">Tracked Alerts</span><strong>${escapeHtml(detail.alerts.length)}</strong></article>
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Chemistry Trend Charts</h3>
+      <div class="chart-grid">
+        ${series.length ? series.map((seriesItem) => {
+          const latest = seriesItem.points[seriesItem.points.length - 1];
+          const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+          return `
+            <article class="chart-card">
+              <div>
+                <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(seriesItem.readingKey || seriesItem.description || "metric")}</h4>
+                <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")} · ${escapeHtml(seriesItem.unitOfMeasure || "value")}</div>
+              </div>
+              ${buildLineChart(seriesItem.points)}
+              <div class="chart-caption">
+                <span>Latest ${escapeHtml(String(latest?.value ?? "—"))}</span>
+                <span>Min ${escapeHtml(String(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(String(values.length ? Math.max(...values) : "—"))}</span>
+              </div>
+            </article>
+          `;
+        }).join("") : `<div class="empty-state">No chemistry history available for this customer in the last 180 days.</div>`}
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Chemical Spend By Visit</h3>
+      <div class="event-list">
+        ${visits.length ? visits.slice(0, 40).map((visit) => `
+          <div class="item-card">
+            <div class="item-card-header">
+              <strong>${escapeHtml(visit.pool_name || `Pool ${visit.pool_id}`)}</strong>
+              <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
+            </div>
+            <div class="muted">${formatDateTime(visit.service_date)}</div>
+            <div class="chem-list">
+              ${(visit.chemicals || []).map((chem) => `
+                <div class="chem-chip">
+                  <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
+                  <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `).join("") : `<div class="empty-state">No chemical spend history available for this customer.</div>`}
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Tracked Alerts</h3>
+      <div class="event-list">
+        ${detail.alerts.length ? detail.alerts.map((alert) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") : `<div class="empty-state">No tracked alerts for this customer.</div>`}
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Reminders</h3>
+      <div class="event-list">
+        ${detail.reminders.length ? detail.reminders.map((reminder) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") : `<div class="empty-state">No reminders for this customer.</div>`}
+      </div>
+    </section>
   `;
 }
 

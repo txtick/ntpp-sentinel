@@ -1470,6 +1470,73 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
             )
             chemistry_summary = cur.fetchone()
 
+            cur.execute(
+                """
+                SELECT
+                    r.pool_id,
+                    p.name AS pool_name,
+                    r.reading_key,
+                    r.reading_type,
+                    r.description,
+                    r.unit_of_measure,
+                    r.service_date,
+                    r.value
+                FROM chemistry_readings r
+                LEFT JOIN pools p ON p.id = r.pool_id
+                WHERE r.customer_id = %s
+                  AND r.service_date >= NOW() - INTERVAL '180 days'
+                ORDER BY r.pool_id ASC, r.reading_key ASC, r.service_date ASC, r.id ASC
+                """,
+                (int(customer_id),),
+            )
+            chemistry_history = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(SUM(d.estimated_cost) FILTER (WHERE d.service_date >= NOW() - INTERVAL '30 days'), 0) AS cost_30d,
+                    COALESCE(SUM(d.estimated_cost) FILTER (WHERE d.service_date >= NOW() - INTERVAL '60 days'), 0) AS cost_60d,
+                    COALESCE(SUM(d.estimated_cost) FILTER (WHERE d.service_date >= NOW() - INTERVAL '90 days'), 0) AS cost_90d,
+                    COALESCE(SUM(d.estimated_cost), 0) AS lifetime_cost,
+                    MAX(d.service_date) AS latest_dose_date,
+                    COUNT(*) AS total_dose_events
+                FROM chemical_dose_events d
+                WHERE d.customer_id = %s
+                """,
+                (int(customer_id),),
+            )
+            chemical_spend_summary = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                SELECT
+                    d.pool_id,
+                    p.name AS pool_name,
+                    d.service_date,
+                    COALESCE(SUM(d.estimated_cost), 0) AS visit_estimated_cost,
+                    jsonb_agg(
+                        jsonb_build_object(
+                            'description', d.description,
+                            'dosage_key', d.dosage_key,
+                            'quantity', d.quantity,
+                            'unit_of_measure', d.unit_of_measure,
+                            'entry_cost', d.entry_cost,
+                            'estimated_cost', d.estimated_cost
+                        )
+                        ORDER BY d.description ASC, d.id ASC
+                    ) AS chemicals
+                FROM chemical_dose_events d
+                LEFT JOIN pools p ON p.id = d.pool_id
+                WHERE d.customer_id = %s
+                  AND d.service_date >= NOW() - INTERVAL '120 days'
+                GROUP BY d.pool_id, p.name, d.service_date
+                ORDER BY d.service_date DESC, d.pool_id ASC
+                LIMIT 120
+                """,
+                (int(customer_id),),
+            )
+            chemical_spend_by_visit = [dict(row) for row in cur.fetchall()]
+
     return {
         "ok": True,
         "item": dict(customer),
@@ -1477,6 +1544,9 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
         "alerts": alerts,
         "reminders": reminders,
         "latest_chemistry_service_date": chemistry_summary["latest_service_date"] if chemistry_summary else None,
+        "chemistry_history": chemistry_history,
+        "chemical_spend_summary": chemical_spend_summary,
+        "chemical_spend_by_visit": chemical_spend_by_visit,
     }
 
 
