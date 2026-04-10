@@ -944,6 +944,33 @@ def _ghl_contact_id_from_response(data: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _extract_duplicate_contact_relink_id(exc: Exception) -> Optional[str]:
+    detail = str(exc)
+    marker = "failed: 400"
+    marker_index = detail.find(marker)
+    if marker_index < 0:
+        return None
+
+    json_start = detail.find("{", marker_index)
+    if json_start < 0:
+        return None
+
+    try:
+        payload = json.loads(detail[json_start:])
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    contact_id = meta.get("contactId")
+    if isinstance(contact_id, str) and contact_id.strip():
+        return contact_id.strip()
+    return None
+
+
 # ==========================
 # Payload extraction helpers
 # ==========================
@@ -2085,6 +2112,47 @@ async def skimmer_customer_sync(request: Request, limit: int = 1000, dry_run: in
                     }
                 )
             except Exception as exc:
+                relink_contact_id = _extract_duplicate_contact_relink_id(exc)
+                if relink_contact_id and relink_contact_id != contact_id:
+                    try:
+                        _, applied_payload = await ghl_update_contact_tolerant(relink_contact_id, payload)
+                        _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=relink_contact_id, error=None)
+                        summary["updated"] += 1
+                        summary["items"].append(
+                            {
+                                "sk_customer_id": sk_customer_id,
+                                "customer": customer_display_name(customer),
+                                "action": "relinked_duplicate_contact",
+                                "previous_ghl_contact_id": contact_id,
+                                "ghl_contact_id": relink_contact_id,
+                                "match_methods": methods,
+                                "applied_payload_keys": sorted(applied_payload.keys()),
+                            }
+                        )
+                        if CUSTOMER_SYNC_DELAY_SECONDS > 0:
+                            await asyncio.sleep(CUSTOMER_SYNC_DELAY_SECONDS)
+                        continue
+                    except Exception as retry_exc:
+                        _update_sk_customer_sync_state(
+                            sk_customer_id,
+                            ghl_contact_id=relink_contact_id,
+                            error=str(retry_exc)[:500],
+                        )
+                        summary["errors"] += 1
+                        summary["items"].append(
+                            {
+                                "sk_customer_id": sk_customer_id,
+                                "customer": customer_display_name(customer),
+                                "action": "error_update_after_relink",
+                                "previous_ghl_contact_id": contact_id,
+                                "ghl_contact_id": relink_contact_id,
+                                "error": str(retry_exc),
+                            }
+                        )
+                        if CUSTOMER_SYNC_DELAY_SECONDS > 0:
+                            await asyncio.sleep(CUSTOMER_SYNC_DELAY_SECONDS)
+                        continue
+
                 _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=contact_id or None, error=str(exc)[:500])
                 summary["errors"] += 1
                 summary["items"].append(
