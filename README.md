@@ -16,12 +16,14 @@ Current Docker Compose services:
 - `sentinel`
 - `ingest-worker`
 - `web-backend`
+- `web-frontend`
 - `caddy`
 
 Roles:
 - `sentinel`: public API, webhooks, job endpoints, customer sync, Skimmer download trigger
 - `ingest-worker`: validation, `sk_*` source-ingest import, normalized upserts, derived views
 - `web-backend`: dashboard/query API surface and backend-owned alert tracking schema
+- `web-frontend`: thin operator UI for home, alerts, customers, technicians, and reminders
 - `caddy`: public reverse proxy to `sentinel:8000`
 
 Persistence:
@@ -123,6 +125,12 @@ Worker health from inside the stack:
 
 ```bash
 docker compose exec -T sentinel curl -s http://ingest-worker:8010/health
+```
+
+Frontend locally on the host:
+
+```text
+http://localhost:8030
 ```
 
 ## Protected Endpoints

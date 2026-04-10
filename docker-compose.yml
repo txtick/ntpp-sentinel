@@ -54,6 +54,22 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  web-frontend:
+    build:
+      context: .
+      dockerfile: web-frontend/Dockerfile
+    container_name: ntpp-web-frontend
+    restart: unless-stopped
+    depends_on:
+      - web-backend
+    ports:
+      - "8030:8030"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   caddy:
     image: caddy:2
     container_name: ntpp-caddy

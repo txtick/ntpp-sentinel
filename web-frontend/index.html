@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NTPP Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <p class="eyebrow">North Texas Pool Pros</p>
+          <h1>Sentinel Dashboard</h1>
+          <p class="subtitle">Operational workflow for alerts, technicians, customers, and follow-up work.</p>
+        </div>
+
+        <nav class="nav" aria-label="Primary">
+          <button class="nav-link is-active" data-view="home">Home</button>
+          <button class="nav-link" data-view="alerts">Alerts</button>
+          <button class="nav-link" data-view="customers">Customers</button>
+          <button class="nav-link" data-view="technicians">Technicians</button>
+          <button class="nav-link" data-view="reminders">Reminders</button>
+        </nav>
+
+        <section class="auth-card">
+          <h2>Operator Tools</h2>
+          <label>
+            <span>Actor</span>
+            <input id="actor-input" type="text" placeholder="kevin" />
+          </label>
+          <label>
+            <span>API Secret</span>
+            <input id="secret-input" type="password" placeholder="Needed for queue actions" />
+          </label>
+          <button id="save-auth" class="button button-primary">Save Session</button>
+          <p class="muted">Reads work without a secret. Mutations use the saved secret as `X-NTPP-Secret`.</p>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-header">
+          <div>
+            <p id="view-kicker" class="eyebrow">Home</p>
+            <h2 id="view-title">Dashboard Overview</h2>
+          </div>
+          <div class="header-actions">
+            <span id="status-pill" class="pill pill-info">Ready</span>
+            <button id="refresh-view" class="button button-secondary">Refresh View</button>
+          </div>
+        </header>
+
+        <section id="view-filters" class="filters"></section>
+
+        <section class="content-grid">
+          <section id="main-panel" class="panel panel-main">
+            <div class="empty-state">Loading…</div>
+          </section>
+          <aside id="detail-panel" class="panel panel-detail">
+            <div class="empty-state">Select an item to inspect details.</div>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
