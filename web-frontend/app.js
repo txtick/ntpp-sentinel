@@ -155,6 +155,43 @@ function toUtcIso(localValue) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
+function currency(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return new Intl.NumberFormat([], {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(number);
+}
+
+function formatAlertSummary(item) {
+  const metadata = item.metadata_json || {};
+  if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
+    const observedCost = currency(metadata.observed_count);
+    if (observedCost) {
+      return `Chemical spend flagged at ${observedCost} in the review window.`;
+    }
+  }
+  return item.summary || "No summary available.";
+}
+
+function formatAlertSubline(item) {
+  const metadata = item.metadata_json || {};
+  if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
+    const observedCost = currency(metadata.observed_count);
+    const threshold = currency(metadata.threshold_value);
+    if (observedCost && threshold) {
+      return `revenue · cost ${observedCost} vs threshold ${threshold}`;
+    }
+    if (observedCost) {
+      return `revenue · cost ${observedCost}`;
+    }
+  }
+  return `${item.category} · rule ${item.rule_code}`;
+}
+
 function badge(value, typeHint = "") {
   const normalized = String(value || typeHint || "muted").toLowerCase().replace(/\s+/g, "-");
   const klass = [
@@ -438,12 +475,12 @@ function renderAlerts() {
             <div class="item-card-header">
               <div>
                 <h4>${escapeHtml(item.title)}</h4>
-                <div class="muted">${escapeHtml(item.summary || "")}</div>
+                <div class="muted">${escapeHtml(formatAlertSummary(item))}</div>
               </div>
               <div class="meta-stack">${badge(item.severity)} ${badge(item.status)}</div>
             </div>
             <div class="meta-row">
-              <span>${escapeHtml(item.category)} · rule ${escapeHtml(item.rule_code)}</span>
+              <span>${escapeHtml(formatAlertSubline(item))}</span>
               <span>${formatDateTime(item.last_detected_at)}</span>
             </div>
           </article>
@@ -467,19 +504,24 @@ async function loadAlertDetail(alertId) {
 
 function renderAlertDetail(detail) {
   const item = detail.item;
+  const metadata = item.metadata_json || {};
+  const observedCost = currency(metadata.observed_count);
+  const thresholdCost = currency(metadata.threshold_value);
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
         <div class="detail-header">
           <div>
             <h3>${escapeHtml(item.title)}</h3>
-            <p class="muted">${escapeHtml(item.summary || "")}</p>
+            <p class="muted">${escapeHtml(formatAlertSummary(item))}</p>
           </div>
           <div class="meta-stack">${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div>
         </div>
         <div class="meta-stack">
-          <div class="meta-row"><span>Customer</span><strong>${escapeHtml(item.metadata_json?.customer_name || item.customer_id || "—")}</strong></div>
-          <div class="meta-row"><span>Pool</span><strong>${escapeHtml(item.metadata_json?.pool_name || item.pool_id || "—")}</strong></div>
+          <div class="meta-row"><span>Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></div>
+          <div class="meta-row"><span>Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></div>
+          ${observedCost ? `<div class="meta-row"><span>Observed Cost</span><strong>${escapeHtml(observedCost)}</strong></div>` : ""}
+          ${thresholdCost ? `<div class="meta-row"><span>Threshold</span><strong>${escapeHtml(thresholdCost)}</strong></div>` : ""}
           <div class="meta-row"><span>Last Detected</span><strong>${formatDateTime(item.last_detected_at)}</strong></div>
           <div class="meta-row"><span>Snoozed Until</span><strong>${formatDateTime(item.snoozed_until)}</strong></div>
         </div>
