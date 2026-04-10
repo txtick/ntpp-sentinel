@@ -279,6 +279,86 @@ def ensure_pg_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS sk_work_order_type (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_work_order_type_id TEXT NOT NULL,
+                    description TEXT,
+                    default_work_needed TEXT,
+                    default_work_performed TEXT,
+                    default_minutes INTEGER,
+                    default_labor_cost NUMERIC,
+                    default_price NUMERIC,
+                    default_email_subject TEXT,
+                    default_email_header TEXT,
+                    default_email_message TEXT,
+                    company_id TEXT,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_work_order_type_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_work_order_type_description
+                ON sk_work_order_type(source_system, description)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_work_order (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_work_order_id TEXT NOT NULL,
+                    source_work_order_type_id TEXT,
+                    source_service_location_id TEXT,
+                    work_needed TEXT,
+                    work_performed TEXT,
+                    source_added_by_account_id TEXT,
+                    added_on_date TIMESTAMPTZ,
+                    source_account_id TEXT,
+                    service_date TIMESTAMPTZ,
+                    scheduled_time TEXT,
+                    start_time TIMESTAMPTZ,
+                    complete_time TIMESTAMPTZ,
+                    route_sequence INTEGER,
+                    estimated_minutes INTEGER,
+                    labor_cost NUMERIC,
+                    price NUMERIC,
+                    is_invoiced BOOLEAN,
+                    sync_date TIMESTAMPTZ,
+                    email_header TEXT,
+                    email_message TEXT,
+                    email_status TEXT,
+                    email_sent_date TIMESTAMPTZ,
+                    company_id TEXT,
+                    notes TEXT,
+                    note_is_alert BOOLEAN,
+                    note_is_handled BOOLEAN,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_work_order_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_work_order_location_date
+                ON sk_work_order(source_system, source_service_location_id, service_date DESC)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_work_order_type_ref
+                ON sk_work_order(source_system, source_work_order_type_id)
+                """
+            )
+            cur.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_sk_pool_source_service_location
                 ON sk_pool(source_system, source_service_location_id)
                 """

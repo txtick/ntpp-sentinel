@@ -146,6 +146,7 @@ def _metadata_source_refresh_id(item: Dict[str, Any]) -> Optional[int]:
 
 
 def _ensure_backend_owned_dashboard_definitions() -> None:
+    ensure_pg_schema()
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(

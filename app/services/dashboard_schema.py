@@ -552,6 +552,26 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                         AND r.service_date >= NOW() - make_interval(days => COALESCE(cfg.window_days, 90))
                   )
             ),
+            recent_completed_filter_cleans AS (
+                SELECT DISTINCT
+                    p.customer_id,
+                    p.id AS pool_id
+                FROM sk_work_order w
+                JOIN pools p
+                  ON p.source_system = w.source_system
+                 AND p.source_service_location_id = w.source_service_location_id
+                LEFT JOIN sk_work_order_type wt
+                  ON wt.source_system = w.source_system
+                 AND wt.source_work_order_type_id = w.source_work_order_type_id
+                WHERE COALESCE(w.is_deleted, FALSE) = FALSE
+                  AND w.service_date >= NOW() - make_interval(days => 90)
+                  AND w.complete_time IS NOT NULL
+                  AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+                  AND (
+                      lower(COALESCE(wt.description, '')) = 'filter clean'
+                      OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
+                  )
+            ),
             monthly_cost AS (
                 SELECT
                     cfg.rule_code,
@@ -595,7 +615,12 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             FROM unioned u
             JOIN customers c ON c.id = u.customer_id
             LEFT JOIN pools p ON p.id = u.pool_id
+            LEFT JOIN recent_completed_filter_cleans fc ON fc.pool_id = u.pool_id
             WHERE c.is_operationally_active = TRUE
+              AND NOT (
+                  u.opportunity_type = 'filter_clean'
+                  AND fc.pool_id IS NOT NULL
+              )
             """
         )
 

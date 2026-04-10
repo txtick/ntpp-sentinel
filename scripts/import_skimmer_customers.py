@@ -449,6 +449,104 @@ ROUTE_STOP_UPSERT_SQL = """
 """
 
 
+WORK_ORDER_TYPE_UPSERT_SQL = """
+    INSERT INTO sk_work_order_type (
+        source_system,
+        source_work_order_type_id,
+        description,
+        default_work_needed,
+        default_work_performed,
+        default_minutes,
+        default_labor_cost,
+        default_price,
+        default_email_subject,
+        default_email_header,
+        default_email_message,
+        company_id,
+        raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_work_order_type_id)
+    DO UPDATE SET
+        description = EXCLUDED.description,
+        default_work_needed = EXCLUDED.default_work_needed,
+        default_work_performed = EXCLUDED.default_work_performed,
+        default_minutes = EXCLUDED.default_minutes,
+        default_labor_cost = EXCLUDED.default_labor_cost,
+        default_price = EXCLUDED.default_price,
+        default_email_subject = EXCLUDED.default_email_subject,
+        default_email_header = EXCLUDED.default_email_header,
+        default_email_message = EXCLUDED.default_email_message,
+        company_id = EXCLUDED.company_id,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
+WORK_ORDER_UPSERT_SQL = """
+    INSERT INTO sk_work_order (
+        source_system,
+        source_work_order_id,
+        source_work_order_type_id,
+        source_service_location_id,
+        work_needed,
+        work_performed,
+        source_added_by_account_id,
+        added_on_date,
+        source_account_id,
+        service_date,
+        scheduled_time,
+        start_time,
+        complete_time,
+        route_sequence,
+        estimated_minutes,
+        labor_cost,
+        price,
+        is_invoiced,
+        sync_date,
+        email_header,
+        email_message,
+        email_status,
+        email_sent_date,
+        company_id,
+        notes,
+        note_is_alert,
+        note_is_handled,
+        is_deleted,
+        raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_work_order_id)
+    DO UPDATE SET
+        source_work_order_type_id = EXCLUDED.source_work_order_type_id,
+        source_service_location_id = EXCLUDED.source_service_location_id,
+        work_needed = EXCLUDED.work_needed,
+        work_performed = EXCLUDED.work_performed,
+        source_added_by_account_id = EXCLUDED.source_added_by_account_id,
+        added_on_date = EXCLUDED.added_on_date,
+        source_account_id = EXCLUDED.source_account_id,
+        service_date = EXCLUDED.service_date,
+        scheduled_time = EXCLUDED.scheduled_time,
+        start_time = EXCLUDED.start_time,
+        complete_time = EXCLUDED.complete_time,
+        route_sequence = EXCLUDED.route_sequence,
+        estimated_minutes = EXCLUDED.estimated_minutes,
+        labor_cost = EXCLUDED.labor_cost,
+        price = EXCLUDED.price,
+        is_invoiced = EXCLUDED.is_invoiced,
+        sync_date = EXCLUDED.sync_date,
+        email_header = EXCLUDED.email_header,
+        email_message = EXCLUDED.email_message,
+        email_status = EXCLUDED.email_status,
+        email_sent_date = EXCLUDED.email_sent_date,
+        company_id = EXCLUDED.company_id,
+        notes = EXCLUDED.notes,
+        note_is_alert = EXCLUDED.note_is_alert,
+        note_is_handled = EXCLUDED.note_is_handled,
+        is_deleted = EXCLUDED.is_deleted,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
 _IMPORT_CHUNK_SIZE = max(1, int(os.getenv("SKIMMER_IMPORT_CHUNK_SIZE", "500")))
 
 TABLE_NAME_ALIASES = {
@@ -470,6 +568,13 @@ TABLE_NAME_ALIASES = {
     "entry_descriptions": "entry_descriptions",
     "servicestopentry": "service_stop_entries",
     "service_stop_entries": "service_stop_entries",
+    "workorder": "work_orders",
+    "workorders": "work_orders",
+    "work_orders": "work_orders",
+    "workordertype": "work_order_types",
+    "workordertypes": "work_order_types",
+    "work_order_type": "work_order_types",
+    "work_order_types": "work_order_types",
 }
 
 
@@ -638,6 +743,58 @@ def _service_stop_entry_params(row, source_system="skimmer"):
     )
 
 
+def _work_order_type_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "Description"),
+        row_get(row, "DefaultWorkNeeded"),
+        row_get(row, "DefaultWorkPerformed"),
+        row_get(row, "DefaultMinutes"),
+        row_get(row, "DefaultLaborCost"),
+        row_get(row, "DefaultPrice"),
+        row_get(row, "DefaultEmailSubject"),
+        row_get(row, "DefaultEmailHeader"),
+        row_get(row, "DefaultEmailMessage"),
+        row_get(row, "CompanyId"),
+        row_json(row),
+    )
+
+
+def _work_order_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "WorkOrderTypeId"),
+        row_get(row, "ServiceLocationId"),
+        row_get(row, "WorkNeeded"),
+        row_get(row, "WorkPerformed"),
+        row_get(row, "AddedByAccountId"),
+        row_get(row, "AddedOnDate"),
+        row_get(row, "AccountId"),
+        row_get(row, "ServiceDate"),
+        row_get(row, "ScheduledTime"),
+        row_get(row, "StartTime"),
+        row_get(row, "CompleteTime"),
+        row_get(row, "RouteSequence"),
+        row_get(row, "EstimatedMinutes"),
+        row_get(row, "LaborCost"),
+        row_get(row, "Price"),
+        bool(row_get(row, "IsInvoiced")),
+        row_get(row, "SyncDate"),
+        row_get(row, "EmailHeader"),
+        row_get(row, "EmailMessage"),
+        row_get(row, "EmailStatus"),
+        row_get(row, "EmailSentDate"),
+        row_get(row, "CompanyId"),
+        row_get(row, "Notes"),
+        bool(row_get(row, "NoteIsAlert")),
+        bool(row_get(row, "NoteIsHandled")),
+        bool(row_get(row, "Deleted")),
+        row_json(row),
+    )
+
+
 def import_pools(pg_conn, sqlite_conn, source_system="skimmer"):
     imported = 0
     started_at = time.perf_counter()
@@ -784,6 +941,56 @@ def import_route_stops(pg_conn, sqlite_conn, source_system="skimmer"):
     return imported
 
 
+def import_work_order_types(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        "SELECT id, Description, DefaultWorkNeeded, DefaultWorkPerformed, DefaultMinutes, DefaultLaborCost, DefaultPrice, DefaultEmailSubject, DefaultEmailHeader, DefaultEmailMessage, CompanyId FROM WorkOrderType",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            WORK_ORDER_TYPE_UPSERT_SQL,
+            [_work_order_type_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(
+            f"work_order_types chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}"
+        )
+    log(
+        f"work_order_types imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
+    )
+    return imported
+
+
+def import_work_orders(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        "SELECT id, WorkOrderTypeId, ServiceLocationId, WorkNeeded, WorkPerformed, AddedByAccountId, AddedOnDate, AccountId, ServiceDate, ScheduledTime, StartTime, CompleteTime, RouteSequence, EstimatedMinutes, LaborCost, Price, IsInvoiced, SyncDate, EmailHeader, EmailMessage, EmailStatus, EmailSentDate, CompanyId, Notes, NoteIsAlert, NoteIsHandled, Deleted FROM WorkOrder",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            WORK_ORDER_UPSERT_SQL,
+            [_work_order_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(
+            f"work_orders chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}"
+        )
+    log(
+        f"work_orders imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
+    )
+    return imported
+
+
 def import_service_stop_entries(pg_conn, sqlite_conn, source_system="skimmer"):
     imported = 0
     started_at = time.perf_counter()
@@ -889,6 +1096,10 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
                 counts["route_assignments_imported"] = import_route_assignments(pg_conn, sqlite_conn, source_system=source_system)
             if "route_stops" in normalized_tables:
                 counts["route_stops_imported"] = import_route_stops(pg_conn, sqlite_conn, source_system=source_system)
+            if "work_order_types" in normalized_tables:
+                counts["work_order_types_imported"] = import_work_order_types(pg_conn, sqlite_conn, source_system=source_system)
+            if "work_orders" in normalized_tables:
+                counts["work_orders_imported"] = import_work_orders(pg_conn, sqlite_conn, source_system=source_system)
             if "entry_descriptions" in normalized_tables:
                 counts["entry_descriptions_imported"] = import_entry_descriptions(pg_conn, sqlite_conn, source_system=source_system)
             if "service_stop_entries" in normalized_tables:
@@ -916,7 +1127,7 @@ def parse_args():
     parser.add_argument(
         "--tables",
         default="customers",
-        help="Comma-separated tables to import: customers,pools,locations,accounts,route_assignments,route_stops,entry_descriptions,service_stop_entries,all",
+        help="Comma-separated tables to import: customers,pools,locations,accounts,route_assignments,route_stops,work_order_types,work_orders,entry_descriptions,service_stop_entries,all",
     )
     parser.add_argument("--source-system", default="skimmer", help="Source system identifier.")
     return parser.parse_args()
@@ -942,6 +1153,8 @@ def main():
             "accounts",
             "route_assignments",
             "route_stops",
+            "work_order_types",
+            "work_orders",
             "entry_descriptions",
             "service_stop_entries",
         ]
