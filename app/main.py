@@ -714,7 +714,11 @@ async def ghl_put(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
     r = await _ghl_client.put(url, headers=_ghl_headers(), json=payload)
     if r.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"GHL PUT {path} failed: {r.status_code}")
+        detail = (r.text or "").strip()
+        raise HTTPException(
+            status_code=502,
+            detail=f"GHL PUT {path} failed: {r.status_code}{f' {detail[:300]}' if detail else ''}",
+        )
     return r.json() if (r.text or "").strip() else {}
 
 async def ghl_list_messages(conversation_id: str, limit: int = 50) -> List[Dict[str, Any]]:
@@ -884,6 +888,38 @@ async def ghl_fetch_all_contacts(page_limit: int = CUSTOMER_SYNC_PAGE_LIMIT) -> 
 
 async def ghl_update_contact(contact_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return await ghl_put(f"/contacts/{contact_id}", payload)
+
+
+def _ghl_update_payload_variants(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Try the full sync payload first, then progressively narrower variants for picky contacts."""
+    variants: List[Dict[str, Any]] = []
+
+    def _append(candidate: Dict[str, Any]) -> None:
+        clean_candidate = {key: value for key, value in candidate.items() if value not in (None, "", [], {})}
+        if clean_candidate and clean_candidate not in variants:
+            variants.append(clean_candidate)
+
+    _append(dict(payload))
+    _append({key: value for key, value in payload.items() if key != "type"})
+    _append({key: value for key, value in payload.items() if key not in {"type", "name"}})
+    _append({key: value for key, value in payload.items() if key in {"firstName", "lastName", "email", "phone"}})
+    _append({key: value for key, value in payload.items() if key in {"email", "phone"}})
+    _append({key: value for key, value in payload.items() if key in {"phone"}})
+    return variants
+
+
+async def ghl_update_contact_tolerant(contact_id: str, payload: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    last_exc: Optional[Exception] = None
+    for candidate in _ghl_update_payload_variants(payload):
+        try:
+            response = await ghl_update_contact(contact_id, candidate)
+            return response, candidate
+        except Exception as exc:
+            last_exc = exc
+            continue
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("No payload variants available for contact update")
 
 
 async def ghl_create_contact(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -2035,7 +2071,7 @@ async def skimmer_customer_sync(request: Request, limit: int = 1000, dry_run: in
                 continue
 
             try:
-                await ghl_update_contact(contact_id, payload)
+                _, applied_payload = await ghl_update_contact_tolerant(contact_id, payload)
                 _update_sk_customer_sync_state(sk_customer_id, ghl_contact_id=contact_id, error=None)
                 summary["updated"] += 1
                 summary["items"].append(
@@ -2045,6 +2081,7 @@ async def skimmer_customer_sync(request: Request, limit: int = 1000, dry_run: in
                         "action": "updated",
                         "ghl_contact_id": contact_id,
                         "match_methods": methods,
+                        "applied_payload_keys": sorted(applied_payload.keys()),
                     }
                 )
             except Exception as exc:
