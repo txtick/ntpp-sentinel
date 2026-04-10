@@ -269,8 +269,8 @@ textarea {
 .panel-detail {
   align-self: start;
   position: sticky;
-  top: 24px;
-  max-height: calc(100vh - 48px);
+  top: 12px;
+  max-height: calc(100vh - 12px);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -368,6 +368,21 @@ textarea {
   background: rgba(24, 34, 45, 0.04);
   padding: 12px;
   border-radius: var(--radius-sm);
+}
+
+.chem-list {
+  display: grid;
+  gap: 8px;
+}
+
+.chem-chip {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(24, 34, 45, 0.04);
+  border: 1px solid rgba(24, 34, 45, 0.08);
 }
 
 .pill {

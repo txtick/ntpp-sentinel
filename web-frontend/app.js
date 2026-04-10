@@ -38,7 +38,7 @@ const viewMeta = {
 };
 
 const filters = {
-  alerts: { status: "", category: "", limit: 40 },
+  alerts: { status: "", category: "", rule_code: "", search: "", limit: 40 },
   customers: { search: "", operational_only: 1, status: "", limit: 50 },
   technicians: {
     search: "",
@@ -179,17 +179,18 @@ function formatAlertSummary(item) {
 
 function formatAlertSubline(item) {
   const metadata = item.metadata_json || {};
+  const assignedTech = metadata.assigned_technician?.tech_name;
   if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
     const observedCost = currency(metadata.observed_count);
     const threshold = currency(metadata.threshold_value);
     if (observedCost && threshold) {
-      return `revenue · cost ${observedCost} vs threshold ${threshold}`;
+      return `revenue · cost ${observedCost} vs threshold ${threshold}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
     }
     if (observedCost) {
-      return `revenue · cost ${observedCost}`;
+      return `revenue · cost ${observedCost}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
     }
   }
-  return `${item.category} · rule ${item.rule_code}`;
+  return `${item.category} · rule ${item.rule_code}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
 }
 
 function badge(value, typeHint = "") {
@@ -247,6 +248,17 @@ function renderFilters() {
           <option value="revenue" ${f.category === "revenue" ? "selected" : ""}>Revenue</option>
         </select>
       </label>
+      <label class="filter-chip"><span>Revenue Rule</span>
+        <select id="filter-alert-rule">
+          <option value="">All</option>
+          <option value="chemical_cost_review_high" ${f.rule_code === "chemical_cost_review_high" ? "selected" : ""}>Chemical Cost Review</option>
+          <option value="filter_clean_trend" ${f.rule_code === "filter_clean_trend" ? "selected" : ""}>Filter Clean Trend</option>
+          <option value="filter_clean_missing_psi" ${f.rule_code === "filter_clean_missing_psi" ? "selected" : ""}>Filter Clean Missing PSI</option>
+          <option value="drain_refill_cya_repeat" ${f.rule_code === "drain_refill_cya_repeat" ? "selected" : ""}>Drain / Refill</option>
+          <option value="phosphate_treatment_high" ${f.rule_code === "phosphate_treatment_high" ? "selected" : ""}>Phosphate Treatment</option>
+        </select>
+      </label>
+      <label class="filter-chip"><span>Search</span><input id="filter-alert-search" value="${escapeHtml(f.search)}" placeholder="Customer, rule, pool, opportunity" /></label>
     `;
     document.getElementById("filter-alert-status").onchange = (e) => {
       filters.alerts.status = e.target.value;
@@ -254,6 +266,14 @@ function renderFilters() {
     };
     document.getElementById("filter-alert-category").onchange = (e) => {
       filters.alerts.category = e.target.value;
+      loadAlerts(true);
+    };
+    document.getElementById("filter-alert-rule").onchange = (e) => {
+      filters.alerts.rule_code = e.target.value;
+      loadAlerts(true);
+    };
+    document.getElementById("filter-alert-search").onchange = (e) => {
+      filters.alerts.search = e.target.value.trim();
       loadAlerts(true);
     };
     return;
@@ -507,6 +527,9 @@ function renderAlertDetail(detail) {
   const metadata = item.metadata_json || {};
   const observedCost = currency(metadata.observed_count);
   const thresholdCost = currency(metadata.threshold_value);
+  const assignedTech = metadata.assigned_technician?.tech_name || "—";
+  const recentTech = metadata.recent_service_technician?.tech_name || "—";
+  const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -520,6 +543,8 @@ function renderAlertDetail(detail) {
         <div class="meta-stack">
           <div class="meta-row"><span>Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></div>
           <div class="meta-row"><span>Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></div>
+          <div class="meta-row"><span>Assigned Technician</span><strong>${escapeHtml(assignedTech)}</strong></div>
+          <div class="meta-row"><span>Recent Service Tech</span><strong>${escapeHtml(recentTech)}</strong></div>
           ${observedCost ? `<div class="meta-row"><span>Observed Cost</span><strong>${escapeHtml(observedCost)}</strong></div>` : ""}
           ${thresholdCost ? `<div class="meta-row"><span>Threshold</span><strong>${escapeHtml(thresholdCost)}</strong></div>` : ""}
           <div class="meta-row"><span>Last Detected</span><strong>${formatDateTime(item.last_detected_at)}</strong></div>
@@ -545,6 +570,28 @@ function renderAlertDetail(detail) {
           <label><span>Due At</span><input id="alert-reminder-due" type="datetime-local" /></label>
           <label><span>Reminder Note</span><textarea id="alert-reminder-note" placeholder="Follow up with customer"></textarea></label>
           <button class="button button-primary" id="alert-reminder-button">Create Reminder</button>
+        </div>
+      </section>
+      <section class="detail-card">
+        <h3>Visit Breakdown</h3>
+        <div class="event-list">
+          ${visitBreakdown.length ? visitBreakdown.map((visit) => `
+            <div class="item-card">
+              <div class="item-card-header">
+                <strong>${formatDateTime(visit.service_date)}</strong>
+                <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || String(visit.visit_estimated_cost || "—"))}</span>
+              </div>
+              <div class="muted">${escapeHtml(visit.technician_name || "No technician linked")}</div>
+              <div class="chem-list">
+                ${(visit.chemicals || []).map((chem) => `
+                  <div class="chem-chip">
+                    <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
+                    <span class="dense">${escapeHtml(currency(chem.estimated_cost) || String(chem.estimated_cost || "—"))}</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          `).join("") : `<div class="empty-state">No visit-level chemical detail linked for this alert yet.</div>`}
         </div>
       </section>
       <section class="detail-card">

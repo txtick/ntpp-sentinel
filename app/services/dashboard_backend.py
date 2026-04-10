@@ -225,6 +225,176 @@ def _build_metadata(category: str, row: Dict[str, Any], refresh_run_id: int) -> 
     return metadata
 
 
+def _fetch_revenue_rule_context(cur, rule_code: Optional[str]) -> Dict[str, Any]:
+    if not rule_code:
+        return {}
+    cur.execute(
+        """
+        SELECT
+            rule_code,
+            opportunity_type,
+            threshold_value,
+            window_days,
+            description
+        FROM revenue_rule_config
+        WHERE rule_code = %s
+        """,
+        (str(rule_code),),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else {}
+
+
+def _fetch_revenue_technician_context(cur, pool_id: Optional[int]) -> Dict[str, Any]:
+    if pool_id is None:
+        return {}
+
+    payload: Dict[str, Any] = {}
+
+    cur.execute(
+        """
+        SELECT
+            t.id AS technician_id,
+            t.source_account_id AS tech_id,
+            COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
+            t.role_type,
+            a.day_of_week,
+            a.frequency,
+            a.start_date,
+            a.end_date
+        FROM service_location_technician_assignments a
+        JOIN technicians t ON t.id = a.technician_id
+        WHERE a.pool_id = %s
+          AND a.is_deleted = FALSE
+          AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+        ORDER BY
+            a.sequence ASC NULLS LAST,
+            a.start_date DESC NULLS LAST,
+            a.id DESC
+        LIMIT 1
+        """,
+        (int(pool_id),),
+    )
+    current_assignment = cur.fetchone()
+    if current_assignment:
+        payload["assigned_technician"] = dict(current_assignment)
+
+    cur.execute(
+        """
+        SELECT
+            t.id AS technician_id,
+            t.source_account_id AS tech_id,
+            COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
+            t.role_type,
+            s.service_date
+        FROM technician_route_stops s
+        JOIN technicians t ON t.id = s.technician_id
+        WHERE s.pool_id = %s
+          AND s.is_skipped = FALSE
+        ORDER BY s.service_date DESC, s.sequence ASC NULLS LAST
+        LIMIT 1
+        """,
+        (int(pool_id),),
+    )
+    recent_service = cur.fetchone()
+    if recent_service:
+        payload["recent_service_technician"] = dict(recent_service)
+
+    return payload
+
+
+def _fetch_revenue_visit_breakdown(cur, pool_id: Optional[int], window_days: Optional[int]) -> List[Dict[str, Any]]:
+    if pool_id is None:
+        return []
+
+    safe_window_days = int(window_days or 30)
+    cur.execute(
+        """
+        SELECT
+            d.service_date,
+            d.description,
+            d.dosage_key,
+            d.unit_of_measure,
+            d.quantity,
+            d.entry_cost,
+            d.estimated_cost,
+            COALESCE(
+                NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''),
+                NULLIF(t.username, ''),
+                NULL
+            ) AS technician_name,
+            t.source_account_id AS technician_tech_id
+        FROM chemical_dose_events d
+        LEFT JOIN technician_route_stops s
+          ON s.pool_id = d.pool_id
+         AND s.is_skipped = FALSE
+         AND s.service_date::date = d.service_date::date
+        LEFT JOIN technicians t ON t.id = s.technician_id
+        WHERE d.pool_id = %s
+          AND d.service_date >= NOW() - make_interval(days => %s)
+        ORDER BY d.service_date DESC, d.id ASC
+        """,
+        (int(pool_id), safe_window_days),
+    )
+    rows = cur.fetchall()
+    visits: List[Dict[str, Any]] = []
+    by_service_date: Dict[str, Dict[str, Any]] = {}
+
+    for row in rows:
+        service_date = row.get("service_date")
+        key = str(service_date)
+        visit = by_service_date.get(key)
+        if not visit:
+            visit = {
+                "service_date": key,
+                "technician_name": row.get("technician_name"),
+                "technician_tech_id": row.get("technician_tech_id"),
+                "visit_estimated_cost": 0,
+                "chemicals": [],
+            }
+            by_service_date[key] = visit
+            visits.append(visit)
+
+        estimated_cost = row.get("estimated_cost") or 0
+        try:
+            visit["visit_estimated_cost"] = float(visit["visit_estimated_cost"]) + float(estimated_cost)
+        except Exception:
+            pass
+
+        visit["chemicals"].append(
+            {
+                "description": row.get("description"),
+                "dosage_key": row.get("dosage_key"),
+                "unit_of_measure": row.get("unit_of_measure"),
+                "quantity": row.get("quantity"),
+                "entry_cost": row.get("entry_cost"),
+                "estimated_cost": row.get("estimated_cost"),
+            }
+        )
+
+    return visits
+
+
+def _build_revenue_metadata(cur, row: Dict[str, Any], refresh_run_id: int) -> Dict[str, Any]:
+    metadata = _build_metadata("revenue", row, refresh_run_id)
+    rule_context = _fetch_revenue_rule_context(cur, row.get("rule_code"))
+    if rule_context.get("threshold_value") is not None:
+        metadata["threshold_value"] = rule_context.get("threshold_value")
+    if rule_context.get("window_days") is not None:
+        metadata["window_days"] = rule_context.get("window_days")
+    if rule_context.get("description"):
+        metadata["rule_description"] = rule_context.get("description")
+
+    tech_context = _fetch_revenue_technician_context(cur, row.get("pool_id"))
+    metadata.update(tech_context)
+
+    visit_breakdown = _fetch_revenue_visit_breakdown(cur, row.get("pool_id"), rule_context.get("window_days"))
+    if visit_breakdown:
+        metadata["visit_breakdown"] = visit_breakdown
+
+    return metadata
+
+
 def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
 
@@ -322,7 +492,7 @@ def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
             else:
                 item["entity_type"] = "customer"
                 item["entity_id"] = str(item["customer_id"])
-            item["metadata_json"] = _build_metadata("revenue", item, refresh_run_id)
+            item["metadata_json"] = _build_revenue_metadata(cur, item, refresh_run_id)
             candidates.append(item)
 
     return candidates
@@ -832,6 +1002,8 @@ def list_alert_instances(
     *,
     status: Optional[str] = None,
     category: Optional[str] = None,
+    rule_code: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -843,6 +1015,8 @@ def list_alert_instances(
 
     normalized_status = _normalize_status(status)
     normalized_category = _normalize_status(category)
+    normalized_rule_code = (rule_code or "").strip()
+    search_value = (search or "").strip()
 
     if normalized_status:
         if normalized_status not in ACTIONABLE_ALERT_STATUSES:
@@ -852,6 +1026,24 @@ def list_alert_instances(
     if normalized_category:
         filters.append("category = %s")
         params.append(normalized_category)
+    if normalized_rule_code:
+        filters.append("rule_code = %s")
+        params.append(normalized_rule_code)
+    if search_value:
+        filters.append(
+            """
+            (
+                title ILIKE %s
+                OR summary ILIKE %s
+                OR rule_code ILIKE %s
+                OR COALESCE(metadata_json->>'customer_name', '') ILIKE %s
+                OR COALESCE(metadata_json->>'pool_name', '') ILIKE %s
+                OR COALESCE(metadata_json->>'opportunity_type', '') ILIKE %s
+            )
+            """
+        )
+        pattern = f"%{search_value}%"
+        params.extend([pattern, pattern, pattern, pattern, pattern, pattern])
 
     where_sql = ""
     if filters:
@@ -922,6 +1114,12 @@ def list_alert_instances(
         "limit": safe_limit,
         "offset": safe_offset,
         "items": rows,
+        "filters": {
+            "status": normalized_status,
+            "category": normalized_category,
+            "rule_code": normalized_rule_code or None,
+            "search": search_value or None,
+        },
     }
 
 

@@ -117,10 +117,19 @@ def api_technician_detail(tech_id: str):
 
 
 @app.get("/api/alerts")
-def api_alerts(status: str = "", category: str = "", limit: int = 100, offset: int = 0):
+def api_alerts(
+    status: str = "",
+    category: str = "",
+    rule_code: str = "",
+    search: str = "",
+    limit: int = 100,
+    offset: int = 0,
+):
     return list_alert_instances(
         status=status or None,
         category=category or None,
+        rule_code=rule_code or None,
+        search=search or None,
         limit=limit,
         offset=offset,
     )
