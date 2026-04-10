@@ -2150,10 +2150,11 @@ def update_alert_instance_status(
     next_status: str,
     actor: str,
     note: Optional[str] = None,
+    snoozed_until: Optional[str] = None,
 ) -> Dict[str, Any]:
     require_postgres_configured()
     normalized_status = _normalize_status(next_status)
-    if normalized_status not in ("acknowledged", "resolved"):
+    if normalized_status not in ("acknowledged", "resolved", "snoozed"):
         raise HTTPException(status_code=400, detail=f"Unsupported next status '{next_status}'")
 
     with pg() as conn:
@@ -2166,6 +2167,12 @@ def update_alert_instance_status(
             if normalized_status == "acknowledged" and current_status == "resolved":
                 return {"ok": True, "item": item}
 
+            snooze_dt = None
+            if normalized_status == "snoozed":
+                snooze_dt = _parse_dt(snoozed_until)
+                if not snooze_dt:
+                    raise HTTPException(status_code=400, detail="snoozed_until must be a valid ISO datetime")
+
             now_field_updates = []
             params: List[Any] = []
 
@@ -2176,6 +2183,14 @@ def update_alert_instance_status(
                 now_field_updates.append("snoozed_until = NULL")
                 now_field_updates.append("updated_at = NOW()")
                 event_type = "acknowledged"
+            elif normalized_status == "snoozed":
+                now_field_updates.append("status = %s")
+                params.append("snoozed")
+                now_field_updates.append("snoozed_until = %s")
+                params.append(snooze_dt)
+                now_field_updates.append("acknowledged_at = COALESCE(acknowledged_at, NOW())")
+                now_field_updates.append("updated_at = NOW()")
+                event_type = "snoozed"
             else:
                 now_field_updates.append("status = %s")
                 params.append("resolved")
@@ -2195,6 +2210,8 @@ def update_alert_instance_status(
             )
 
             payload = {"status": normalized_status}
+            if snooze_dt is not None:
+                payload["snoozed_until"] = snooze_dt
             if note:
                 payload["note"] = str(note).strip()[:1000]
             cur.execute(

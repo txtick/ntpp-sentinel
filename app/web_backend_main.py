@@ -179,6 +179,24 @@ def api_alert_resolve(request: Request, alert_id: int, actor: str = "api", note:
     )
 
 
+@app.post("/api/alerts/{alert_id}/snooze")
+def api_alert_snooze(
+    request: Request,
+    alert_id: int,
+    snoozed_until: str,
+    actor: str = "api",
+    note: str = "",
+):
+    _auth_or_401(request)
+    return update_alert_instance_status(
+        alert_id,
+        next_status="snoozed",
+        actor=actor,
+        note=note or None,
+        snoozed_until=snoozed_until,
+    )
+
+
 @app.post("/jobs/dashboard/refresh")
 def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
     _auth_or_401(request)
