@@ -32,17 +32,20 @@
     "tds"
   ],
   "recommended_highs": {
-    "total_chlorine": 4,
-    "ph": 7.8,
-    "temperature": 82,
-    "tds": 2000,
-    "alkalinity": 120,
-    "lsi": 0.3,
-    "salt": 3400,
-    "filter_pressure": null,
-    "phosphates": 500,
-    "calcium_hardness": 400,
-    "cya": 50
+    "total_chlorine": 20,
+    "ph": 10,
+    "temperature": 105,
+    "tds": 5000,
+    "alkalinity": 300,
+    "lsi": 2.0,
+    "salt": 5000,
+    "filter_pressure": 40,
+    "phosphates": 1000,
+    "calcium_hardness": 700,
+    "cya": 200
+  },
+  "display_precision": {
+    "lsi": 2
   },
   "metric_labels": {
     "ph": "pH",

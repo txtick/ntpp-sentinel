@@ -47,17 +47,20 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "tds",
     ],
     "recommended_highs": {
-        "total_chlorine": 4,
-        "ph": 7.8,
-        "temperature": 82,
-        "tds": 2000,
-        "alkalinity": 120,
-        "lsi": 0.3,
-        "salt": 3400,
-        "filter_pressure": None,
-        "phosphates": 500,
-        "calcium_hardness": 400,
-        "cya": 50,
+        "total_chlorine": 5,
+        "ph": 9.36,
+        "temperature": 98.4,
+        "tds": 2400,
+        "alkalinity": 144,
+        "lsi": 0.36,
+        "salt": 4080,
+        "filter_pressure": 20,
+        "phosphates": 600,
+        "calcium_hardness": 480,
+        "cya": 60,
+    },
+    "display_precision": {
+        "lsi": 2,
     },
     "metric_labels": {
         "ph": "pH",
@@ -116,6 +119,10 @@ def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str
     highs = override.get("recommended_highs")
     if isinstance(highs, dict):
         policy["recommended_highs"].update(highs)
+
+    precision = override.get("display_precision")
+    if isinstance(precision, dict):
+        policy["display_precision"].update(precision)
 
     return policy
 

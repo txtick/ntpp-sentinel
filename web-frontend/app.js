@@ -32,17 +32,20 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     "tds",
   ],
   recommended_highs: {
-    total_chlorine: 4,
-    ph: 7.8,
-    temperature: 82,
-    tds: 2000,
-    alkalinity: 120,
-    lsi: 0.3,
-    salt: 3400,
-    filter_pressure: null,
-    phosphates: 500,
-    calcium_hardness: 400,
-    cya: 50,
+    total_chlorine: 5,
+    ph: 9.36,
+    temperature: 98.4,
+    tds: 2400,
+    alkalinity: 144,
+    lsi: 0.36,
+    salt: 4080,
+    filter_pressure: 20,
+    phosphates: 600,
+    calcium_hardness: 480,
+    cya: 60,
+  },
+  display_precision: {
+    lsi: 2,
   },
   metric_labels: {
     ph: "pH",
@@ -278,6 +281,10 @@ function mergeCustomerChartPolicy(policy = {}) {
       ...DEFAULT_CUSTOMER_CHART_POLICY.recommended_highs,
       ...(policy.recommended_highs || {}),
     },
+    display_precision: {
+      ...DEFAULT_CUSTOMER_CHART_POLICY.display_precision,
+      ...(policy.display_precision || {}),
+    },
     metric_labels: {
       ...DEFAULT_CUSTOMER_CHART_POLICY.metric_labels,
       ...(policy.metric_labels || {}),
@@ -344,12 +351,13 @@ function formatShortDate(value) {
   });
 }
 
-function formatAxisValue(value) {
+function formatAxisValue(value, readingKey = "") {
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
-  if (Math.abs(number) >= 100) return number.toFixed(0);
-  if (Math.abs(number) >= 10) return number.toFixed(1);
-  return number.toFixed(2);
+  const normalizedKey = normalizeMetricKey(readingKey);
+  const precision = customerChartPolicy().display_precision?.[normalizedKey];
+  if (Number.isFinite(Number(precision))) return number.toFixed(Number(precision));
+  return number.toFixed(0);
 }
 
 function chemistrySeriesMeta(seriesItem) {
@@ -1198,12 +1206,7 @@ function buildLineChart(seriesItem) {
   const recommendedHigh = Number(customerChartPolicy().recommended_highs?.[readingKey]);
   const hasRecommendedHigh = Number.isFinite(recommendedHigh) && recommendedHigh > 0;
   const paddedMin = 0;
-  const recommendedTop = hasRecommendedHigh ? recommendedHigh * 1.2 : null;
-  const paddedMax = Math.max(
-    rawMax,
-    hasRecommendedHigh ? recommendedTop : 0,
-    readingKey === "filter_pressure" ? Math.max(rawMax * 1.2, 10) : 0
-  );
+  const paddedMax = hasRecommendedHigh ? recommendedHigh : Math.max(rawMax * 1.2, 10);
   const valueRange = paddedMax - paddedMin || 1;
   const span = paddedMax - paddedMin;
   const stepX = points.length === 1 ? 0 : (xMax - xMin) / (points.length - 1);
@@ -1228,7 +1231,7 @@ function buildLineChart(seriesItem) {
     const y = yForValue(point.value);
     const meta = chemistrySeriesMeta(seriesItem);
     return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${meta.sparse ? "4.6" : "3.5"}" class="chart-dot${meta.sparse ? " chart-dot-sparse" : ""}">
-      <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value)}`)}</title>
+      <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value, readingKey)}`)}</title>
     </circle>`;
   }).join("");
 
@@ -1240,7 +1243,7 @@ function buildLineChart(seriesItem) {
         const y = yForValue(tick);
         return `
           <line x1="${xMin}" y1="${y.toFixed(1)}" x2="${xMax}" y2="${y.toFixed(1)}" class="chart-gridline" />
-          <text x="${xMin - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="chart-tick-label">${escapeHtml(formatAxisValue(tick))}</text>
+          <text x="${xMin - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="chart-tick-label">${escapeHtml(formatAxisValue(tick, readingKey))}</text>
         `;
       }).join("")}
       ${xTickIndexes.map((index) => {
@@ -1363,12 +1366,12 @@ async function loadCustomerProfile() {
                 <article class="chart-card chart-card-large">
                   <div>
                     <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
-                    ${multiplePools ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
+                    ${multiplePools && seriesItem.poolName && seriesItem.poolName !== "Pool" ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
                   </div>
-                  ${buildLineChart(seriesItem)}
+                    ${buildLineChart(seriesItem)}
                   <div class="chart-caption">
-                    <span>Latest ${escapeHtml(formatAxisValue(latest?.value))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
-                    <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—"))}</span>
+                    <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
+                    <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
                   </div>
                 </article>
               `;

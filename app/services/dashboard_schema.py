@@ -110,6 +110,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     WHEN lower(input_text) LIKE '%filter pressure%' OR lower(input_text) = 'psi' THEN 'filter_pressure'
                     WHEN lower(input_text) LIKE '%salt%' THEN 'salt'
                     WHEN lower(input_text) LIKE '%tds%' THEN 'tds'
+                    WHEN lower(input_text) LIKE '%saturation index%' OR lower(input_text) LIKE '%lsi%' THEN 'lsi'
                     WHEN lower(input_text) LIKE '%water temp%' OR lower(input_text) LIKE '%temperature%' THEN 'water_temperature'
                     WHEN lower(input_text) LIKE '%total chlorine%' THEN 'total_chlorine'
                     ELSE trim(BOTH '_' FROM regexp_replace(lower(input_text), '[^a-z0-9]+', '_', 'g'))
