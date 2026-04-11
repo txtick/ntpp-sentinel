@@ -450,14 +450,14 @@ function renderAlertCharts(detail, mode = "detail") {
   if (!series.length) {
     return `<div class="empty-state">No matching chemistry chart data for this alert yet.</div>`;
   }
-  const gridClass = mode === "profile" ? "chart-grid chart-grid-wide" : "chart-grid";
+  const gridClass = mode === "profile" ? "chart-grid chart-grid-alert" : "chart-grid chart-grid-alert";
   return `
     <div class="${gridClass}">
       ${series.map((seriesItem) => {
         const latest = seriesItem.points[seriesItem.points.length - 1];
         const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
         return `
-          <article class="chart-card">
+          <article class="chart-card chart-card-alert">
             <div>
               <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
               ${seriesItem.poolName && seriesItem.poolName !== "Pool" ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}

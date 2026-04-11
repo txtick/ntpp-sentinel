@@ -1,18 +1,18 @@
 :root {
-  --bg: #f3efe5;
-  --bg-strong: #e7dbc0;
-  --surface: rgba(255, 251, 244, 0.86);
-  --surface-strong: #fffaf0;
-  --ink: #18222d;
-  --muted: #5f6c79;
-  --line: rgba(24, 34, 45, 0.12);
-  --accent: #b5512d;
-  --accent-strong: #8e3f23;
-  --accent-soft: rgba(181, 81, 45, 0.12);
-  --teal: #1f6b72;
+  --bg: #edf4fb;
+  --bg-strong: #dbe8f5;
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-strong: #ffffff;
+  --ink: #1a2430;
+  --muted: #617285;
+  --line: rgba(27, 55, 86, 0.12);
+  --accent: #2f96e5;
+  --accent-strong: #256da9;
+  --accent-soft: rgba(47, 150, 229, 0.12);
+  --teal: #1f5f94;
   --gold: #bf8b2e;
   --danger: #b42318;
-  --shadow: 0 18px 40px rgba(64, 47, 27, 0.12);
+  --shadow: 0 18px 40px rgba(25, 47, 78, 0.12);
   --radius-lg: 24px;
   --radius-md: 16px;
   --radius-sm: 12px;
@@ -32,9 +32,9 @@ body {
   max-width: 100%;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at top left, rgba(191, 139, 46, 0.2), transparent 26%),
-    radial-gradient(circle at bottom right, rgba(31, 107, 114, 0.18), transparent 22%),
-    linear-gradient(180deg, #f7f3eb 0%, #efe6d6 100%);
+    radial-gradient(circle at top left, rgba(47, 150, 229, 0.18), transparent 24%),
+    radial-gradient(circle at bottom right, rgba(31, 95, 148, 0.12), transparent 20%),
+    linear-gradient(180deg, #f7fbff 0%, #e9f1f8 100%);
   color: var(--ink);
   font-family: var(--font-body);
 }
@@ -59,9 +59,12 @@ textarea {
 .rail,
 .panel {
   backdrop-filter: blur(18px);
-  background: var(--surface);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+}
+
+.panel {
+  background: var(--surface);
 }
 
 .rail {
@@ -70,6 +73,9 @@ textarea {
   align-self: start;
   border-radius: 28px;
   padding: 24px;
+  background: linear-gradient(180deg, #26384c 0%, #31485f 100%);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .brand h1,
@@ -96,6 +102,13 @@ textarea {
   color: var(--muted);
 }
 
+.rail .subtitle,
+.rail .muted,
+.rail .panel-subtitle,
+.rail .meta-row span {
+  color: rgba(230, 238, 247, 0.76);
+}
+
 .eyebrow {
   margin: 0 0 10px;
   text-transform: uppercase;
@@ -103,6 +116,10 @@ textarea {
   font-size: 0.72rem;
   color: var(--accent-strong);
   font-weight: 700;
+}
+
+.rail .eyebrow {
+  color: #9fd2ff;
 }
 
 .nav {
@@ -125,6 +142,9 @@ textarea {
   text-align: left;
   padding: 14px 16px;
   font-weight: 700;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .nav-link:hover,
@@ -133,7 +153,7 @@ textarea {
 }
 
 .nav-link.is-active {
-  background: linear-gradient(135deg, var(--accent) 0%, #cf7b3b 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, #4ba8ef 100%);
   border-color: transparent;
   color: white;
 }
@@ -143,8 +163,14 @@ textarea {
   gap: 12px;
   padding: 18px;
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.rail .auth-card,
+.rail .auth-card h2,
+.rail label span {
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .auth-card h2 {
@@ -172,6 +198,14 @@ textarea {
   border-radius: var(--radius-sm);
   border: 1px solid rgba(24, 34, 45, 0.16);
   background: rgba(255, 255, 255, 0.9);
+}
+
+.rail input,
+.rail select,
+.rail textarea {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink);
 }
 
 textarea {
@@ -222,7 +256,7 @@ textarea {
 }
 
 .button-primary {
-  background: linear-gradient(135deg, var(--accent) 0%, #cf7b3b 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, #4ba8ef 100%);
   color: white;
   border-color: transparent;
 }
@@ -293,6 +327,11 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
 }
 
+.chart-grid-alert {
+  grid-template-columns: minmax(0, 640px);
+  justify-content: start;
+}
+
 .chart-card {
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
@@ -306,6 +345,10 @@ textarea {
   padding: 18px;
 }
 
+.chart-card-alert {
+  max-width: 640px;
+}
+
 .chart-svg {
   width: 100%;
   height: 220px;
@@ -317,6 +360,10 @@ textarea {
 
 .chart-card-large .chart-svg {
   height: 320px;
+}
+
+.chart-card-alert .chart-svg {
+  height: 160px;
 }
 
 .chart-gridline {
@@ -386,7 +433,7 @@ textarea {
 }
 
 .button.is-active-filter {
-  background: linear-gradient(135deg, var(--accent) 0%, #cf7b3b 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, #4ba8ef 100%);
   color: white;
   border-color: transparent;
 }
