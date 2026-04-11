@@ -133,7 +133,17 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 season_end_month,
                 description
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (rule_code) DO NOTHING
+            ON CONFLICT (rule_code) DO UPDATE
+            SET
+                reading_key = EXCLUDED.reading_key,
+                comparator = EXCLUDED.comparator,
+                severity = EXCLUDED.severity,
+                severity_rank = EXCLUDED.severity_rank,
+                threshold_value = EXCLUDED.threshold_value,
+                enabled = EXCLUDED.enabled,
+                season_start_month = EXCLUDED.season_start_month,
+                season_end_month = EXCLUDED.season_end_month,
+                description = EXCLUDED.description
             """,
             [
                 ("cya_above_80", "cya", "gt", "critical", 20, 80, True, None, None, "CYA above 80 ppm"),
@@ -161,7 +171,23 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 season_end_month,
                 description
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (rule_code) DO NOTHING
+            ON CONFLICT (rule_code) DO UPDATE
+            SET
+                reading_key = EXCLUDED.reading_key,
+                trend_type = EXCLUDED.trend_type,
+                comparator = EXCLUDED.comparator,
+                severity = EXCLUDED.severity,
+                severity_rank = EXCLUDED.severity_rank,
+                threshold_value = EXCLUDED.threshold_value,
+                sample_size = EXCLUDED.sample_size,
+                min_bad_count = EXCLUDED.min_bad_count,
+                window_days = EXCLUDED.window_days,
+                delta_threshold = EXCLUDED.delta_threshold,
+                baseline_delta_threshold = EXCLUDED.baseline_delta_threshold,
+                enabled = EXCLUDED.enabled,
+                season_start_month = EXCLUDED.season_start_month,
+                season_end_month = EXCLUDED.season_end_month,
+                description = EXCLUDED.description
             """,
             [
                 ("fc_zero_2_of_2_14d", "free_chlorine", "bad_readings_last_n", "lte", "warning", 10, 0, 2, 2, 14, None, None, True, None, None, "2 free chlorine readings at 0 in the last 14 days"),
@@ -186,7 +212,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
         cur.execute(
             """
             DELETE FROM alert_rule_config
-            WHERE rule_code IN ('cya_above_80', 'cya_above_100')
+            WHERE rule_code IN ('cya_above_100')
             """
         )
         cur.execute(
