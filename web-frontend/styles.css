@@ -319,6 +319,14 @@ textarea {
   overflow: visible;
 }
 
+.content-grid.has-sticky-detail .panel-detail {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

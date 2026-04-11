@@ -287,6 +287,8 @@ function toUtcIso(localValue) {
 function setLayout(mode = "split") {
   const single = mode === "single";
   els.contentGrid.classList.toggle("is-single", single);
+  const stickyDetail = !single && ["customers", "technicians", "reminders"].includes(state.view);
+  els.contentGrid.classList.toggle("has-sticky-detail", stickyDetail);
   els.detailPanel.style.display = single ? "none" : "block";
   els.mainPanel.style.gridColumn = single ? "1 / -1" : "";
 }
@@ -1325,7 +1327,10 @@ async function loadCustomerDetail(customerId) {
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
-        <h3>${escapeHtml(name)}</h3>
+        <div class="detail-header">
+          <h3>${escapeHtml(name)}</h3>
+          <button class="button button-secondary" id="customer-open-profile">Open Full Profile</button>
+        </div>
         <div class="meta-stack">
           <div class="meta-row"><span>Status</span><strong>${escapeHtml(item.customer_status || "—")}</strong></div>
           <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
@@ -1345,6 +1350,14 @@ async function loadCustomerDetail(customerId) {
       </section>
     </div>
   `;
+  const openProfileButton = document.getElementById("customer-open-profile");
+  if (openProfileButton) {
+    openProfileButton.onclick = () => {
+      state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
+      state.selections.customerVisitsExpanded = false;
+      setView("customer-profile");
+    };
+  }
   wireNavigationTargets(els.detailPanel);
 }
 
@@ -1670,7 +1683,10 @@ async function loadTechnicianDetail(techId) {
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
-        <h3>${escapeHtml(item.tech_name)}</h3>
+        <div class="detail-header">
+          <h3>${escapeHtml(item.tech_name)}</h3>
+          <button class="button button-secondary" id="technician-open-profile">Open Full Profile</button>
+        </div>
         <div class="meta-stack">
           <div class="meta-row"><span>Role</span><strong>${escapeHtml(item.role_type || "—")}</strong></div>
           <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
@@ -1701,6 +1717,10 @@ async function loadTechnicianDetail(techId) {
       </section>
     </div>
   `;
+  const openProfileButton = document.getElementById("technician-open-profile");
+  if (openProfileButton) {
+    openProfileButton.onclick = () => setView("technician-profile");
+  }
 }
 
 async function loadTechnicianProfile() {
