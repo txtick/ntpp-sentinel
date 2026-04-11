@@ -253,7 +253,22 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 season_end_month,
                 description
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (rule_code) DO NOTHING
+            ON CONFLICT (rule_code) DO UPDATE
+            SET
+                opportunity_type = EXCLUDED.opportunity_type,
+                source_type = EXCLUDED.source_type,
+                reading_key = EXCLUDED.reading_key,
+                trend_type = EXCLUDED.trend_type,
+                comparator = EXCLUDED.comparator,
+                severity = EXCLUDED.severity,
+                severity_rank = EXCLUDED.severity_rank,
+                threshold_value = EXCLUDED.threshold_value,
+                repeat_count = EXCLUDED.repeat_count,
+                window_days = EXCLUDED.window_days,
+                enabled = EXCLUDED.enabled,
+                season_start_month = EXCLUDED.season_start_month,
+                season_end_month = EXCLUDED.season_end_month,
+                description = EXCLUDED.description
             """,
             [
                 ("drain_refill_cya_repeat", "drain_refill", "reading_repeat", "cya", None, "gt", "warning", 10, 100, 2, 60, True, None, None, "Repeated high CYA suggests drain/refill"),
