@@ -638,6 +638,32 @@ function renderAlerts() {
   });
 }
 
+function weekdaySortValue(dayOfWeek) {
+  const normalized = String(dayOfWeek || "").trim().toLowerCase();
+  const order = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 7,
+  };
+  return order[normalized] || 8;
+}
+
+function groupAssignmentsByDay(assignments) {
+  const groups = new Map();
+  assignments.forEach((assignment) => {
+    const dayLabel = assignment.day_of_week || "Unscheduled";
+    if (!groups.has(dayLabel)) groups.set(dayLabel, []);
+    groups.get(dayLabel).push(assignment);
+  });
+  return Array.from(groups.entries())
+    .sort((a, b) => weekdaySortValue(a[0]) - weekdaySortValue(b[0]) || a[0].localeCompare(b[0]))
+    .map(([dayLabel, items]) => ({ dayLabel, items }));
+}
+
 async function loadAlertDetail(alertId) {
   const detail = await api(`/api/alerts/${alertId}`);
   renderAlertDetail(detail);
@@ -1203,6 +1229,7 @@ async function loadTechnicianDetail(techId) {
   const item = detail.item;
   const spend = detail.chemical_spend_summary || {};
   const assignments = detail.service_locations || [];
+  const assignmentGroups = groupAssignmentsByDay(assignments);
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -1218,15 +1245,22 @@ async function loadTechnicianDetail(techId) {
       </section>
       <section class="detail-card">
         <h3>Current Assignments</h3>
-        <div class="event-list">${assignments.map((location) => {
-          const place = [location.city, location.state].filter(Boolean).join(", ");
-          const route = [location.day_of_week, location.frequency].filter(Boolean).join(" · ");
-          return `<div class="item-card">
-            <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
-            <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
-            <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${route ? ` · ${escapeHtml(route)}` : ""}</div>
-          </div>`;
-        }).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
+        <div class="event-list">${assignmentGroups.map((group) => `
+          <section class="day-group">
+            <div class="day-group-header">${escapeHtml(group.dayLabel)}</div>
+            <div class="event-list">
+              ${group.items.map((location) => {
+                const place = [location.city, location.state].filter(Boolean).join(", ");
+                const route = [location.frequency, location.sequence != null ? `Stop ${location.sequence}` : ""].filter(Boolean).join(" · ");
+                return `<div class="item-card">
+                  <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
+                  <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
+                  <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${route ? ` · ${escapeHtml(route)}` : ""}</div>
+                </div>`;
+              }).join("")}
+            </div>
+          </section>
+        `).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
       </section>
     </div>
   `;

@@ -423,6 +423,22 @@ textarea {
   gap: 12px;
 }
 
+.day-group {
+  display: grid;
+  gap: 10px;
+}
+
+.day-group-header {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(31, 107, 114, 0.1);
+  color: var(--teal);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .detail-card {
   padding: 16px;
 }
