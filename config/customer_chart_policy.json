@@ -42,7 +42,7 @@
     "filter_pressure": 40,
     "phosphates": 1000,
     "calcium_hardness": 700,
-    "cya": 200
+    "cya": 400
   },
   "display_precision": {
     "lsi": 2
