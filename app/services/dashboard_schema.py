@@ -174,8 +174,6 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("ph_bad_2_of_2_14d", "ph", "bad_readings_last_n", "gt", "warning", 10, 7.8, 2, 2, 14, None, None, True, None, None, "2 pH readings above 7.8 in the last 14 days"),
                 ("cya_rise_15_60d", "cya", "delta_over_days", None, "warning", 10, None, None, None, 60, 15, None, True, None, None, "CYA rises 15+ over 60 days"),
                 ("cya_rise_30_60d", "cya", "delta_over_days", None, "critical", 20, None, None, None, 60, 30, None, True, None, None, "CYA rises 30+ over 60 days"),
-                ("psi_rise_5_60d", "filter_pressure", "baseline_or_window_delta", None, "warning", 10, None, None, None, 60, 5, 5, True, None, None, "PSI rising 5+"),
-                ("psi_rise_8_60d", "filter_pressure", "baseline_or_window_delta", None, "critical", 20, None, None, None, 60, 8, 8, True, None, None, "PSI rising 8+"),
             ],
         )
         cur.execute(
@@ -214,11 +212,17 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             """,
             [
                 ("drain_refill_cya_repeat", "drain_refill", "reading_repeat", "cya", None, "gt", "warning", 10, 100, 2, 60, True, None, None, "Repeated high CYA suggests drain/refill"),
-                ("filter_clean_trend", "filter_clean", "trend_reference", "filter_pressure", "baseline_or_window_delta", None, "warning", 10, None, None, 60, True, None, None, "PSI trend suggests filter clean"),
+                ("filter_clean_trend", "filter_clean", "reading_repeat", "filter_pressure", None, "gte", "warning", 10, 20, 2, 21, True, None, None, "2 recent PSI readings at or above 20 suggest filter clean"),
                 ("filter_clean_missing_psi", "filter_clean", "missing_recent_reading", "filter_pressure", None, None, "warning", 10, None, None, 90, True, None, None, "Missing recent PSI reading"),
                 ("phosphate_treatment_high", "phosphate_treatment", "latest_reading", "phosphates", None, "gt", "warning", 10, 500, None, 60, True, None, None, "High phosphates suggest treatment"),
                 ("chemical_cost_review_high", "chemical_cost_review", "monthly_cost", None, None, "gte", "warning", 10, monthly_chemical_cost_review_threshold, None, 30, True, None, None, "High recent chemical cost"),
             ],
+        )
+        cur.execute(
+            """
+            DELETE FROM trend_rule_config
+            WHERE rule_code IN ('psi_rise_5_60d', 'psi_rise_8_60d')
+            """
         )
 
         cur.execute(
