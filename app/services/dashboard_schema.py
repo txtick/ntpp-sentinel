@@ -105,13 +105,13 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     WHEN lower(input_text) LIKE '%cyanuric acid%' OR lower(input_text) = 'cya' THEN 'cya'
                     WHEN lower(input_text) LIKE '%phosphat%' THEN 'phosphates'
                     WHEN lower(input_text) = 'ph' OR lower(input_text) LIKE 'ph %' OR lower(input_text) LIKE '% ph%' THEN 'ph'
-                    WHEN lower(input_text) LIKE '%total alkalinity%' THEN 'total_alkalinity'
-                    WHEN lower(input_text) LIKE '%total hardness%' THEN 'total_hardness'
+                    WHEN lower(input_text) LIKE '%total alkalinity%' OR lower(input_text) LIKE '%alkalinity%' THEN 'alkalinity'
+                    WHEN lower(input_text) LIKE '%calcium hardness%' OR lower(input_text) LIKE '%total hardness%' OR lower(input_text) LIKE '%hardness%' THEN 'calcium_hardness'
                     WHEN lower(input_text) LIKE '%filter pressure%' OR lower(input_text) = 'psi' THEN 'filter_pressure'
                     WHEN lower(input_text) LIKE '%salt%' THEN 'salt'
                     WHEN lower(input_text) LIKE '%tds%' THEN 'tds'
                     WHEN lower(input_text) LIKE '%saturation index%' OR lower(input_text) LIKE '%lsi%' THEN 'lsi'
-                    WHEN lower(input_text) LIKE '%water temp%' OR lower(input_text) LIKE '%temperature%' THEN 'water_temperature'
+                    WHEN lower(input_text) LIKE '%water temp%' OR lower(input_text) LIKE '%temperature%' THEN 'temperature'
                     WHEN lower(input_text) LIKE '%total chlorine%' THEN 'total_chlorine'
                     ELSE trim(BOTH '_' FROM regexp_replace(lower(input_text), '[^a-z0-9]+', '_', 'g'))
                 END
@@ -142,8 +142,6 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("cya_above_100", "cya", "gt", "critical", 20, 100, True, None, None, "CYA above 100 ppm"),
                 ("phosphates_above_500", "phosphates", "gt", "warning", 10, 500, True, None, None, "Phosphates above 500 ppb"),
                 ("phosphates_above_1000", "phosphates", "gt", "critical", 20, 1000, True, None, None, "Phosphates above 1000 ppb"),
-                ("ph_above_7_8", "ph", "gt", "warning", 10, 7.8, True, None, None, "pH above 7.8"),
-                ("ph_above_8_2", "ph", "gt", "critical", 20, 8.2, True, None, None, "pH above 8.2"),
             ],
         )
         cur.executemany(
@@ -173,12 +171,25 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("fc_cya_ratio_bad_2wk", "fc_cya_ratio", "fc_cya_ratio_last_n", "lt", "warning", 10, 0.075, 2, 2, 21, None, None, True, None, None, "FC:CYA ratio below 7.5% on last 2 paired readings"),
                 ("cya_bad_3_of_5", "cya", "bad_readings_last_n", "gt", "warning", 10, 80, 5, 3, 60, None, None, True, None, None, "3 of last 5 CYA readings above 80"),
                 ("phosphates_bad_3_of_5", "phosphates", "bad_readings_last_n", "gt", "warning", 10, 500, 5, 3, 60, None, None, True, None, None, "3 of last 5 phosphate readings above 500"),
-                ("ph_bad_3_of_5", "ph", "bad_readings_last_n", "gt", "warning", 10, 7.8, 5, 3, 60, None, None, True, None, None, "3 of last 5 pH readings above 7.8"),
+                ("ph_bad_2_of_2_14d", "ph", "bad_readings_last_n", "gt", "warning", 10, 7.8, 2, 2, 14, None, None, True, None, None, "2 pH readings above 7.8 in the last 14 days"),
                 ("cya_rise_15_60d", "cya", "delta_over_days", None, "warning", 10, None, None, None, 60, 15, None, True, None, None, "CYA rises 15+ over 60 days"),
                 ("cya_rise_30_60d", "cya", "delta_over_days", None, "critical", 20, None, None, None, 60, 30, None, True, None, None, "CYA rises 30+ over 60 days"),
                 ("psi_rise_5_60d", "filter_pressure", "baseline_or_window_delta", None, "warning", 10, None, None, None, 60, 5, 5, True, None, None, "PSI rising 5+"),
                 ("psi_rise_8_60d", "filter_pressure", "baseline_or_window_delta", None, "critical", 20, None, None, None, 60, 8, 8, True, None, None, "PSI rising 8+"),
             ],
+        )
+        cur.execute(
+            """
+            DELETE FROM alert_rule_config
+            WHERE rule_code IN ('ph_above_7_8', 'ph_above_8_2')
+               OR (reading_key = 'ph' AND rule_code IN ('ph_above_7_8', 'ph_above_8_2'))
+            """
+        )
+        cur.execute(
+            """
+            DELETE FROM trend_rule_config
+            WHERE rule_code = 'ph_bad_3_of_5'
+            """
         )
         cur.executemany(
             """
