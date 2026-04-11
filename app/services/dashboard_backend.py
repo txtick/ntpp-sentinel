@@ -2388,7 +2388,17 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                     a.start_date,
                     a.end_date,
                     a.sequence,
-                    a.status
+                    a.status,
+                    CASE COALESCE(a.day_of_week, '')
+                        WHEN 'Monday' THEN 1
+                        WHEN 'Tuesday' THEN 2
+                        WHEN 'Wednesday' THEN 3
+                        WHEN 'Thursday' THEN 4
+                        WHEN 'Friday' THEN 5
+                        WHEN 'Saturday' THEN 6
+                        WHEN 'Sunday' THEN 7
+                        ELSE 8
+                    END AS weekday_sort
                 FROM service_location_technician_assignments a
                 LEFT JOIN customers c ON c.id = a.customer_id
                 LEFT JOIN sk_service_location sl
@@ -2400,16 +2410,7 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                   AND a.is_deleted = FALSE
                   AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
                 ORDER BY
-                    CASE COALESCE(a.day_of_week, '')
-                        WHEN 'Monday' THEN 1
-                        WHEN 'Tuesday' THEN 2
-                        WHEN 'Wednesday' THEN 3
-                        WHEN 'Thursday' THEN 4
-                        WHEN 'Friday' THEN 5
-                        WHEN 'Saturday' THEN 6
-                        WHEN 'Sunday' THEN 7
-                        ELSE 8
-                    END,
+                    weekday_sort,
                     a.sequence ASC NULLS LAST,
                     customer_name ASC,
                     sl.city ASC,
