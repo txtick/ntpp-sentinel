@@ -2528,12 +2528,15 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                 )
                 SELECT
                     COUNT(*) AS stop_count_30d,
-                    COALESCE(AVG(minutes_at_stop), 0) FILTER (WHERE minutes_at_stop IS NOT NULL) AS avg_minutes_per_pool_30d,
+                    COALESCE(
+                        AVG(minutes_at_stop) FILTER (WHERE minutes_at_stop IS NOT NULL),
+                        0
+                    ) AS avg_minutes_per_pool_30d,
                     COUNT(*) FILTER (WHERE minutes_at_stop > 45) AS long_stop_count_30d,
                     COUNT(*) FILTER (WHERE minutes_at_stop < 10) AS short_stop_count_30d,
                     COUNT(*) FILTER (WHERE minutes_at_stop IS NOT NULL) AS timed_stop_count_30d,
                     COALESCE(
-                        SUM(minutes_at_stop) FILTER (WHERE minutes_at_stop IS NOT NULL)::NUMERIC
+                        (SUM(minutes_at_stop) FILTER (WHERE minutes_at_stop IS NOT NULL))::NUMERIC
                         / NULLIF(COUNT(DISTINCT source_service_location_id) FILTER (WHERE minutes_at_stop IS NOT NULL), 0),
                         0
                     ) AS avg_minutes_per_assigned_pool_30d,
