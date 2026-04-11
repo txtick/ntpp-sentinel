@@ -1202,6 +1202,7 @@ async function loadTechnicianDetail(techId) {
   const detail = await api(`/api/technicians/${encodeURIComponent(techId)}`);
   const item = detail.item;
   const spend = detail.chemical_spend_summary || {};
+  const assignments = detail.service_locations || [];
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -1216,12 +1217,16 @@ async function loadTechnicianDetail(techId) {
         </div>
       </section>
       <section class="detail-card">
-        <h3>Assigned Customers</h3>
-        <div class="event-list">${detail.customers.map((customer) => `<div class="item-card"><strong>${escapeHtml(customer.customer_name || customer.source_customer_id)}</strong><div class="muted">${escapeHtml(customer.customer_status || "—")}</div></div>`).join("") || `<div class="empty-state">No current customer assignments.</div>`}</div>
-      </section>
-      <section class="detail-card">
-        <h3>Current Locations</h3>
-        <div class="event-list">${detail.service_locations.map((location) => `<div class="item-card"><strong>${escapeHtml(location.address || location.source_location_id || "Location")}</strong><div class="muted">${escapeHtml(location.city || "")}${location.city && location.state ? ", " : ""}${escapeHtml(location.state || "")}</div></div>`).join("") || `<div class="empty-state">No current locations.</div>`}</div>
+        <h3>Current Assignments</h3>
+        <div class="event-list">${assignments.map((location) => {
+          const place = [location.city, location.state].filter(Boolean).join(", ");
+          const route = [location.day_of_week, location.frequency].filter(Boolean).join(" · ");
+          return `<div class="item-card">
+            <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
+            <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
+            <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${route ? ` · ${escapeHtml(route)}` : ""}</div>
+          </div>`;
+        }).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
       </section>
     </div>
   `;

@@ -2371,6 +2371,13 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                 SELECT DISTINCT
                     a.sk_service_location_id AS service_location_id,
                     a.source_service_location_id AS source_location_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(c.company_name, ''),
+                        a.source_customer_id
+                    ) AS customer_name,
+                    c.customer_status,
+                    c.is_operationally_active,
                     sl.address,
                     sl.city,
                     sl.state,
@@ -2383,6 +2390,7 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                     a.sequence,
                     a.status
                 FROM service_location_technician_assignments a
+                LEFT JOIN customers c ON c.id = a.customer_id
                 LEFT JOIN sk_service_location sl
                   ON sl.source_system = a.source_system
                  AND sl.source_location_id = a.source_service_location_id
@@ -2432,35 +2440,39 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
 
             cur.execute(
                 """
+                WITH tech_dose_events AS (
+                    SELECT DISTINCT
+                        d.id,
+                        d.service_date,
+                        d.estimated_cost
+                    FROM technician_route_stops s
+                    JOIN technicians t ON t.id = s.technician_id
+                    JOIN pools p
+                      ON p.source_system = s.source_system
+                     AND p.source_service_location_id = s.source_service_location_id
+                    JOIN chemical_dose_events d
+                      ON d.pool_id = p.id
+                     AND d.source_system = s.source_system
+                     AND d.service_date::date = s.service_date::date
+                    WHERE t.source_system = 'skimmer'
+                      AND t.source_account_id = %s
+                      AND s.is_skipped = FALSE
+                )
                 SELECT
                     COALESCE(
-                        SUM(d.estimated_cost) FILTER (
-                            WHERE d.service_date >= date_trunc('month', CURRENT_DATE)
+                        SUM(estimated_cost) FILTER (
+                            WHERE service_date >= date_trunc('month', CURRENT_DATE)
                         ),
                         0
                     ) AS cost_month_to_date,
                     COALESCE(
-                        SUM(d.estimated_cost) FILTER (
-                            WHERE d.service_date >= NOW() - INTERVAL '30 days'
+                        SUM(estimated_cost) FILTER (
+                            WHERE service_date >= NOW() - INTERVAL '30 days'
                         ),
                         0
                     ) AS cost_30d,
-                    COALESCE(SUM(d.estimated_cost), 0) AS lifetime_cost
-                FROM chemical_dose_events d
-                JOIN technician_route_stops s
-                  ON s.source_system = d.source_system
-                 AND s.is_skipped = FALSE
-                 AND (
-                     s.source_route_stop_id = d.source_service_stop_id
-                     OR (
-                         d.source_service_stop_id IS NULL
-                         AND s.customer_id = d.customer_id
-                         AND s.service_date::date = d.service_date::date
-                     )
-                 )
-                JOIN technicians t ON t.id = s.technician_id
-                WHERE t.source_system = 'skimmer'
-                  AND t.source_account_id = %s
+                    COALESCE(SUM(estimated_cost), 0) AS lifetime_cost
+                FROM tech_dose_events
                 """,
                 (tech_id_value,),
             )
