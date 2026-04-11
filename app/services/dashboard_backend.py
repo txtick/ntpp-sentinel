@@ -135,6 +135,39 @@ def _load_customer_chart_policy() -> Dict[str, Any]:
     return _merge_customer_chart_policy(raw)
 
 
+def _metric_label(reading_key: Any) -> str:
+    value = str(reading_key or "").strip().lower()
+    if not value:
+        return "Alert"
+    if value == "fc_cya_ratio":
+        return "FC:CYA Ratio"
+    label = (DEFAULT_CUSTOMER_CHART_POLICY.get("metric_labels") or {}).get(value)
+    if label:
+        return str(label)
+    return value.replace("_", " ").title()
+
+
+def _rule_label(rule_code: str) -> str:
+    labels = {
+        "filter_clean_missing_psi": "No PSI in 90 Days",
+        "filter_clean_trend": "Filter Pressure Stays High",
+        "chemical_cost_review_high": "Chemical Cost Review",
+        "drain_refill_cya_repeat": "Drain / Refill Review",
+        "phosphate_treatment_high": "Phosphate Treatment Review",
+        "fc_zero_2_of_2_14d": "Free Chlorine 0 Two Weeks In A Row",
+        "fc_cya_ratio_bad_2wk": "FC:CYA Ratio Out Of Balance",
+        "ph_bad_2_of_2_14d": "pH High Two Weeks In A Row",
+        "cya_rise_above_50_15_60d": "CYA Rising Above 50",
+        "cya_above_80": "CYA Above 80",
+        "phosphates_bad_3_of_5": "Phosphates High On 3 Of 5 Visits",
+        "phosphates_above_500": "Phosphates Above 500",
+        "phosphates_above_1000": "Phosphates Above 1000",
+    }
+    if rule_code in labels:
+        return labels[rule_code]
+    return rule_code.replace("_", " ").title()
+
+
 def _view_exists(cur, view_name: str) -> bool:
     cur.execute("SELECT to_regclass(%s) AS exists_name", (f"public.{view_name}",))
     row = cur.fetchone()
@@ -296,25 +329,51 @@ def _ensure_backend_owned_dashboard_definitions() -> None:
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
     customer_name = row.get("customer_name") or "Unknown Customer"
     pool_name = row.get("pool_name") or "No Pool"
-    reading_key = row.get("reading_key") or row.get("opportunity_type") or "alert"
-    if reading_key == "fc_cya_ratio":
-        reading_key = "FC:CYA ratio"
+    reading_key = _metric_label(row.get("reading_key") or row.get("opportunity_type") or "alert")
     if category == "revenue":
-        return f"{customer_name}: {row.get('opportunity_type') or 'revenue opportunity'}"
+        return f"{customer_name}: {_rule_label(str(row.get('rule_code') or row.get('opportunity_type') or 'revenue_opportunity'))}"
     return f"{customer_name}: {reading_key} on {pool_name}"
 
 
 def _alert_summary(category: str, row: Dict[str, Any]) -> str:
+    rule_code = str(row.get("rule_code") or "")
     if category == "revenue":
-        opportunity_type = row.get("opportunity_type") or "opportunity"
-        observed = row.get("observed_count")
-        return f"{opportunity_type} detected" if observed is None else f"{opportunity_type} detected from observed value {observed}"
+        if rule_code == "filter_clean_missing_psi":
+            window_days = row.get("window_days") or row.get("metadata_json", {}).get("window_days") or 90
+            return f"No filter pressure reading in the last {window_days} days."
+        if rule_code == "filter_clean_trend":
+            return "Filter pressure has been 20 PSI or higher on the last 2 readings."
+        if rule_code == "chemical_cost_review_high":
+            observed = row.get("observed_count")
+            threshold = row.get("threshold_value")
+            if observed is not None and threshold is not None:
+                return f"Chemical cost was {observed} against review threshold {threshold}."
+            return "Chemical cost is above the monthly review threshold."
+        if rule_code == "drain_refill_cya_repeat":
+            return "CYA has stayed high enough long enough to consider a drain and refill."
+        if rule_code == "phosphate_treatment_high":
+            return "Phosphates are high enough to review treatment."
+        return _rule_label(rule_code)
 
     observed_value = row.get("value")
     if observed_value is None:
         observed_value = row.get("observed_value")
     threshold_value = row.get("threshold_value")
     reading_key = row.get("reading_key") or "metric"
+    if rule_code == "fc_zero_2_of_2_14d":
+        return "Free chlorine was 0 on the last 2 readings."
+    if rule_code == "ph_bad_2_of_2_14d":
+        return f"pH was above {threshold_value} on the last 2 readings."
+    if rule_code == "cya_rise_above_50_15_60d":
+        return "CYA is above 50 and still rising."
+    if rule_code == "cya_above_80":
+        return "CYA is above 80."
+    if rule_code == "phosphates_bad_3_of_5":
+        return f"Phosphates were above {threshold_value} on 3 of the last 5 readings."
+    if rule_code == "phosphates_above_500":
+        return "Phosphates are above 500."
+    if rule_code == "phosphates_above_1000":
+        return "Phosphates are above 1000."
     if reading_key == "fc_cya_ratio" and observed_value is not None and threshold_value is not None:
         try:
             observed_pct = float(observed_value) * 100.0
@@ -323,8 +382,8 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
         except Exception:
             pass
     if threshold_value is None:
-        return f"{reading_key} alert detected"
-    return f"{reading_key} observed {observed_value} against threshold {threshold_value}"
+        return f"{_metric_label(reading_key)} alert detected"
+    return f"{_metric_label(reading_key)} was {observed_value} against threshold {threshold_value}."
 
 
 def _build_metadata(category: str, row: Dict[str, Any], refresh_run_id: int) -> Dict[str, Any]:
@@ -1286,6 +1345,15 @@ def get_alert_instance(alert_id: int) -> Dict[str, Any]:
             if not item:
                 raise HTTPException(status_code=404, detail="Alert not found")
 
+            chart_policy = _load_customer_chart_policy()
+            metadata = item.get("metadata_json") or {}
+            reading_key = metadata.get("reading_key")
+            alert_chart_keys: List[str] = []
+            if reading_key:
+                alert_chart_keys.append(str(reading_key))
+            if str(reading_key or "") == "fc_cya_ratio":
+                alert_chart_keys = ["free_chlorine", "cya"]
+
             cur.execute(
                 """
                 SELECT id, event_type, event_ts, actor, payload_json
@@ -1298,7 +1366,45 @@ def get_alert_instance(alert_id: int) -> Dict[str, Any]:
             )
             events = [dict(row) for row in cur.fetchall()]
 
-    return {"ok": True, "item": item, "events": events}
+            chemistry_history: List[Dict[str, Any]] = []
+            customer_id = item.get("customer_id")
+            if customer_id is not None:
+                params: List[Any] = [int(customer_id)]
+                pool_filter = ""
+                if item.get("pool_id") is not None:
+                    pool_filter = "AND r.pool_id = %s"
+                    params.append(int(item["pool_id"]))
+                cur.execute(
+                    f"""
+                    SELECT
+                        r.pool_id,
+                        p.name AS pool_name,
+                        r.reading_key,
+                        r.reading_type,
+                        r.description,
+                        r.unit_of_measure,
+                        r.service_date,
+                        r.value,
+                        r.raw_json
+                    FROM chemistry_readings r
+                    LEFT JOIN pools p ON p.id = r.pool_id
+                    WHERE r.customer_id = %s
+                      {pool_filter}
+                      AND r.service_date >= NOW() - INTERVAL '365 days'
+                    ORDER BY r.pool_id ASC, r.reading_key ASC, r.service_date ASC, r.id ASC
+                    """,
+                    params,
+                )
+                chemistry_history = [dict(row) for row in cur.fetchall()]
+
+    return {
+        "ok": True,
+        "item": item,
+        "events": events,
+        "chemistry_history": chemistry_history,
+        "chart_policy": chart_policy,
+        "alert_chart_keys": alert_chart_keys,
+    }
 
 
 def list_alert_events(alert_id: int, limit: int = 100) -> Dict[str, Any]:

@@ -411,6 +411,7 @@ function alertReasonBadge(item) {
 
 function formatAlertSummary(item) {
   const metadata = item.metadata_json || {};
+  if (metadata.rule_description) return metadata.rule_description;
   if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
     const observedCost = currency(metadata.observed_count);
     if (observedCost) {
@@ -423,6 +424,7 @@ function formatAlertSummary(item) {
 function formatAlertSubline(item) {
   const metadata = item.metadata_json || {};
   const assignedTech = metadata.assigned_technician?.tech_name;
+  const friendlyRule = metadata.rule_description || item.rule_code?.replaceAll("_", " ");
   if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
     const observedCost = currency(metadata.observed_count);
     const threshold = currency(metadata.threshold_value);
@@ -433,7 +435,43 @@ function formatAlertSubline(item) {
       return `revenue · cost ${observedCost}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
     }
   }
-  return `${item.category} · rule ${item.rule_code}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
+  return `${item.category} · ${friendlyRule}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
+}
+
+function alertRelevantSeries(detail) {
+  const keys = new Set((detail.alert_chart_keys || []).map((key) => normalizeMetricKey(key)));
+  const allSeries = groupChemistrySeries(detail.chemistry_history || []);
+  if (!keys.size) return [];
+  return allSeries.filter((seriesItem) => keys.has(normalizeMetricKey(seriesItem.readingKey)));
+}
+
+function renderAlertCharts(detail, mode = "detail") {
+  const series = filterSeriesByDays(alertRelevantSeries(detail), customerChartPolicy().default_days || 90);
+  if (!series.length) {
+    return `<div class="empty-state">No matching chemistry chart data for this alert yet.</div>`;
+  }
+  const gridClass = mode === "profile" ? "chart-grid chart-grid-wide" : "chart-grid";
+  return `
+    <div class="${gridClass}">
+      ${series.map((seriesItem) => {
+        const latest = seriesItem.points[seriesItem.points.length - 1];
+        const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+        return `
+          <article class="chart-card">
+            <div>
+              <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
+              ${seriesItem.poolName && seriesItem.poolName !== "Pool" ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
+            </div>
+            ${buildLineChart(seriesItem)}
+            <div class="chart-caption">
+              <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}</span>
+              <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function badge(value, typeHint = "") {
@@ -878,12 +916,15 @@ async function loadAlertProfile() {
 }
 
 function renderAlertDetail(detail) {
+  state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
   const item = detail.item;
   const metadata = item.metadata_json || {};
   const observedCost = currency(metadata.observed_count);
   const thresholdCost = currency(metadata.threshold_value);
   const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
   const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
+  const assignedTechId = metadata.assigned_technician?.tech_id || metadata.assigned_technician?.technician_id;
+  const recentTechId = metadata.recent_service_technician?.tech_id || metadata.recent_service_technician?.technician_id;
   const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
@@ -896,15 +937,19 @@ function renderAlertDetail(detail) {
           <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div>
         </div>
         <div class="meta-stack">
-          <div class="meta-row"><span>Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></div>
-          <div class="meta-row"><span>Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></div>
-          <div class="meta-row"><span>Assigned Technician</span><strong>${escapeHtml(assignedTech)}</strong></div>
-          <div class="meta-row"><span>Recent Service Tech</span><strong>${escapeHtml(recentTech)}</strong></div>
+          <div class="item-card is-clickable" ${item.customer_id ? `data-customer-id="${escapeHtml(item.customer_id)}"` : ""}><div class="meta-row"><span>Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></div></div>
+          <div class="item-card ${item.customer_id ? "is-clickable" : ""}" ${item.customer_id ? `data-customer-id="${escapeHtml(item.customer_id)}"` : ""}><div class="meta-row"><span>Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></div></div>
+          <div class="item-card ${assignedTechId ? "is-clickable" : ""}" ${assignedTechId ? `data-tech-id="${escapeHtml(assignedTechId)}"` : ""}><div class="meta-row"><span>Assigned Technician</span><strong>${escapeHtml(assignedTech)}</strong></div></div>
+          <div class="item-card ${recentTechId ? "is-clickable" : ""}" ${recentTechId ? `data-tech-id="${escapeHtml(recentTechId)}"` : ""}><div class="meta-row"><span>Recent Service Tech</span><strong>${escapeHtml(recentTech)}</strong></div></div>
           ${observedCost ? `<div class="meta-row"><span>Observed Cost</span><strong>${escapeHtml(observedCost)}</strong></div>` : ""}
           ${thresholdCost ? `<div class="meta-row"><span>Threshold</span><strong>${escapeHtml(thresholdCost)}</strong></div>` : ""}
           <div class="meta-row"><span>Last Detected</span><strong>${formatDateTime(item.last_detected_at)}</strong></div>
           <div class="meta-row"><span>Snoozed Until</span><strong>${formatDateTime(item.snoozed_until)}</strong></div>
         </div>
+      </section>
+      <section class="detail-card">
+        <h3>Related Chemistry</h3>
+        ${renderAlertCharts(detail)}
       </section>
       <section class="detail-card">
         <h3>Alert Actions</h3>
@@ -986,15 +1031,19 @@ function renderAlertDetail(detail) {
     await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
     showToast("Reminder created from alert.");
   }, "Reminder created.");
+  wireNavigationTargets(els.detailPanel);
 }
 
 function renderAlertProfile(detail) {
+  state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
   const item = detail.item;
   const metadata = item.metadata_json || {};
   const observedCost = currency(metadata.observed_count);
   const thresholdCost = currency(metadata.threshold_value);
   const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
   const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
+  const assignedTechId = metadata.assigned_technician?.tech_id || metadata.assigned_technician?.technician_id;
+  const recentTechId = metadata.recent_service_technician?.tech_id || metadata.recent_service_technician?.technician_id;
   const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
 
   els.viewKicker.textContent = "Alert";
@@ -1009,10 +1058,10 @@ function renderAlertProfile(detail) {
         <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div>
       </div>
       <div class="stat-grid">
-        <article class="stat-card"><span class="muted">Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></article>
-        <article class="stat-card"><span class="muted">Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></article>
-        <article class="stat-card"><span class="muted">Assigned Tech</span><strong>${escapeHtml(assignedTech)}</strong></article>
-        <article class="stat-card"><span class="muted">Recent Tech</span><strong>${escapeHtml(recentTech)}</strong></article>
+        <article class="stat-card is-clickable" ${item.customer_id ? `data-customer-id="${escapeHtml(item.customer_id)}"` : ""}><span class="muted">Customer</span><strong>${escapeHtml(metadata.customer_name || item.customer_id || "—")}</strong></article>
+        <article class="stat-card ${item.customer_id ? "is-clickable" : ""}" ${item.customer_id ? `data-customer-id="${escapeHtml(item.customer_id)}"` : ""}><span class="muted">Pool</span><strong>${escapeHtml(metadata.pool_name || item.pool_id || "—")}</strong></article>
+        <article class="stat-card ${assignedTechId ? "is-clickable" : ""}" ${assignedTechId ? `data-tech-id="${escapeHtml(assignedTechId)}"` : ""}><span class="muted">Assigned Tech</span><strong>${escapeHtml(assignedTech)}</strong></article>
+        <article class="stat-card ${recentTechId ? "is-clickable" : ""}" ${recentTechId ? `data-tech-id="${escapeHtml(recentTechId)}"` : ""}><span class="muted">Recent Tech</span><strong>${escapeHtml(recentTech)}</strong></article>
       </div>
       <div class="meta-stack">
         ${observedCost ? `<div class="meta-row"><span>Observed Cost</span><strong>${escapeHtml(observedCost)}</strong></div>` : ""}
@@ -1020,6 +1069,10 @@ function renderAlertProfile(detail) {
         <div class="meta-row"><span>Last Detected</span><strong>${formatDateTime(item.last_detected_at)}</strong></div>
         <div class="meta-row"><span>Snoozed Until</span><strong>${formatDateTime(item.snoozed_until)}</strong></div>
       </div>
+    </section>
+    <section class="section-card">
+      <h3>Related Chemistry</h3>
+      ${renderAlertCharts(detail, "profile")}
     </section>
     <section class="section-card">
       <h3>Alert Actions</h3>
@@ -1100,6 +1153,7 @@ function renderAlertProfile(detail) {
     await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
     showToast("Reminder created from alert.");
   }, "Reminder created.");
+  wireNavigationTargets(els.mainPanel);
 }
 
 async function loadCustomers() {
