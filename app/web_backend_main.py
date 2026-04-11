@@ -120,6 +120,7 @@ def api_technician_detail(tech_id: str):
 def api_alerts(
     status: str = "",
     category: str = "",
+    severity: str = "",
     rule_code: str = "",
     search: str = "",
     limit: int = 100,
@@ -128,6 +129,7 @@ def api_alerts(
     return list_alert_instances(
         status=status or None,
         category=category or None,
+        severity=severity or None,
         rule_code=rule_code or None,
         search=search or None,
         limit=limit,

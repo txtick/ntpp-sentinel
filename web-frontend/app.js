@@ -113,7 +113,7 @@ const viewMeta = {
 };
 
 const filters = {
-  alerts: { status: "", category: "", rule_code: "", search: "", limit: 20, offset: 0 },
+  alerts: { status: "", category: "", severity: "", rule_code: "", search: "", limit: 20, offset: 0 },
   customers: { search: "", operational_only: 1, status: "", limit: 20, offset: 0 },
   technicians: {
     search: "",
@@ -590,15 +590,9 @@ function escapeHtml(value) {
 
 function wireNavigationTargets(root = document) {
   root.querySelectorAll("[data-customer-id]").forEach((el) => {
-    el.onclick = async () => {
+    el.onclick = () => {
       const customerId = Number(el.dataset.customerId);
       state.selections.customerId = customerId;
-      if (state.view === "customers") {
-        renderCustomers();
-        await loadCustomerDetail(customerId);
-        pushBrowserState();
-        return;
-      }
       state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
       state.selections.customerVisitsExpanded = false;
       setView("customer-profile");
@@ -616,10 +610,6 @@ function wireNavigationTargets(root = document) {
   root.querySelectorAll("[data-alert-id]").forEach((el) => {
     el.onclick = () => {
       const alertId = Number(el.dataset.alertId);
-      if (state.view === "alerts") {
-        selectAlert(alertId);
-        return;
-      }
       state.selections.alertId = alertId;
       setView("alert-profile");
     };
@@ -632,15 +622,9 @@ function wireNavigationTargets(root = document) {
     };
   });
   root.querySelectorAll("[data-tech-id]").forEach((el) => {
-    el.onclick = async () => {
+    el.onclick = () => {
       const techId = el.dataset.techId;
       state.selections.techId = techId;
-      if (state.view === "technicians") {
-        renderTechnicians();
-        await loadTechnicianDetail(techId);
-        pushBrowserState();
-        return;
-      }
       setView("technician-profile");
     };
   });
@@ -667,12 +651,15 @@ function wireNavigationTargets(root = document) {
       const target = el.dataset.homeNav;
       const status = el.dataset.homeStatus || "";
       const category = el.dataset.homeCategory || "";
+      const severity = el.dataset.homeSeverity || "";
       const overdueOnly = Number(el.dataset.homeOverdueOnly || 0);
       if (target === "alerts") {
         filters.alerts.status = status;
         filters.alerts.category = category;
+        filters.alerts.severity = severity;
         filters.alerts.search = "";
         filters.alerts.rule_code = "";
+        filters.alerts.offset = 0;
         state.selections.alertId = null;
         setView("alerts");
         return;
@@ -681,6 +668,7 @@ function wireNavigationTargets(root = document) {
         filters.customers.operational_only = 1;
         filters.customers.status = status;
         filters.customers.search = "";
+        filters.customers.offset = 0;
         setView("customers");
         return;
       }
@@ -709,7 +697,7 @@ function renderFilters() {
   }
 
   if (state.view === "alerts") {
-    setLayout("split");
+    setLayout("single");
     const f = filters.alerts;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Status</span>
@@ -728,6 +716,14 @@ function renderFilters() {
           <option value="pool" ${f.category === "pool" ? "selected" : ""}>Pool</option>
           <option value="process" ${f.category === "process" ? "selected" : ""}>Process</option>
           <option value="revenue" ${f.category === "revenue" ? "selected" : ""}>Revenue</option>
+        </select>
+      </label>
+      <label class="filter-chip"><span>Severity</span>
+        <select id="filter-alert-severity">
+          <option value="">All</option>
+          <option value="critical" ${f.severity === "critical" ? "selected" : ""}>Critical</option>
+          <option value="warning" ${f.severity === "warning" ? "selected" : ""}>Warning</option>
+          <option value="info" ${f.severity === "info" ? "selected" : ""}>Info</option>
         </select>
       </label>
       <label class="filter-chip"><span>Revenue Rule</span>
@@ -750,6 +746,10 @@ function renderFilters() {
       filters.alerts.category = e.target.value;
       loadAlerts(true);
     };
+    document.getElementById("filter-alert-severity").onchange = (e) => {
+      filters.alerts.severity = e.target.value;
+      loadAlerts(true);
+    };
     document.getElementById("filter-alert-rule").onchange = (e) => {
       filters.alerts.rule_code = e.target.value;
       loadAlerts(true);
@@ -762,7 +762,7 @@ function renderFilters() {
   }
 
   if (state.view === "customers") {
-    setLayout("split");
+    setLayout("single");
     const f = filters.customers;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Search</span><input id="filter-customer-search" value="${escapeHtml(f.search)}" placeholder="Name, email, or phone" /></label>
@@ -797,7 +797,7 @@ function renderFilters() {
   }
 
   if (state.view === "technicians") {
-    setLayout("split");
+    setLayout("single");
     const f = filters.technicians;
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Search</span><input id="filter-tech-search" value="${escapeHtml(f.search)}" placeholder="Name or tech id" /></label>
@@ -952,7 +952,7 @@ function renderHome() {
     { label: "Active Customers", value: payload.active_customer_count, target: "customers", status: "active" },
     { label: "Active Pools", value: payload.active_pool_count, target: "customers", status: "active" },
     { label: "Customers With Current Alerts", value: payload.customers_with_current_alerts, target: "alerts", status: "open" },
-    { label: "Critical Current Alerts", value: payload.critical_current_alert_count, target: "alerts", status: "open" },
+    { label: "Critical Current Alerts", value: payload.critical_current_alert_count, target: "alerts", status: "open", severity: "critical" },
     { label: "Trend Alerts", value: payload.chemistry_trend_alert_count, target: "alerts", category: "process" },
     { label: "Revenue Opportunities", value: payload.revenue_opportunity_count, target: "alerts", category: "revenue" },
     { label: "Tracked Open Reminders", value: reminderCounts.open_reminder_count, target: "reminders", status: "open" },
@@ -961,13 +961,13 @@ function renderHome() {
 
   els.mainPanel.innerHTML = `
     <div class="stat-grid">
-      ${cards.map((card) => `<article class="stat-card is-clickable" data-home-nav="${escapeHtml(card.target)}" data-home-status="${escapeHtml(card.status || "")}" data-home-category="${escapeHtml(card.category || "")}" data-home-overdue-only="${escapeHtml(card.overdueOnly || 0)}"><span class="muted">${card.label}</span><strong>${escapeHtml(card.value ?? "0")}</strong></article>`).join("")}
+      ${cards.map((card) => `<article class="stat-card is-clickable" data-home-nav="${escapeHtml(card.target)}" data-home-status="${escapeHtml(card.status || "")}" data-home-category="${escapeHtml(card.category || "")}" data-home-severity="${escapeHtml(card.severity || "")}" data-home-overdue-only="${escapeHtml(card.overdueOnly || 0)}"><span class="muted">${card.label}</span><strong>${escapeHtml(card.value ?? "0")}</strong></article>`).join("")}
     </div>
     <section class="section-card">
       <h3>Tracked Alert Status Mix</h3>
       <p class="panel-subtitle">Durable workflow state from the web backend, not raw query output.</p>
       <div class="list-grid">
-        ${alertCounts.map((item) => `<div class="item-card is-clickable" data-home-nav="alerts" data-home-status="${escapeHtml(item.status || "")}" data-home-category="${escapeHtml(item.category || "")}"><div class="item-card-header"><strong>${escapeHtml(item.category)}</strong>${badge(item.status)}</div><div class="muted">${escapeHtml(item.count)}</div></div>`).join("") || `<div class="empty-state">No tracked alerts yet.</div>`}
+        ${alertCounts.map((item) => `<div class="item-card is-clickable" data-home-nav="alerts" data-home-status="${escapeHtml(item.status || "")}" data-home-category="${escapeHtml(item.category || "")}" data-home-severity=""><div class="item-card-header"><strong>${escapeHtml(item.category)}</strong>${badge(item.status)}</div><div class="muted">${escapeHtml(item.count)}</div></div>`).join("") || `<div class="empty-state">No tracked alerts yet.</div>`}
       </div>
     </section>
     <section class="section-card">
@@ -1007,12 +1007,7 @@ async function loadAlerts(resetOffset = false) {
   if (resetOffset) filters.alerts.offset = 0;
   const result = await api(`/api/alerts${qs(filters.alerts)}`);
   state.data.alerts = result;
-  if (!state.selections.alertId && result.items[0]) state.selections.alertId = result.items[0].id;
-  if (state.selections.alertId && !result.items.some((item) => item.id === state.selections.alertId)) {
-    state.selections.alertId = result.items[0]?.id || null;
-  }
   renderAlerts();
-  if (state.selections.alertId) await loadAlertDetail(state.selections.alertId);
 }
 
 function renderAlerts() {
@@ -1020,16 +1015,16 @@ function renderAlerts() {
   els.mainPanel.innerHTML = `
     <section class="section-card">
       <h3>Alert Queue</h3>
-      <p class="panel-subtitle">${escapeHtml(result.total)} tracked items in this filter set.</p>
+      <p class="panel-subtitle">${escapeHtml(result.total)} tracked items in this filter set. Click any alert to open the full detail page.</p>
       <div class="item-list">
         ${result.items.map((item) => `
-          <article class="item-card ${state.selections.alertId === item.id ? "is-selected" : ""}" data-alert-id="${item.id}">
+          <article class="item-card is-clickable" data-alert-id="${item.id}">
             <div class="item-card-header">
               <div>
                 <h4>${escapeHtml(item.title)}</h4>
                 <div class="muted">${escapeHtml(formatAlertSummary(item))}</div>
               </div>
-              <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)} <button class="button button-ghost" data-alert-open-profile="${item.id}">Open</button></div>
+              <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)}</div>
             </div>
             <div class="meta-row">
               <span>${escapeHtml(formatAlertSubline(item))}</span>
@@ -1331,12 +1326,7 @@ async function loadCustomers(resetOffset = false) {
   if (resetOffset) filters.customers.offset = 0;
   const result = await api(`/api/customers${qs(filters.customers)}`);
   state.data.customers = result;
-  if (!state.selections.customerId && result.items[0]) state.selections.customerId = result.items[0].id;
-  if (state.selections.customerId && !result.items.some((item) => item.id === state.selections.customerId)) {
-    state.selections.customerId = result.items[0]?.id || null;
-  }
   renderCustomers();
-  if (state.selections.customerId) await loadCustomerDetail(state.selections.customerId);
 }
 
 function renderCustomers() {
@@ -1344,18 +1334,18 @@ function renderCustomers() {
   els.mainPanel.innerHTML = `
     <section class="section-card">
       <h3>Customer List</h3>
-      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Showing 20 at a time so the preview panel stays useful.</p>
+      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Showing 20 at a time. Click any row to open the full customer page.</p>
       <div class="item-list">
         ${result.items.map((item) => {
           const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
           return `
-            <article class="item-card ${state.selections.customerId === item.id ? "is-selected" : ""}" data-customer-id="${item.id}">
+            <article class="item-card is-clickable" data-customer-id="${item.id}">
               <div class="item-card-header">
                 <div>
                   <h4>${escapeHtml(name)}</h4>
                   <div class="muted">${escapeHtml(item.city || "")}${item.city && item.state ? ", " : ""}${escapeHtml(item.state || "")}</div>
                 </div>
-                <div class="meta-stack">${badge(item.customer_status || "unknown")} ${badge(item.is_operationally_active ? "open" : "cleared", item.is_operationally_active ? "open" : "cleared")} <button class="button button-ghost" data-customer-open-profile="${item.id}">Open</button></div>
+                <div class="meta-stack">${badge(item.customer_status || "unknown")} ${badge(item.is_operationally_active ? "open" : "cleared", item.is_operationally_active ? "open" : "cleared")}</div>
               </div>
               <div class="meta-row"><span>${escapeHtml(item.pool_count || 0)} pools · ${escapeHtml(item.open_alert_count || 0)} tracked alerts</span><span>${escapeHtml(item.mobile_phone || item.phone || "—")}</span></div>
             </article>
@@ -1367,15 +1357,6 @@ function renderCustomers() {
   `;
   wireNavigationTargets(els.mainPanel);
   wirePagination(els.mainPanel);
-
-  els.detailPanel.innerHTML = `
-    <div class="detail-stack">
-      <section class="detail-card">
-        <h3>Customer Profiles</h3>
-        <p class="muted">Select a customer from the list to review alerts, reminders, and service context here.</p>
-      </section>
-    </div>
-  `;
 }
 
 async function loadCustomerDetail(customerId) {
@@ -1697,9 +1678,7 @@ async function loadCustomerProfile() {
 async function loadTechnicians() {
   const result = await api(`/api/technicians${qs(filters.technicians)}`);
   state.data.technicians = result;
-  if (!state.selections.techId && result.items[0]) state.selections.techId = result.items[0].tech_id;
   renderTechnicians();
-  if (state.selections.techId) await loadTechnicianDetail(state.selections.techId);
 }
 
 function renderTechnicians() {
@@ -1715,27 +1694,19 @@ function renderTechnicians() {
     <section class="section-card">
       <div class="item-list">
         ${result.items.map((item) => `
-          <article class="item-card ${state.selections.techId === item.tech_id ? "is-selected" : ""}" data-tech-id="${escapeHtml(item.tech_id)}">
+          <article class="item-card is-clickable" data-tech-id="${escapeHtml(item.tech_id)}">
             <div class="item-card-header">
               <div>
                 <h4>${escapeHtml(item.tech_name)}</h4>
                 <div class="muted">${escapeHtml(item.role_type || "Unknown role")} · ${escapeHtml(item.username || item.tech_id)}</div>
               </div>
-              <div class="meta-stack">${badge(item.is_active ? "acknowledged" : "cleared", item.is_active ? "acknowledged" : "cleared")} ${item.has_current_assignments ? badge("current", "info") : ""} <button class="button button-ghost" data-tech-open-profile="${escapeHtml(item.tech_id)}">Open</button></div>
+              <div class="meta-stack">${badge(item.is_active ? "acknowledged" : "cleared", item.is_active ? "acknowledged" : "cleared")} ${item.has_current_assignments ? badge("current", "info") : ""}</div>
             </div>
             <div class="meta-row"><span>${escapeHtml(item.customer_count)} customers · ${escapeHtml(item.route_stop_count_30d)} route stops / 30d</span><span>${formatDateTime(item.latest_service_date)}</span></div>
           </article>
         `).join("")}
       </div>
     </section>
-  `;
-  els.detailPanel.innerHTML = `
-    <div class="detail-stack">
-      <section class="detail-card">
-        <h3>Technician Profiles</h3>
-        <p class="muted">Select a technician from the list to review assignments, spend, and related customer context here.</p>
-      </section>
-    </div>
   `;
   wireNavigationTargets(els.mainPanel);
 }

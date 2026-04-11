@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Export a CSV of live Skimmer-tagged customers with their current service rate
-from the local Skimmer SQLite export and a proposed increased rate.
+from the local Skimmer SQLite export and proposed 12% / 15% increased rates.
 
 Source model:
 - live Skimmer API determines who is in the cohort via --skimmer-tag
@@ -43,12 +43,11 @@ def clean_text(value: Any) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Export tagged Skimmer customers with current and +15% service rates."
+        description="Export tagged Skimmer customers with current, +12%, and +15% service rates."
     )
     parser.add_argument("--skimmer-tag", required=True, help="Live Skimmer tag that defines the customer cohort.")
     parser.add_argument("--sqlite", default=DEFAULT_SQLITE_PATH, help="Path to the Skimmer SQLite export.")
     parser.add_argument("--csv-out", required=True, help="Output CSV path.")
-    parser.add_argument("--increase-percent", type=Decimal, default=Decimal("15"), help="Percent increase. Default: 15")
     parser.add_argument("--include-inactive", action="store_true", help="Include inactive tagged customers.")
     parser.add_argument("--include-leads", action="store_true", help="Include lead tagged customers.")
     parser.add_argument("--company-id", help="Optional Skimmer CompanyId filter.")
@@ -179,22 +178,6 @@ def load_service_locations(sqlite_path: str) -> Dict[str, List[Dict[str, Any]]]:
     return by_customer
 
 
-def calculate_increased_rate(current_rate: Any, increase_percent: Decimal) -> str:
-    if current_rate is None or str(current_rate).strip() == "":
-        return ""
-    current = Decimal(str(current_rate))
-    multiplier = Decimal("1") + (increase_percent / Decimal("100"))
-    increased = (current * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return format(increased, "f")
-
-
-def current_rate_str(current_rate: Any) -> str:
-    if current_rate is None or str(current_rate).strip() == "":
-        return ""
-    current = Decimal(str(current_rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    return format(current, "f")
-
-
 def package_adjustment(tags: List[str]) -> Decimal:
     matched = [PACKAGE_TAG_ADJUSTMENTS[tag.lower()] for tag in tags if tag.lower() in PACKAGE_TAG_ADJUSTMENTS]
     return sum(matched, Decimal("0"))
@@ -204,30 +187,39 @@ def package_tags_used(tags: List[str]) -> List[str]:
     return sorted({tag for tag in tags if tag.lower() in PACKAGE_TAG_ADJUSTMENTS})
 
 
-def calculate_adjusted_rates(current_rate: Any, tags: List[str], increase_percent: Decimal) -> Dict[str, str]:
+def calculate_adjusted_rates(current_rate: Any, tags: List[str]) -> Dict[str, str]:
     if current_rate is None or str(current_rate).strip() == "":
         return {
             "current_service_rate": "",
+            "all_customer_tags": "|".join(sorted(set(tags), key=str.lower)),
             "current_base_rate": "",
-            "increased_base_rate": "",
-            "projected_new_total_rate": "",
+            "increased_base_rate_12pct": "",
+            "projected_new_total_rate_12pct": "",
+            "increased_base_rate_15pct": "",
+            "projected_new_total_rate_15pct": "",
+            "package_adjustment_applied": "",
+            "package_tag_used": "",
         }
 
     current = Decimal(str(current_rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     adjustment = package_adjustment(tags)
     applied_package_tags = package_tags_used(tags)
     base = (current - adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    multiplier = Decimal("1") + (increase_percent / Decimal("100"))
-    increased_base = (base * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    projected_total = (increased_base + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    increased_base_12 = (base * Decimal("1.12")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    projected_total_12 = (increased_base_12 + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    increased_base_15 = (base * Decimal("1.15")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    projected_total_15 = (increased_base_15 + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     return {
         "current_service_rate": format(current, "f"),
+        "all_customer_tags": "|".join(sorted(set(tags), key=str.lower)),
         "package_adjustment_applied": format(adjustment.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"),
         "package_tag_used": "|".join(applied_package_tags),
         "current_base_rate": format(base, "f"),
-        "increased_base_rate": format(increased_base, "f"),
-        "projected_new_total_rate": format(projected_total, "f"),
+        "increased_base_rate_12pct": format(increased_base_12, "f"),
+        "projected_new_total_rate_12pct": format(projected_total_12, "f"),
+        "increased_base_rate_15pct": format(increased_base_15, "f"),
+        "projected_new_total_rate_15pct": format(projected_total_15, "f"),
     }
 
 
@@ -235,7 +227,6 @@ def write_csv(
     csv_path: str,
     tagged_customers: List[Dict[str, Any]],
     service_locations_by_customer: Dict[str, List[Dict[str, Any]]],
-    increase_percent: Decimal,
 ) -> int:
     fieldnames = [
         "customer_id",
@@ -243,12 +234,15 @@ def write_csv(
         "full_name",
         "city",
         "zip_code",
+        "all_customer_tags",
         "current_service_rate",
         "package_adjustment_applied",
         "package_tag_used",
         "current_base_rate",
-        "increased_base_rate",
-        "projected_new_total_rate",
+        "increased_base_rate_12pct",
+        "projected_new_total_rate_12pct",
+        "increased_base_rate_15pct",
+        "projected_new_total_rate_15pct",
         "approved_for_increase",
         "final_new_rate",
         "notes",
@@ -262,7 +256,7 @@ def write_csv(
         for customer in tagged_customers:
             locations = service_locations_by_customer.get(customer["customer_id"], [])
             if not locations:
-                rates = calculate_adjusted_rates(None, customer["tags"], increase_percent)
+                rates = calculate_adjusted_rates(None, customer["tags"])
                 writer.writerow(
                     {
                         "customer_id": customer["customer_id"],
@@ -280,7 +274,7 @@ def write_csv(
                 continue
 
             for location in locations:
-                rates = calculate_adjusted_rates(location.get("Rate"), customer["tags"], increase_percent)
+                rates = calculate_adjusted_rates(location.get("Rate"), customer["tags"])
                 writer.writerow(
                     {
                         "customer_id": customer["customer_id"],
@@ -313,7 +307,6 @@ def main() -> int:
         args.csv_out,
         tagged_customers,
         service_locations_by_customer,
-        args.increase_percent,
     )
 
     print(f"Tagged customers fetched from Skimmer API: {len(tagged_customers)}")

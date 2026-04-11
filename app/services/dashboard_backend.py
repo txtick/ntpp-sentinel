@@ -1214,6 +1214,7 @@ def list_alert_instances(
     *,
     status: Optional[str] = None,
     category: Optional[str] = None,
+    severity: Optional[str] = None,
     rule_code: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 100,
@@ -1227,6 +1228,7 @@ def list_alert_instances(
 
     normalized_status = _normalize_status(status)
     normalized_category = _normalize_status(category)
+    normalized_severity = _normalize_status(severity)
     normalized_rule_code = (rule_code or "").strip()
     search_value = (search or "").strip()
 
@@ -1240,6 +1242,9 @@ def list_alert_instances(
     if normalized_category:
         filters.append("category = %s")
         params.append(normalized_category)
+    if normalized_severity:
+        filters.append("severity = %s")
+        params.append(normalized_severity)
     if normalized_rule_code:
         filters.append("rule_code = %s")
         params.append(normalized_rule_code)
