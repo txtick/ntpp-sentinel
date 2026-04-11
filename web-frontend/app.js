@@ -2,16 +2,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
   default_days: 90,
   range_days: [30, 90, 180, 365],
   hidden_metrics: ["free_chlorine", "combined_chlorine"],
-  sparse_metrics: [
-    "phosphates",
-    "cya",
-    "salt",
-    "tds",
-    "alkalinity",
-    "total_alkalinity",
-    "calcium_hardness",
-    "total_hardness",
-  ],
+  sparse_metrics: [],
   metric_labels: {
     ph: "pH",
     total_chlorine: "Total Chlorine",
@@ -1201,7 +1192,7 @@ function buildLineChart(seriesItem) {
       <line x1="${xMin}" y1="${yMin}" x2="${xMin}" y2="${yMax}" class="chart-axis" />
       <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(metricLabel)}</text>
       <text x="${(width / 2)}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
-      ${meta.sparse ? "" : `<path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`}
+      <path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       ${dots}
     </svg>
   `;

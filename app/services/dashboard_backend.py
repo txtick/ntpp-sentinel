@@ -17,16 +17,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     "default_days": 90,
     "range_days": [30, 90, 180, 365],
     "hidden_metrics": ["free_chlorine", "combined_chlorine"],
-    "sparse_metrics": [
-        "phosphates",
-        "cya",
-        "salt",
-        "tds",
-        "alkalinity",
-        "total_alkalinity",
-        "calcium_hardness",
-        "total_hardness",
-    ],
+    "sparse_metrics": [],
     "metric_labels": {
         "ph": "pH",
         "total_chlorine": "Total Chlorine",
