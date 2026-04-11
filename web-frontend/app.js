@@ -37,6 +37,7 @@ const viewMeta = {
   customers: { kicker: "Customers", title: "Customer Operations View" },
   "customer-profile": { kicker: "Customer", title: "Customer Chemistry Profile" },
   technicians: { kicker: "Technicians", title: "Field Operator Snapshot" },
+  "technician-profile": { kicker: "Technician", title: "Technician Profile" },
   reminders: { kicker: "Reminders", title: "Follow-Up Queue" },
 };
 
@@ -79,7 +80,13 @@ function init() {
 function setView(view) {
   state.view = view;
   document.querySelectorAll(".nav-link").forEach((button) => {
-    const activeView = ["customer-profile"].includes(view) ? "customers" : ["alert-profile"].includes(view) ? "alerts" : view;
+    const activeView = ["customer-profile"].includes(view)
+      ? "customers"
+      : ["alert-profile"].includes(view)
+        ? "alerts"
+        : ["technician-profile"].includes(view)
+          ? "technicians"
+          : view;
     button.classList.toggle("is-active", button.dataset.view === activeView);
   });
   const meta = viewMeta[view];
@@ -508,6 +515,19 @@ function renderFilters() {
       </div>
     `;
     document.getElementById("alert-profile-back").onclick = () => setView("alerts");
+    return;
+  }
+
+  if (state.view === "technician-profile") {
+    setLayout("single");
+    const techId = state.selections.techId;
+    els.filters.innerHTML = `
+      <div class="header-actions">
+        <button id="technician-profile-back" class="button button-secondary">Back To Technicians</button>
+        <div class="muted">${techId ? `Technician ID ${escapeHtml(techId)}` : "No technician selected"}</div>
+      </div>
+    `;
+    document.getElementById("technician-profile-back").onclick = () => setView("technicians");
   }
 }
 
@@ -520,6 +540,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "customers") await loadCustomers(force);
     if (state.view === "customer-profile") await loadCustomerProfile(force);
     if (state.view === "technicians") await loadTechnicians(force);
+    if (state.view === "technician-profile") await loadTechnicianProfile(force);
     if (state.view === "reminders") await loadReminders(force);
     setStatus("Live", "info");
   } catch (error) {
@@ -1185,7 +1206,6 @@ async function loadTechnicians() {
   state.data.technicians = result;
   if (!state.selections.techId && result.items[0]) state.selections.techId = result.items[0].tech_id;
   renderTechnicians();
-  if (state.selections.techId) await loadTechnicianDetail(state.selections.techId);
 }
 
 function renderTechnicians() {
@@ -1215,11 +1235,18 @@ function renderTechnicians() {
       </div>
     </section>
   `;
+  els.detailPanel.innerHTML = `
+    <div class="detail-stack">
+      <section class="detail-card">
+        <h3>Technician Profiles</h3>
+        <p class="muted">Open any technician to see a full-page route profile with weekday sections, timing signals, spend, alerts, and reminders tied to assigned pools.</p>
+      </section>
+    </div>
+  `;
   els.mainPanel.querySelectorAll("[data-tech-id]").forEach((el) => {
     el.onclick = async () => {
       state.selections.techId = el.dataset.techId;
-      renderTechnicians();
-      await loadTechnicianDetail(state.selections.techId);
+      setView("technician-profile");
     };
   });
 }
@@ -1263,6 +1290,93 @@ async function loadTechnicianDetail(techId) {
         `).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
       </section>
     </div>
+  `;
+}
+
+async function loadTechnicianProfile() {
+  const techId = state.selections.techId;
+  if (!techId) {
+    els.mainPanel.innerHTML = `<div class="empty-state">Select a technician first.</div>`;
+    return;
+  }
+  const detail = await api(`/api/technicians/${encodeURIComponent(techId)}`);
+  renderTechnicianProfile(detail);
+}
+
+function renderTechnicianProfile(detail) {
+  const item = detail.item;
+  const spend = detail.chemical_spend_summary || {};
+  const timing = detail.route_timing_summary || {};
+  const assignments = detail.service_locations || [];
+  const assignmentGroups = groupAssignmentsByDay(assignments);
+  const alerts = detail.associated_alerts || [];
+  const reminders = detail.associated_reminders || [];
+
+  els.viewKicker.textContent = "Technician";
+  els.viewTitle.textContent = item.tech_name;
+
+  els.mainPanel.innerHTML = `
+    <section class="section-card">
+      <h3>${escapeHtml(item.tech_name)}</h3>
+      <p class="panel-subtitle">Route performance, spend, assignments, and workflow load tied to this technician’s pools.</p>
+      <div class="stat-grid">
+        <article class="stat-card"><span class="muted">Current Assignments</span><strong>${escapeHtml(item.service_location_count)}</strong></article>
+        <article class="stat-card"><span class="muted">Avg Time Per Pool</span><strong>${escapeHtml(formatAxisValue(timing.avg_minutes_per_pool_30d || 0))} min</strong></article>
+        <article class="stat-card"><span class="muted">Late Starts</span><strong>${escapeHtml(timing.late_start_count_30d || 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Long Stops &gt; 45m</span><strong>${escapeHtml(timing.long_stop_count_30d || 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Short Stops &lt; 10m</span><strong>${escapeHtml(timing.short_stop_count_30d || 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Avg Spend Per Pool</span><strong>${escapeHtml(currency(spend.avg_spend_per_pool_30d) || "$0.00")}</strong></article>
+        <article class="stat-card"><span class="muted">Spend This Month</span><strong>${escapeHtml(currency(spend.cost_month_to_date) || "$0.00")}</strong></article>
+        <article class="stat-card"><span class="muted">Spend Last 30 Days</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></article>
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Technician Snapshot</h3>
+      <div class="meta-stack">
+        <div class="meta-row"><span>Role</span><strong>${escapeHtml(item.role_type || "—")}</strong></div>
+        <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
+        <div class="meta-row"><span>Recent Route Activity</span><strong>${escapeHtml(item.route_stop_count_30d)}</strong></div>
+        <div class="meta-row"><span>Earliest Route Start (30d)</span><strong>${formatDateTime(timing.earliest_route_start_30d)}</strong></div>
+        <div class="meta-row"><span>Latest Route Start (30d)</span><strong>${formatDateTime(timing.latest_route_start_30d)}</strong></div>
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Assignments By Day</h3>
+      <div class="event-list">${assignmentGroups.map((group) => `
+        <section class="day-group">
+          <div class="day-group-header">
+            <span>${escapeHtml(group.dayLabel)}</span>
+            <span class="day-group-count">${escapeHtml(group.items.length)} pools</span>
+          </div>
+          <div class="event-list">
+            ${group.items.map((location) => {
+              const place = [location.city, location.state].filter(Boolean).join(", ");
+              const route = [location.frequency, location.sequence != null ? `Stop ${location.sequence}` : ""].filter(Boolean).join(" · ");
+              return `<div class="item-card assignment-card">
+                <div class="item-card-header">
+                  <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
+                  <span class="dense">${escapeHtml(location.sequence != null ? `Stop ${location.sequence}` : "No stop #")}</span>
+                </div>
+                <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
+                <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${location.frequency ? ` · ${escapeHtml(location.frequency)}` : ""}</div>
+              </div>`;
+            }).join("")}
+          </div>
+        </section>
+      `).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
+    </section>
+    <section class="section-card">
+      <h3>Associated Alerts</h3>
+      <div class="event-list">
+        ${alerts.map((alert) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong><span class="dense">${formatDateTime(alert.last_detected_at)}</span></div><div class="muted">${escapeHtml(alert.customer_name || "No customer")} · ${escapeHtml(alert.pool_name || "No pool")}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active alerts tied to this technician’s pools.</div>`}
+      </div>
+    </section>
+    <section class="section-card">
+      <h3>Associated Reminders</h3>
+      <div class="event-list">
+        ${reminders.map((reminder) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong><span class="dense">${reminder.due_at ? formatDateTime(reminder.due_at) : "No due date"}</span></div><div class="muted">${escapeHtml(reminder.customer_name || "No customer")} · ${escapeHtml(reminder.pool_name || "No pool")}</div><div class="muted">${escapeHtml(reminder.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active reminders tied to this technician’s pools.</div>`}
+      </div>
+    </section>
   `;
 }
 

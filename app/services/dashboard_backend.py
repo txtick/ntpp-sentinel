@@ -2460,6 +2460,7 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                     SELECT DISTINCT
                         d.id,
                         d.service_date,
+                        d.pool_id,
                         d.estimated_cost
                     FROM technician_route_stops s
                     JOIN technicians t ON t.id = s.technician_id
@@ -2487,12 +2488,140 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                         ),
                         0
                     ) AS cost_30d,
-                    COALESCE(SUM(estimated_cost), 0) AS lifetime_cost
+                    COALESCE(SUM(estimated_cost), 0) AS lifetime_cost,
+                    COALESCE(
+                        SUM(estimated_cost) FILTER (
+                            WHERE service_date >= NOW() - INTERVAL '30 days'
+                        ) / NULLIF(COUNT(DISTINCT pool_id) FILTER (
+                            WHERE service_date >= NOW() - INTERVAL '30 days'
+                        ), 0),
+                        0
+                    ) AS avg_spend_per_pool_30d
                 FROM tech_dose_events
                 """,
                 (tech_id_value,),
             )
             chemical_spend_summary = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                WITH recent_stops AS (
+                    SELECT
+                        s.service_date,
+                        s.start_time,
+                        s.minutes_at_stop,
+                        s.source_service_location_id
+                    FROM technician_route_stops s
+                    JOIN technicians t ON t.id = s.technician_id
+                    WHERE t.source_system = 'skimmer'
+                      AND t.source_account_id = %s
+                      AND s.is_skipped = FALSE
+                      AND s.service_date >= NOW() - INTERVAL '30 days'
+                ),
+                route_days AS (
+                    SELECT
+                        service_date::date AS route_day,
+                        MIN(start_time) AS first_start_time
+                    FROM recent_stops
+                    WHERE start_time IS NOT NULL
+                    GROUP BY service_date::date
+                )
+                SELECT
+                    COUNT(*) AS stop_count_30d,
+                    COALESCE(AVG(minutes_at_stop), 0) FILTER (WHERE minutes_at_stop IS NOT NULL) AS avg_minutes_per_pool_30d,
+                    COUNT(*) FILTER (WHERE minutes_at_stop > 45) AS long_stop_count_30d,
+                    COUNT(*) FILTER (WHERE minutes_at_stop < 10) AS short_stop_count_30d,
+                    COUNT(*) FILTER (WHERE minutes_at_stop IS NOT NULL) AS timed_stop_count_30d,
+                    COALESCE(
+                        SUM(minutes_at_stop) FILTER (WHERE minutes_at_stop IS NOT NULL)::NUMERIC
+                        / NULLIF(COUNT(DISTINCT source_service_location_id) FILTER (WHERE minutes_at_stop IS NOT NULL), 0),
+                        0
+                    ) AS avg_minutes_per_assigned_pool_30d,
+                    (SELECT COUNT(*) FROM route_days) AS route_day_count_30d,
+                    (SELECT COUNT(*) FROM route_days WHERE first_start_time::time > TIME '10:00') AS late_start_count_30d,
+                    (SELECT MIN(first_start_time) FROM route_days) AS earliest_route_start_30d,
+                    (SELECT MAX(first_start_time) FROM route_days) AS latest_route_start_30d
+                FROM recent_stops
+                """,
+                (tech_id_value,),
+            )
+            route_timing_summary = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                WITH assigned_pools AS (
+                    SELECT DISTINCT p.id AS pool_id
+                    FROM service_location_technician_assignments a
+                    JOIN technicians t ON t.id = a.technician_id
+                    JOIN pools p
+                      ON p.source_system = a.source_system
+                     AND p.source_service_location_id = a.source_service_location_id
+                    WHERE t.source_system = 'skimmer'
+                      AND t.source_account_id = %s
+                      AND a.is_deleted = FALSE
+                      AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                )
+                SELECT
+                    ai.id,
+                    ai.category,
+                    ai.rule_code,
+                    ai.status,
+                    ai.severity,
+                    ai.title,
+                    ai.summary,
+                    ai.last_detected_at,
+                    ai.pool_id,
+                    ai.customer_id,
+                    p.name AS pool_name,
+                    COALESCE(NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''), NULLIF(c.company_name, ''), NULL) AS customer_name
+                FROM alert_instances ai
+                JOIN assigned_pools ap ON ap.pool_id = ai.pool_id
+                LEFT JOIN pools p ON p.id = ai.pool_id
+                LEFT JOIN customers c ON c.id = ai.customer_id
+                WHERE ai.status IN ('open', 'acknowledged', 'snoozed')
+                ORDER BY ai.last_detected_at DESC NULLS LAST, ai.id DESC
+                LIMIT 50
+                """,
+                (tech_id_value,),
+            )
+            associated_alerts = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                WITH assigned_pools AS (
+                    SELECT DISTINCT p.id AS pool_id
+                    FROM service_location_technician_assignments a
+                    JOIN technicians t ON t.id = a.technician_id
+                    JOIN pools p
+                      ON p.source_system = a.source_system
+                     AND p.source_service_location_id = a.source_service_location_id
+                    WHERE t.source_system = 'skimmer'
+                      AND t.source_account_id = %s
+                      AND a.is_deleted = FALSE
+                      AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                )
+                SELECT
+                    r.id,
+                    r.status,
+                    r.priority,
+                    r.title,
+                    r.summary,
+                    r.due_at,
+                    r.pool_id,
+                    r.customer_id,
+                    p.name AS pool_name,
+                    COALESCE(NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''), NULLIF(c.company_name, ''), NULL) AS customer_name
+                FROM reminder_instances r
+                JOIN assigned_pools ap ON ap.pool_id = r.pool_id
+                LEFT JOIN pools p ON p.id = r.pool_id
+                LEFT JOIN customers c ON c.id = r.customer_id
+                WHERE r.status IN ('open', 'acknowledged', 'snoozed')
+                ORDER BY r.due_at ASC NULLS LAST, r.id DESC
+                LIMIT 50
+                """,
+                (tech_id_value,),
+            )
+            associated_reminders = [dict(row) for row in cur.fetchall()]
 
     return {
         "ok": True,
@@ -2501,6 +2630,9 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
         "service_locations": service_locations,
         "recent_route_stops": recent_route_stops,
         "chemical_spend_summary": chemical_spend_summary,
+        "route_timing_summary": route_timing_summary,
+        "associated_alerts": associated_alerts,
+        "associated_reminders": associated_reminders,
         "source": "technicians + service_location_technician_assignments",
     }
 

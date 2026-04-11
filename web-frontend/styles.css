@@ -426,9 +426,17 @@ textarea {
 .day-group {
   display: grid;
   gap: 10px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(31, 107, 114, 0.14);
+  background: linear-gradient(180deg, rgba(31, 107, 114, 0.06), rgba(255, 255, 255, 0.92));
 }
 
 .day-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   background: rgba(31, 107, 114, 0.1);
@@ -437,6 +445,16 @@ textarea {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.day-group-count {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.assignment-card {
+  cursor: default;
 }
 
 .detail-card {
