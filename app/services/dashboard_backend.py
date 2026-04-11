@@ -2399,7 +2399,22 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                   AND t.source_account_id = %s
                   AND a.is_deleted = FALSE
                   AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
-                ORDER BY sl.city ASC, sl.address ASC, a.sk_service_location_id ASC
+                ORDER BY
+                    CASE COALESCE(a.day_of_week, '')
+                        WHEN 'Monday' THEN 1
+                        WHEN 'Tuesday' THEN 2
+                        WHEN 'Wednesday' THEN 3
+                        WHEN 'Thursday' THEN 4
+                        WHEN 'Friday' THEN 5
+                        WHEN 'Saturday' THEN 6
+                        WHEN 'Sunday' THEN 7
+                        ELSE 8
+                    END,
+                    a.sequence ASC NULLS LAST,
+                    customer_name ASC,
+                    sl.city ASC,
+                    sl.address ASC,
+                    a.sk_service_location_id ASC
                 LIMIT 200
                 """,
                 (tech_id_value,),
