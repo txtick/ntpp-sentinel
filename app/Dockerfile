@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app/ /app
 COPY scripts/ /app/scripts/
+COPY config/ /app/config/
 
 RUN mkdir -p /logs /data && touch /logs/cron.log
 
