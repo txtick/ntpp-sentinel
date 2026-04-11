@@ -87,11 +87,7 @@ def _json_dumps(value: Any) -> str:
 
 
 def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    policy = dict(DEFAULT_CUSTOMER_CHART_POLICY)
-    policy["range_days"] = list(DEFAULT_CUSTOMER_CHART_POLICY["range_days"])
-    policy["hidden_metrics"] = list(DEFAULT_CUSTOMER_CHART_POLICY["hidden_metrics"])
-    policy["sparse_metrics"] = list(DEFAULT_CUSTOMER_CHART_POLICY["sparse_metrics"])
-    policy["metric_labels"] = dict(DEFAULT_CUSTOMER_CHART_POLICY["metric_labels"])
+    policy = json.loads(json.dumps(DEFAULT_CUSTOMER_CHART_POLICY))
     if not isinstance(override, dict):
         return policy
 
