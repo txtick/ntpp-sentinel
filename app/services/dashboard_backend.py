@@ -1671,6 +1671,7 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
                     cleared_at
                 FROM alert_instances
                 WHERE customer_id = %s
+                  AND status <> 'cleared'
                 ORDER BY
                     CASE status
                         WHEN 'open' THEN 0

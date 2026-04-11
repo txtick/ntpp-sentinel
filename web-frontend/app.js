@@ -550,8 +550,15 @@ function escapeHtml(value) {
 
 function wireNavigationTargets(root = document) {
   root.querySelectorAll("[data-customer-id]").forEach((el) => {
-    el.onclick = () => {
-      state.selections.customerId = Number(el.dataset.customerId);
+    el.onclick = async () => {
+      const customerId = Number(el.dataset.customerId);
+      state.selections.customerId = customerId;
+      if (state.view === "customers") {
+        renderCustomers();
+        await loadCustomerDetail(customerId);
+        pushBrowserState();
+        return;
+      }
       state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
       state.selections.customerVisitsExpanded = false;
       setView("customer-profile");
@@ -576,8 +583,15 @@ function wireNavigationTargets(root = document) {
     };
   });
   root.querySelectorAll("[data-tech-id]").forEach((el) => {
-    el.onclick = () => {
-      state.selections.techId = el.dataset.techId;
+    el.onclick = async () => {
+      const techId = el.dataset.techId;
+      state.selections.techId = techId;
+      if (state.view === "technicians") {
+        renderTechnicians();
+        await loadTechnicianDetail(techId);
+        pushBrowserState();
+        return;
+      }
       setView("technician-profile");
     };
   });
@@ -1264,7 +1278,7 @@ function renderCustomers() {
   els.mainPanel.innerHTML = `
     <section class="section-card">
       <h3>Customer List</h3>
-      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Click any customer to open the full chemistry profile.</p>
+      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Select a customer to preview details on the right.</p>
       <div class="item-list">
         ${result.items.map((item) => {
           const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
@@ -1290,7 +1304,7 @@ function renderCustomers() {
     <div class="detail-stack">
       <section class="detail-card">
         <h3>Customer Profiles</h3>
-        <p class="muted">Each customer profile will show chemistry trend charts, chemical spend by visit, current alerts, and reminder context on a full-width page.</p>
+        <p class="muted">Select a customer from the list to review alerts, reminders, and service context here.</p>
       </section>
     </div>
   `;
@@ -1606,6 +1620,7 @@ async function loadTechnicians() {
   state.data.technicians = result;
   if (!state.selections.techId && result.items[0]) state.selections.techId = result.items[0].tech_id;
   renderTechnicians();
+  if (state.selections.techId) await loadTechnicianDetail(state.selections.techId);
 }
 
 function renderTechnicians() {
@@ -1639,7 +1654,7 @@ function renderTechnicians() {
     <div class="detail-stack">
       <section class="detail-card">
         <h3>Technician Profiles</h3>
-        <p class="muted">Open any technician to see a full-page route profile with weekday sections, timing signals, spend, alerts, and reminders tied to assigned pools.</p>
+        <p class="muted">Select a technician from the list to review assignments, spend, and related customer context here.</p>
       </section>
     </div>
   `;
