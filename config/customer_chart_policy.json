@@ -3,6 +3,20 @@
   "range_days": [30, 90, 180, 365],
   "hidden_metrics": ["free_chlorine", "combined_chlorine"],
   "sparse_metrics": [],
+  "required_every_visit_metrics": [
+    "total_chlorine",
+    "ph",
+    "temperature",
+    "tds",
+    "alkalinity",
+    "lsi",
+    "salt"
+  ],
+  "monthly_metrics": [
+    "phosphates",
+    "calcium_hardness",
+    "cya"
+  ],
   "metric_labels": {
     "ph": "pH",
     "total_chlorine": "Total Chlorine",
@@ -14,6 +28,7 @@
     "salt": "Salt",
     "phosphates": "Phosphates",
     "temperature": "Temperature",
-    "tds": "TDS"
+    "tds": "TDS",
+    "lsi": "LSI"
   }
 }

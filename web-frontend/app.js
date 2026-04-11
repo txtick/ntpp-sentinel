@@ -3,6 +3,20 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
   range_days: [30, 90, 180, 365],
   hidden_metrics: ["free_chlorine", "combined_chlorine"],
   sparse_metrics: [],
+  required_every_visit_metrics: [
+    "total_chlorine",
+    "ph",
+    "temperature",
+    "tds",
+    "alkalinity",
+    "lsi",
+    "salt",
+  ],
+  monthly_metrics: [
+    "phosphates",
+    "calcium_hardness",
+    "cya",
+  ],
   metric_labels: {
     ph: "pH",
     total_chlorine: "Total Chlorine",
@@ -15,6 +29,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     phosphates: "Phosphates",
     temperature: "Temperature",
     tds: "TDS",
+    lsi: "LSI",
   },
 };
 
@@ -223,6 +238,12 @@ function mergeCustomerChartPolicy(policy = {}) {
     sparse_metrics: Array.isArray(policy.sparse_metrics)
       ? policy.sparse_metrics
       : DEFAULT_CUSTOMER_CHART_POLICY.sparse_metrics,
+    required_every_visit_metrics: Array.isArray(policy.required_every_visit_metrics)
+      ? policy.required_every_visit_metrics
+      : DEFAULT_CUSTOMER_CHART_POLICY.required_every_visit_metrics,
+    monthly_metrics: Array.isArray(policy.monthly_metrics)
+      ? policy.monthly_metrics
+      : DEFAULT_CUSTOMER_CHART_POLICY.monthly_metrics,
     metric_labels: {
       ...DEFAULT_CUSTOMER_CHART_POLICY.metric_labels,
       ...(policy.metric_labels || {}),
@@ -252,6 +273,7 @@ function normalizeMetricKey(seriesItemOrKey, description = "") {
   if ((raw === "none" || raw === "value") && desc.includes("phosphate")) return "phosphates";
   if ((raw === "none" || raw === "value") && desc.includes("salt")) return "salt";
   if ((raw === "none" || raw === "value") && desc.includes("tds")) return "tds";
+  if ((raw === "none" || raw === "value") && (desc.includes("saturation index") || desc.includes("(lsi)") || desc === "lsi")) return "lsi";
   if ((raw === "none" || raw === "value") && desc.includes("hardness")) return "calcium_hardness";
   if ((raw === "none" || raw === "value") && desc.includes("chlorine")) return "total_chlorine";
   if ((raw === "none" || raw === "value") && desc === "ph") return "ph";
@@ -259,6 +281,7 @@ function normalizeMetricKey(seriesItemOrKey, description = "") {
   if (raw === "totalchlorine") return "total_chlorine";
   if (raw === "combinedchlorine") return "combined_chlorine";
   if (raw === "cyanuricacid" || raw === "cya") return "cya";
+  if (raw === "lsi" || raw === "saturationindex" || raw === "saturationindex(lsi)") return "lsi";
   if (raw === "totalalkalinity" || raw === "alkalinity") return "alkalinity";
   if (raw === "totalhardness" || raw === "calciumhardness") return "calcium_hardness";
   if (raw === "watertemperature" || raw === "temperature") return "temperature";

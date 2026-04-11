@@ -18,6 +18,20 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     "range_days": [30, 90, 180, 365],
     "hidden_metrics": ["free_chlorine", "combined_chlorine"],
     "sparse_metrics": [],
+    "required_every_visit_metrics": [
+        "total_chlorine",
+        "ph",
+        "temperature",
+        "tds",
+        "alkalinity",
+        "lsi",
+        "salt",
+    ],
+    "monthly_metrics": [
+        "phosphates",
+        "calcium_hardness",
+        "cya",
+    ],
     "metric_labels": {
         "ph": "pH",
         "total_chlorine": "Total Chlorine",
@@ -30,6 +44,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "phosphates": "Phosphates",
         "temperature": "Temperature",
         "tds": "TDS",
+        "lsi": "LSI",
     },
 }
 CUSTOMER_CHART_POLICY_PATH = os.path.abspath(
@@ -55,7 +70,7 @@ def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str
         if isinstance(value, int) and value > 0:
             policy[key] = value
 
-    for key in ("range_days", "hidden_metrics", "sparse_metrics"):
+    for key in ("range_days", "hidden_metrics", "sparse_metrics", "required_every_visit_metrics", "monthly_metrics"):
         value = override.get(key)
         if isinstance(value, list):
             policy[key] = list(value)
