@@ -252,6 +252,18 @@ function normalizeMetricKey(seriesItemOrKey, description = "") {
     typeof seriesItemOrKey === "string" ? description : seriesItemOrKey?.description || description || ""
   ).trim().toLowerCase();
 
+  if ((raw === "none" || raw === "value") && (desc.includes("water temp") || desc.includes("water temperature"))) {
+    return "temperature";
+  }
+  if ((raw === "none" || raw === "value") && desc.includes("filter pressure")) return "filter_pressure";
+  if ((raw === "none" || raw === "value") && desc.includes("alkalinity")) return "alkalinity";
+  if ((raw === "none" || raw === "value") && desc.includes("cyanuric")) return "cya";
+  if ((raw === "none" || raw === "value") && desc.includes("phosphate")) return "phosphates";
+  if ((raw === "none" || raw === "value") && desc.includes("salt")) return "salt";
+  if ((raw === "none" || raw === "value") && desc.includes("tds")) return "tds";
+  if ((raw === "none" || raw === "value") && desc.includes("hardness")) return "calcium_hardness";
+  if ((raw === "none" || raw === "value") && desc.includes("chlorine")) return "total_chlorine";
+  if ((raw === "none" || raw === "value") && desc === "ph") return "ph";
   if (raw === "freechlorine") return "free_chlorine";
   if (raw === "totalchlorine") return "total_chlorine";
   if (raw === "combinedchlorine") return "combined_chlorine";
@@ -1240,6 +1252,13 @@ async function loadCustomerProfile() {
     return Number.isFinite(ts) && ts >= Date.now() - 90 * 24 * 60 * 60 * 1000;
   });
   const visibleVisits = state.selections.customerVisitsExpanded ? visits90d : visits90d.slice(0, 4);
+  const visitCosts90d = visits90d
+    .map((visit) => Number(visit.visit_estimated_cost))
+    .filter((value) => Number.isFinite(value));
+  const avgVisitCost90d = visitCosts90d.length
+    ? visitCosts90d.reduce((sum, value) => sum + value, 0) / visitCosts90d.length
+    : null;
+  const latestVisitCost = visits.length ? Number(visits[0].visit_estimated_cost) : null;
   const assignedTechnicians = detail.assigned_technicians || [];
   const assignedTechLabel = assignedTechnicians.length
     ? assignedTechnicians.map((tech) => {
@@ -1336,6 +1355,8 @@ async function loadCustomerProfile() {
             <div class="meta-row"><span>30 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></div>
             <div class="meta-row"><span>60 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_60d) || "$0.00")}</strong></div>
             <div class="meta-row"><span>90 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_90d) || "$0.00")}</strong></div>
+            <div class="meta-row"><span>Average Cost Per Visit (90d)</span><strong>${escapeHtml(currency(avgVisitCost90d) || "$0.00")}</strong></div>
+            <div class="meta-row"><span>Latest Visit Chemical Cost</span><strong>${escapeHtml(currency(latestVisitCost) || "$0.00")}</strong></div>
             <div class="meta-row"><span>Latest Dose Date</span><strong>${formatDateTime(spend.latest_dose_date)}</strong></div>
           </div>
         </section>
