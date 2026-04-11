@@ -2449,9 +2449,15 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                 FROM chemical_dose_events d
                 JOIN technician_route_stops s
                   ON s.source_system = d.source_system
-                 AND s.source_service_location_id = d.source_service_location_id
-                 AND s.service_date::date = d.service_date::date
                  AND s.is_skipped = FALSE
+                 AND (
+                     s.source_route_stop_id = d.source_service_stop_id
+                     OR (
+                         d.source_service_stop_id IS NULL
+                         AND s.customer_id = d.customer_id
+                         AND s.service_date::date = d.service_date::date
+                     )
+                 )
                 JOIN technicians t ON t.id = s.technician_id
                 WHERE t.source_system = 'skimmer'
                   AND t.source_account_id = %s
