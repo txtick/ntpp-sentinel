@@ -253,6 +253,7 @@ function chemistrySeriesMeta(seriesItem) {
   return {
     hide: readingKey === "free_chlorine",
     unitLabel: "",
+    sparse: isSparseChecklistMetric(readingKey),
   };
 }
 
@@ -1124,12 +1125,14 @@ function buildLineChart(seriesItem) {
   const dots = points.map((point, index) => {
     const x = xForIndex(index);
     const y = yForValue(point.value);
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" class="chart-dot">
+    const meta = chemistrySeriesMeta(seriesItem);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${meta.sparse ? "4.6" : "3.5"}" class="chart-dot${meta.sparse ? " chart-dot-sparse" : ""}">
       <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value)}`)}</title>
     </circle>`;
   }).join("");
 
   const metricLabel = formatMetricLabel(seriesItem);
+  const meta = chemistrySeriesMeta(seriesItem);
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Chemistry trend chart">
       ${yTicks.map((tick) => {
@@ -1150,7 +1153,7 @@ function buildLineChart(seriesItem) {
       <line x1="${xMin}" y1="${yMin}" x2="${xMin}" y2="${yMax}" class="chart-axis" />
       <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(metricLabel)}</text>
       <text x="${(width / 2)}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
-      <path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      ${meta.sparse ? "" : `<path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`}
       ${dots}
     </svg>
   `;
@@ -1160,7 +1163,6 @@ function groupChemistrySeries(rows) {
   const groups = new Map();
   rows.forEach((row) => {
     if (chemistrySeriesMeta({ readingKey: row.reading_key, description: row.description }).hide) return;
-    if (isLikelyUntestedPoint(row)) return;
     const key = `${row.pool_id}::${row.reading_key}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -1240,8 +1242,8 @@ async function loadCustomerProfile() {
               return `
                 <article class="chart-card chart-card-large">
                   <div>
-                    <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(formatMetricLabel(seriesItem))}</h4>
-                    <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")}</div>
+                    <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
+                    <div class="muted">${escapeHtml(seriesItem.poolName)}${seriesItem.description || seriesItem.readingType ? ` · ${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")}` : ""}</div>
                   </div>
                   ${buildLineChart(seriesItem)}
                   <div class="chart-caption">
