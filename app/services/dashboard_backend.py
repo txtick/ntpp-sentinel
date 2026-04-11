@@ -78,7 +78,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     },
 }
 CUSTOMER_CHART_POLICY_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "config", "customer_chart_policy.json")
+    os.path.join(os.path.dirname(__file__), "..", "config", "customer_chart_policy.json")
 )
 
 
