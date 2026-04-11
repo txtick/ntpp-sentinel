@@ -1330,7 +1330,14 @@ def _upsert_chemistry_readings(
                     p.id AS pool_id,
                     p.customer_id,
                     e.service_date,
-                    normalize_metric_key(COALESCE(e.reading_type, d.reading_type, e.entry_description_text, d.description)) AS reading_key,
+                    normalize_metric_key(
+                        COALESCE(
+                            NULLIF(NULLIF(e.entry_description_text, ''), 'None'),
+                            NULLIF(NULLIF(d.description, ''), 'None'),
+                            NULLIF(NULLIF(e.reading_type, ''), 'None'),
+                            NULLIF(NULLIF(d.reading_type, ''), 'None')
+                        )
+                    ) AS reading_key,
                     COALESCE(e.reading_type, d.reading_type) AS reading_type,
                     COALESCE(e.entry_description_text, d.description) AS description,
                     COALESCE(e.unit_of_measure, d.unit_of_measure) AS unit_of_measure,

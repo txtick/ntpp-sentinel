@@ -11,6 +11,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     "alkalinity",
     "lsi",
     "salt",
+    "filter_pressure",
   ],
   monthly_metrics: [
     "phosphates",
@@ -1224,13 +1225,14 @@ function buildLineChart(seriesItem) {
 function groupChemistrySeries(rows) {
   const groups = new Map();
   rows.forEach((row) => {
-    if (chemistrySeriesMeta({ readingKey: row.reading_key, description: row.description }).hide) return;
-    const key = `${row.pool_id}::${row.reading_key}`;
+    const normalizedReadingKey = normalizeMetricKey({ readingKey: row.reading_key, description: row.description });
+    if (chemistrySeriesMeta({ readingKey: normalizedReadingKey, description: row.description }).hide) return;
+    const key = `${row.pool_id}::${normalizedReadingKey}`;
     if (!groups.has(key)) {
       groups.set(key, {
         poolId: row.pool_id,
         poolName: row.pool_name || `Pool ${row.pool_id}`,
-        readingKey: row.reading_key,
+        readingKey: normalizedReadingKey,
         readingType: row.reading_type,
         description: row.description,
         unitOfMeasure: row.unit_of_measure,

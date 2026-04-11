@@ -10,7 +10,8 @@
     "tds",
     "alkalinity",
     "lsi",
-    "salt"
+    "salt",
+    "filter_pressure"
   ],
   "monthly_metrics": [
     "phosphates",

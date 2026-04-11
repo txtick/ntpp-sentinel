@@ -26,6 +26,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "alkalinity",
         "lsi",
         "salt",
+        "filter_pressure",
     ],
     "monthly_metrics": [
         "phosphates",
