@@ -18,6 +18,32 @@
     "calcium_hardness",
     "cya"
   ],
+  "chart_order": [
+    "total_chlorine",
+    "ph",
+    "filter_pressure",
+    "temperature",
+    "alkalinity",
+    "lsi",
+    "cya",
+    "calcium_hardness",
+    "phosphates",
+    "salt",
+    "tds"
+  ],
+  "recommended_highs": {
+    "total_chlorine": 4,
+    "ph": 7.8,
+    "temperature": 82,
+    "tds": 2000,
+    "alkalinity": 120,
+    "lsi": 0.3,
+    "salt": 3400,
+    "filter_pressure": null,
+    "phosphates": 500,
+    "calcium_hardness": 400,
+    "cya": 50
+  },
   "metric_labels": {
     "ph": "pH",
     "total_chlorine": "Total Chlorine",

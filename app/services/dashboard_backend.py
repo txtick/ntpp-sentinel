@@ -33,6 +33,32 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "calcium_hardness",
         "cya",
     ],
+    "chart_order": [
+        "total_chlorine",
+        "ph",
+        "filter_pressure",
+        "temperature",
+        "alkalinity",
+        "lsi",
+        "cya",
+        "calcium_hardness",
+        "phosphates",
+        "salt",
+        "tds",
+    ],
+    "recommended_highs": {
+        "total_chlorine": 4,
+        "ph": 7.8,
+        "temperature": 82,
+        "tds": 2000,
+        "alkalinity": 120,
+        "lsi": 0.3,
+        "salt": 3400,
+        "filter_pressure": None,
+        "phosphates": 500,
+        "calcium_hardness": 400,
+        "cya": 50,
+    },
     "metric_labels": {
         "ph": "pH",
         "total_chlorine": "Total Chlorine",
@@ -71,7 +97,14 @@ def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str
         if isinstance(value, int) and value > 0:
             policy[key] = value
 
-    for key in ("range_days", "hidden_metrics", "sparse_metrics", "required_every_visit_metrics", "monthly_metrics"):
+    for key in (
+        "range_days",
+        "hidden_metrics",
+        "sparse_metrics",
+        "required_every_visit_metrics",
+        "monthly_metrics",
+        "chart_order",
+    ):
         value = override.get(key)
         if isinstance(value, list):
             policy[key] = list(value)
@@ -79,6 +112,10 @@ def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str
     labels = override.get("metric_labels")
     if isinstance(labels, dict):
         policy["metric_labels"].update(labels)
+
+    highs = override.get("recommended_highs")
+    if isinstance(highs, dict):
+        policy["recommended_highs"].update(highs)
 
     return policy
 

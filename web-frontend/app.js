@@ -18,6 +18,32 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     "calcium_hardness",
     "cya",
   ],
+  chart_order: [
+    "total_chlorine",
+    "ph",
+    "filter_pressure",
+    "temperature",
+    "alkalinity",
+    "lsi",
+    "cya",
+    "calcium_hardness",
+    "phosphates",
+    "salt",
+    "tds",
+  ],
+  recommended_highs: {
+    total_chlorine: 4,
+    ph: 7.8,
+    temperature: 82,
+    tds: 2000,
+    alkalinity: 120,
+    lsi: 0.3,
+    salt: 3400,
+    filter_pressure: null,
+    phosphates: 500,
+    calcium_hardness: 400,
+    cya: 50,
+  },
   metric_labels: {
     ph: "pH",
     total_chlorine: "Total Chlorine",
@@ -245,6 +271,13 @@ function mergeCustomerChartPolicy(policy = {}) {
     monthly_metrics: Array.isArray(policy.monthly_metrics)
       ? policy.monthly_metrics
       : DEFAULT_CUSTOMER_CHART_POLICY.monthly_metrics,
+    chart_order: Array.isArray(policy.chart_order)
+      ? policy.chart_order
+      : DEFAULT_CUSTOMER_CHART_POLICY.chart_order,
+    recommended_highs: {
+      ...DEFAULT_CUSTOMER_CHART_POLICY.recommended_highs,
+      ...(policy.recommended_highs || {}),
+    },
     metric_labels: {
       ...DEFAULT_CUSTOMER_CHART_POLICY.metric_labels,
       ...(policy.metric_labels || {}),
@@ -1161,15 +1194,20 @@ function buildLineChart(seriesItem) {
   const yMax = height - margin.bottom;
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
-  const span = rawMax - rawMin;
-  const padding = span === 0 ? Math.max(Math.abs(rawMax) * 0.08, 1) : span * 0.08;
-  const paddedMin = rawMin - padding;
-  const paddedMax = rawMax + padding;
+  const readingKey = normalizeMetricKey(seriesItem);
+  const recommendedHigh = Number(customerChartPolicy().recommended_highs?.[readingKey]);
+  const hasRecommendedHigh = Number.isFinite(recommendedHigh) && recommendedHigh > 0;
+  const paddedMin = 0;
+  const recommendedTop = hasRecommendedHigh ? recommendedHigh * 1.2 : null;
+  const paddedMax = Math.max(
+    rawMax,
+    hasRecommendedHigh ? recommendedTop : 0,
+    readingKey === "filter_pressure" ? Math.max(rawMax * 1.2, 10) : 0
+  );
   const valueRange = paddedMax - paddedMin || 1;
+  const span = paddedMax - paddedMin;
   const stepX = points.length === 1 ? 0 : (xMax - xMin) / (points.length - 1);
-  const yTicks = span === 0
-    ? [rawMax + padding, rawMax, rawMax, rawMax, rawMin - padding]
-    : Array.from({ length: 5 }, (_, index) => rawMax - (span * index) / 4);
+  const yTicks = Array.from({ length: 5 }, (_, index) => paddedMax - (span * index) / 4);
   const xTickIndexes = Array.from(new Set([
     0,
     Math.max(0, Math.floor((points.length - 1) / 2)),
@@ -1241,7 +1279,14 @@ function groupChemistrySeries(rows) {
     }
     groups.get(key).points.push(row);
   });
+  const order = customerChartPolicy().chart_order || [];
+  const rank = (key) => {
+    const index = order.indexOf(normalizeMetricKey(key));
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
   return Array.from(groups.values()).sort((a, b) => {
+    const rankDiff = rank(a.readingKey) - rank(b.readingKey);
+    if (rankDiff !== 0) return rankDiff;
     if (a.poolName !== b.poolName) return a.poolName.localeCompare(b.poolName);
     return String(a.readingKey).localeCompare(String(b.readingKey));
   });
@@ -1261,6 +1306,7 @@ async function loadCustomerProfile() {
   const chartDays = Number(state.selections.customerChartDays || policy.default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days);
   const rangeDays = (policy.range_days || DEFAULT_CUSTOMER_CHART_POLICY.range_days).filter((days) => Number.isFinite(Number(days)) && Number(days) > 0);
   const series = filterSeriesByDays(groupChemistrySeries(detail.chemistry_history || []), chartDays);
+  const multiplePools = (detail.pools || []).length > 1;
   const spend = detail.chemical_spend_summary || {};
   const visits = detail.chemical_spend_by_visit || [];
   const visits90d = visits.filter((visit) => {
@@ -1317,7 +1363,7 @@ async function loadCustomerProfile() {
                 <article class="chart-card chart-card-large">
                   <div>
                     <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
-                    <div class="muted">${escapeHtml(seriesItem.poolName)}${seriesItem.description || seriesItem.readingType ? ` · ${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")}` : ""}</div>
+                    ${multiplePools ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
                   </div>
                   ${buildLineChart(seriesItem)}
                   <div class="chart-caption">
