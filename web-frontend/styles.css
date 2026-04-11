@@ -289,6 +289,10 @@ textarea {
   gap: 14px;
 }
 
+.chart-grid-wide {
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+}
+
 .chart-card {
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
@@ -298,6 +302,10 @@ textarea {
   gap: 10px;
 }
 
+.chart-card-large {
+  padding: 18px;
+}
+
 .chart-svg {
   width: 100%;
   height: 220px;
@@ -305,6 +313,10 @@ textarea {
   background:
     linear-gradient(180deg, rgba(31, 107, 114, 0.06), rgba(181, 81, 45, 0.02)),
     rgba(24, 34, 45, 0.03);
+}
+
+.chart-card-large .chart-svg {
+  height: 320px;
 }
 
 .chart-gridline {
@@ -346,6 +358,32 @@ textarea {
   gap: 10px;
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.8fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.profile-main,
+.profile-side,
+.range-controls {
+  display: grid;
+  gap: 18px;
+}
+
+.range-controls {
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  align-items: center;
+}
+
+.button.is-active-filter {
+  background: linear-gradient(135deg, var(--accent) 0%, #cf7b3b 100%);
+  color: white;
+  border-color: transparent;
 }
 
 .stat-card {
@@ -578,6 +616,14 @@ textarea {
   .content-grid {
     grid-template-columns: 1fr;
   }
+
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-grid-wide {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -597,5 +643,9 @@ textarea {
 
   .nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .range-controls {
+    grid-auto-flow: row;
   }
 }

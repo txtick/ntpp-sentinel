@@ -5,6 +5,8 @@ const state = {
   selections: {
     alertId: null,
     customerId: null,
+    customerChartDays: 90,
+    customerVisitsExpanded: false,
     techId: null,
     reminderId: null,
   },
@@ -254,6 +256,44 @@ function chemistrySeriesMeta(seriesItem) {
   };
 }
 
+function isSparseChecklistMetric(readingKey) {
+  return new Set([
+    "phosphates",
+    "cya",
+    "salt",
+    "tds",
+    "alkalinity",
+    "total_alkalinity",
+    "calcium_hardness",
+    "total_hardness",
+  ]).has(normalizeMetricKey(readingKey));
+}
+
+function isLikelyUntestedPoint(row) {
+  const readingKey = normalizeMetricKey(row.reading_key, row.description);
+  const value = Number(row.value);
+  if (!isSparseChecklistMetric(readingKey) || value !== 0) return false;
+  const selectedIndex = Number(
+    row?.raw_json?.service_stop_entry?.SelectedIndex ??
+    row?.raw_json?.service_stop_entry?.selected_index
+  );
+  if (Number.isFinite(selectedIndex)) return selectedIndex === 0;
+  return true;
+}
+
+function filterSeriesByDays(series, days) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return series
+    .map((seriesItem) => ({
+      ...seriesItem,
+      points: (seriesItem.points || []).filter((point) => {
+        const ts = new Date(point.service_date).getTime();
+        return Number.isFinite(ts) && ts >= cutoff;
+      }),
+    }))
+    .filter((seriesItem) => seriesItem.points.length > 0);
+}
+
 function alertReasonBadge(item) {
   const metadata = item.metadata_json || {};
   if (item.rule_code === "filter_clean_missing_psi") {
@@ -322,6 +362,8 @@ function wireNavigationTargets(root = document) {
   root.querySelectorAll("[data-customer-id]").forEach((el) => {
     el.onclick = () => {
       state.selections.customerId = Number(el.dataset.customerId);
+      state.selections.customerChartDays = 90;
+      state.selections.customerVisitsExpanded = false;
       setView("customer-profile");
     };
   });
@@ -1118,6 +1160,7 @@ function groupChemistrySeries(rows) {
   const groups = new Map();
   rows.forEach((row) => {
     if (chemistrySeriesMeta({ readingKey: row.reading_key, description: row.description }).hide) return;
+    if (isLikelyUntestedPoint(row)) return;
     const key = `${row.pool_id}::${row.reading_key}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -1147,9 +1190,22 @@ async function loadCustomerProfile() {
   const detail = await api(`/api/customers/${customerId}`);
   const item = detail.item;
   const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
-  const series = groupChemistrySeries(detail.chemistry_history || []);
+  const chartDays = Number(state.selections.customerChartDays || 90);
+  const series = filterSeriesByDays(groupChemistrySeries(detail.chemistry_history || []), chartDays);
   const spend = detail.chemical_spend_summary || {};
   const visits = detail.chemical_spend_by_visit || [];
+  const visits90d = visits.filter((visit) => {
+    const ts = new Date(visit.service_date).getTime();
+    return Number.isFinite(ts) && ts >= Date.now() - 90 * 24 * 60 * 60 * 1000;
+  });
+  const visibleVisits = state.selections.customerVisitsExpanded ? visits90d : visits90d.slice(0, 4);
+  const assignedTechnicians = detail.assigned_technicians || [];
+  const assignedTechLabel = assignedTechnicians.length
+    ? assignedTechnicians.map((tech) => {
+        const cadence = [tech.day_of_week, tech.frequency].filter(Boolean).join(" · ");
+        return cadence ? `${tech.technician_name} (${cadence})` : tech.technician_name;
+      }).join(", ")
+    : "No current technician assignment";
 
   els.viewKicker.textContent = "Customer";
   els.viewTitle.textContent = `${name}`;
@@ -1157,73 +1213,113 @@ async function loadCustomerProfile() {
   els.mainPanel.innerHTML = `
     <section class="section-card">
       <h3>${escapeHtml(name)}</h3>
-      <p class="panel-subtitle">Chemistry trend view, chemical spend, and tracked workflow context for this customer.</p>
-      <div class="stat-grid">
-        <article class="stat-card"><span class="muted">30 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></article>
-        <article class="stat-card"><span class="muted">60 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_60d) || "$0.00")}</strong></article>
-        <article class="stat-card"><span class="muted">90 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_90d) || "$0.00")}</strong></article>
-        <article class="stat-card"><span class="muted">Tracked Alerts</span><strong>${escapeHtml(detail.alerts.length)}</strong></article>
+      <p class="panel-subtitle">Chemistry trend view, reminders, spend, and tracked workflow context for this customer.</p>
+      <div class="meta-stack">
+        <div class="meta-row"><span>Current Assigned Tech</span><strong>${escapeHtml(assignedTechLabel)}</strong></div>
+        <div class="meta-row"><span>Latest Chemistry Service</span><strong>${formatDateTime(detail.latest_chemistry_service_date)}</strong></div>
       </div>
     </section>
-    <section class="section-card">
-      <h3>Chemistry Trend Charts</h3>
-      <div class="chart-grid">
-        ${series.length ? series.map((seriesItem) => {
-          const meta = chemistrySeriesMeta(seriesItem);
-          const latest = seriesItem.points[seriesItem.points.length - 1];
-          const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
-          if (meta.hide) return "";
-          return `
-            <article class="chart-card">
-              <div>
-                <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(formatMetricLabel(seriesItem))}</h4>
-                <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")}</div>
-              </div>
-              ${buildLineChart(seriesItem)}
-              <div class="chart-caption">
-                <span>Latest ${escapeHtml(formatAxisValue(latest?.value))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
-                <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—"))}</span>
-              </div>
-            </article>
-          `;
-        }).join("") : `<div class="empty-state">No chemistry history available for this customer in the last 180 days.</div>`}
-      </div>
-    </section>
-    <section class="section-card">
-      <h3>Chemical Spend By Visit</h3>
-      <div class="event-list">
-        ${visits.length ? visits.slice(0, 40).map((visit) => `
-          <div class="item-card">
-            <div class="item-card-header">
-              <strong>${escapeHtml(visit.pool_name || `Pool ${visit.pool_id}`)}</strong>
-              <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
+    <div class="profile-grid">
+      <div class="profile-main">
+        <section class="section-card">
+          <div class="detail-header">
+            <div>
+              <h3>Chemistry Trend Charts</h3>
+              <p class="panel-subtitle">Default view is 3 months. Use the range buttons to zoom in or out.</p>
             </div>
-            <div class="muted">${formatDateTime(visit.service_date)}</div>
-            <div class="chem-list">
-              ${(visit.chemicals || []).map((chem) => `
-                <div class="chem-chip">
-                  <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
-                  <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
-                </div>
-              `).join("")}
+            <div class="range-controls">
+              ${[30, 90, 180, 365].map((days) => `<button class="button button-secondary${chartDays === days ? " is-active-filter" : ""}" data-chart-range="${days}">${days >= 365 ? "12 Mo" : days >= 180 ? "6 Mo" : days >= 90 ? "3 Mo" : "30 D"}</button>`).join("")}
             </div>
           </div>
-        `).join("") : `<div class="empty-state">No chemical spend history available for this customer.</div>`}
+          <div class="chart-grid chart-grid-wide">
+            ${series.length ? series.map((seriesItem) => {
+              const meta = chemistrySeriesMeta(seriesItem);
+              const latest = seriesItem.points[seriesItem.points.length - 1];
+              const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+              if (meta.hide) return "";
+              return `
+                <article class="chart-card chart-card-large">
+                  <div>
+                    <h4>${escapeHtml(seriesItem.poolName)}: ${escapeHtml(formatMetricLabel(seriesItem))}</h4>
+                    <div class="muted">${escapeHtml(seriesItem.description || seriesItem.readingType || "Reading")}</div>
+                  </div>
+                  ${buildLineChart(seriesItem)}
+                  <div class="chart-caption">
+                    <span>Latest ${escapeHtml(formatAxisValue(latest?.value))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
+                    <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—"))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—"))}</span>
+                  </div>
+                </article>
+              `;
+            }).join("") : `<div class="empty-state">No chemistry history available in this date range.</div>`}
+          </div>
+        </section>
+        <section class="section-card">
+          <h3>Reminders</h3>
+          <div class="event-list">
+            ${detail.reminders.length ? detail.reminders.map((reminder) => `<div class="item-card is-clickable" data-reminder-id="${escapeHtml(reminder.id)}"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") : `<div class="empty-state">No reminders for this customer.</div>`}
+          </div>
+        </section>
+        <section class="section-card">
+          <div class="detail-header">
+            <div>
+              <h3>Tracked Chemical Spend</h3>
+              <p class="panel-subtitle">Showing the last 4 visits by default. Expand to see the full last 90 days.</p>
+            </div>
+            ${visits90d.length > 4 ? `<button class="button button-secondary" id="customer-visits-toggle">${state.selections.customerVisitsExpanded ? "Show Last 4 Visits" : "Show 90 Day History"}</button>` : ""}
+          </div>
+          <div class="event-list">
+            ${visibleVisits.length ? visibleVisits.map((visit) => `
+              <div class="item-card">
+                <div class="item-card-header">
+                  <strong>${escapeHtml(visit.pool_name || `Pool ${visit.pool_id}`)}</strong>
+                  <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
+                </div>
+                <div class="muted">${formatDateTime(visit.service_date)}</div>
+                <div class="chem-list">
+                  ${(visit.chemicals || []).map((chem) => `
+                    <div class="chem-chip">
+                      <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
+                      <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            `).join("") : `<div class="empty-state">No chemical spend history available for this customer in the last 90 days.</div>`}
+          </div>
+        </section>
       </div>
-    </section>
-    <section class="section-card">
-      <h3>Tracked Alerts</h3>
-      <div class="event-list">
-        ${detail.alerts.length ? detail.alerts.map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") : `<div class="empty-state">No tracked alerts for this customer.</div>`}
-      </div>
-    </section>
-    <section class="section-card">
-      <h3>Reminders</h3>
-      <div class="event-list">
-        ${detail.reminders.length ? detail.reminders.map((reminder) => `<div class="item-card is-clickable" data-reminder-id="${escapeHtml(reminder.id)}"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") : `<div class="empty-state">No reminders for this customer.</div>`}
-      </div>
-    </section>
+      <aside class="profile-side">
+        <section class="section-card">
+          <h3>Chemical Spend Summary</h3>
+          <div class="meta-stack">
+            <div class="meta-row"><span>30 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></div>
+            <div class="meta-row"><span>60 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_60d) || "$0.00")}</strong></div>
+            <div class="meta-row"><span>90 Day Chemical Spend</span><strong>${escapeHtml(currency(spend.cost_90d) || "$0.00")}</strong></div>
+            <div class="meta-row"><span>Latest Dose Date</span><strong>${formatDateTime(spend.latest_dose_date)}</strong></div>
+          </div>
+        </section>
+        <section class="section-card">
+          <h3>Tracked Alerts</h3>
+          <div class="event-list">
+            ${detail.alerts.length ? detail.alerts.map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") : `<div class="empty-state">No tracked alerts for this customer.</div>`}
+          </div>
+        </section>
+      </aside>
+    </div>
   `;
+  els.mainPanel.querySelectorAll("[data-chart-range]").forEach((el) => {
+    el.onclick = async () => {
+      state.selections.customerChartDays = Number(el.dataset.chartRange);
+      await loadCustomerProfile();
+    };
+  });
+  const visitToggle = document.getElementById("customer-visits-toggle");
+  if (visitToggle) {
+    visitToggle.onclick = async () => {
+      state.selections.customerVisitsExpanded = !state.selections.customerVisitsExpanded;
+      await loadCustomerProfile();
+    };
+  }
   wireNavigationTargets(els.mainPanel);
 }
 

@@ -1396,6 +1396,29 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
 
             cur.execute(
                 """
+                SELECT DISTINCT
+                    t.id AS technician_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''),
+                        NULLIF(t.email, ''),
+                        t.id::text
+                    ) AS technician_name,
+                    t.role_type,
+                    a.day_of_week,
+                    a.frequency
+                FROM service_location_technician_assignments a
+                JOIN technicians t ON t.id = a.technician_id
+                WHERE a.customer_id = %s
+                  AND a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                ORDER BY technician_name ASC, a.day_of_week ASC NULLS LAST, a.frequency ASC NULLS LAST
+                """,
+                (int(customer_id),),
+            )
+            assigned_technicians = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
                 SELECT
                     id,
                     category,
@@ -1489,11 +1512,12 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
                     r.description,
                     r.unit_of_measure,
                     r.service_date,
-                    r.value
+                    r.value,
+                    r.raw_json
                 FROM chemistry_readings r
                 LEFT JOIN pools p ON p.id = r.pool_id
                 WHERE r.customer_id = %s
-                  AND r.service_date >= NOW() - INTERVAL '180 days'
+                  AND r.service_date >= NOW() - INTERVAL '365 days'
                 ORDER BY r.pool_id ASC, r.reading_key ASC, r.service_date ASC, r.id ASC
                 """,
                 (int(customer_id),),
@@ -1550,6 +1574,7 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
         "ok": True,
         "item": dict(customer),
         "pools": pools,
+        "assigned_technicians": assigned_technicians,
         "alerts": alerts,
         "reminders": reminders,
         "latest_chemistry_service_date": chemistry_summary["latest_service_date"] if chemistry_summary else None,
