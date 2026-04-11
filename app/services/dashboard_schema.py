@@ -136,10 +136,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             ON CONFLICT (rule_code) DO NOTHING
             """,
             [
-                ("fc_below_2", "free_chlorine", "lt", "warning", 10, 2, True, None, None, "Free chlorine below 2 ppm"),
-                ("fc_below_1", "free_chlorine", "lt", "critical", 20, 1, True, None, None, "Free chlorine below 1 ppm"),
-                ("cya_above_80", "cya", "gt", "warning", 10, 80, True, None, None, "CYA above 80 ppm"),
-                ("cya_above_100", "cya", "gt", "critical", 20, 100, True, None, None, "CYA above 100 ppm"),
+                ("cya_above_80", "cya", "gt", "critical", 20, 80, True, None, None, "CYA above 80 ppm"),
                 ("phosphates_above_500", "phosphates", "gt", "warning", 10, 500, True, None, None, "Phosphates above 500 ppb"),
                 ("phosphates_above_1000", "phosphates", "gt", "critical", 20, 1000, True, None, None, "Phosphates above 1000 ppb"),
             ],
@@ -167,14 +164,36 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             ON CONFLICT (rule_code) DO NOTHING
             """,
             [
-                ("fc_bad_3_of_5", "free_chlorine", "bad_readings_last_n", "lt", "warning", 10, 2, 5, 3, 60, None, None, True, None, None, "3 of last 5 FC readings below 2"),
+                ("fc_zero_2_of_2_14d", "free_chlorine", "bad_readings_last_n", "lte", "warning", 10, 0, 2, 2, 14, None, None, True, None, None, "2 free chlorine readings at 0 in the last 14 days"),
                 ("fc_cya_ratio_bad_2wk", "fc_cya_ratio", "fc_cya_ratio_last_n", "lt", "warning", 10, 0.075, 2, 2, 21, None, None, True, None, None, "FC:CYA ratio below 7.5% on last 2 paired readings"),
-                ("cya_bad_3_of_5", "cya", "bad_readings_last_n", "gt", "warning", 10, 80, 5, 3, 60, None, None, True, None, None, "3 of last 5 CYA readings above 80"),
+                ("cya_rise_above_50_15_60d", "cya", "delta_over_days", None, "warning", 10, 50, None, None, 60, 15, None, True, None, None, "CYA above 50 and rising 15+ over 60 days"),
                 ("phosphates_bad_3_of_5", "phosphates", "bad_readings_last_n", "gt", "warning", 10, 500, 5, 3, 60, None, None, True, None, None, "3 of last 5 phosphate readings above 500"),
                 ("ph_bad_2_of_2_14d", "ph", "bad_readings_last_n", "gt", "warning", 10, 7.8, 2, 2, 14, None, None, True, None, None, "2 pH readings above 7.8 in the last 14 days"),
-                ("cya_rise_15_60d", "cya", "delta_over_days", None, "warning", 10, None, None, None, 60, 15, None, True, None, None, "CYA rises 15+ over 60 days"),
-                ("cya_rise_30_60d", "cya", "delta_over_days", None, "critical", 20, None, None, None, 60, 30, None, True, None, None, "CYA rises 30+ over 60 days"),
             ],
+        )
+        cur.execute(
+            """
+            DELETE FROM alert_rule_config
+            WHERE rule_code IN ('fc_below_2', 'fc_below_1')
+            """
+        )
+        cur.execute(
+            """
+            DELETE FROM trend_rule_config
+            WHERE rule_code IN ('fc_bad_3_of_5')
+            """
+        )
+        cur.execute(
+            """
+            DELETE FROM alert_rule_config
+            WHERE rule_code IN ('cya_above_80', 'cya_above_100')
+            """
+        )
+        cur.execute(
+            """
+            DELETE FROM trend_rule_config
+            WHERE rule_code IN ('cya_bad_3_of_5', 'cya_rise_15_60d', 'cya_rise_30_60d')
+            """
         )
         cur.execute(
             """
@@ -449,6 +468,10 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                   AND rule_applies_in_month(tr.season_start_month, tr.season_end_month, latest.service_date::date)
                   AND latest.value IS NOT NULL
                   AND earliest.value IS NOT NULL
+                  AND (
+                      tr.threshold_value IS NULL
+                      OR latest.value >= tr.threshold_value
+                  )
                   AND (latest.value - earliest.value) >= COALESCE(tr.delta_threshold, 0)
             ),
             psi_rising AS (
