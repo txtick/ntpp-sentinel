@@ -278,6 +278,8 @@ textarea {
 
 .button-ghost {
   background: transparent;
+  color: var(--accent-strong);
+  border-color: rgba(47, 150, 229, 0.18);
 }
 
 .content-grid {
@@ -456,6 +458,17 @@ textarea {
   padding: 16px;
   background: var(--surface-strong);
   border: 1px solid var(--line);
+}
+
+.stat-card.is-clickable {
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.stat-card.is-clickable:hover {
+  transform: translateY(-1px);
+  border-color: rgba(47, 150, 229, 0.24);
+  box-shadow: 0 14px 28px rgba(25, 47, 78, 0.1);
 }
 
 .stat-card strong {

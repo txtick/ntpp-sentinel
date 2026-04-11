@@ -127,6 +127,31 @@ const filters = {
   reminders: { status: "", assigned_to: "", source_type: "", overdue_only: 0, search: "", limit: 40 },
 };
 
+function cloneFilters() {
+  return JSON.parse(JSON.stringify(filters));
+}
+
+function snapshotAppState() {
+  return {
+    view: state.view,
+    selections: { ...state.selections },
+    filters: cloneFilters(),
+  };
+}
+
+function restoreAppState(snapshot = {}) {
+  state.view = snapshot.view || "home";
+  Object.assign(state.selections, snapshot.selections || {});
+  const nextFilters = snapshot.filters || {};
+  Object.keys(filters).forEach((key) => {
+    Object.assign(filters[key], nextFilters[key] || {});
+  });
+}
+
+function pushBrowserState() {
+  window.history.pushState(snapshotAppState(), "", "");
+}
+
 function init() {
   els.actorInput.value = state.actor;
   els.secretInput.value = state.secret;
@@ -145,10 +170,30 @@ function init() {
 
   document.getElementById("refresh-view").addEventListener("click", () => loadCurrentView(true));
 
-  setView("home");
+  window.addEventListener("popstate", (event) => {
+    restoreAppState(event.state || { view: "home" });
+    document.querySelectorAll(".nav-link").forEach((button) => {
+      const activeView = ["customer-profile"].includes(state.view)
+        ? "customers"
+        : ["alert-profile"].includes(state.view)
+          ? "alerts"
+          : ["technician-profile"].includes(state.view)
+            ? "technicians"
+            : state.view;
+      button.classList.toggle("is-active", button.dataset.view === activeView);
+    });
+    const meta = viewMeta[state.view];
+    els.viewKicker.textContent = meta.kicker;
+    els.viewTitle.textContent = meta.title;
+    renderFilters();
+    loadCurrentView(true);
+  });
+
+  window.history.replaceState(snapshotAppState(), "", "");
+  setView("home", { pushHistory: false });
 }
 
-function setView(view) {
+function setView(view, { pushHistory = true } = {}) {
   state.view = view;
   document.querySelectorAll(".nav-link").forEach((button) => {
     const activeView = ["customer-profile"].includes(view)
@@ -163,6 +208,7 @@ function setView(view) {
   const meta = viewMeta[view];
   els.viewKicker.textContent = meta.kicker;
   els.viewTitle.textContent = meta.title;
+  if (pushHistory) pushBrowserState();
   window.scrollTo({ top: 0, behavior: "auto" });
   renderFilters();
   loadCurrentView(true);
@@ -513,7 +559,19 @@ function wireNavigationTargets(root = document) {
   });
   root.querySelectorAll("[data-alert-id]").forEach((el) => {
     el.onclick = () => {
-      state.selections.alertId = Number(el.dataset.alertId);
+      const alertId = Number(el.dataset.alertId);
+      if (state.view === "alerts") {
+        selectAlert(alertId);
+        return;
+      }
+      state.selections.alertId = alertId;
+      setView("alert-profile");
+    };
+  });
+  root.querySelectorAll("[data-alert-open-profile]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      state.selections.alertId = Number(el.dataset.alertOpenProfile);
       setView("alert-profile");
     };
   });
@@ -534,6 +592,43 @@ function wireNavigationTargets(root = document) {
       setView("reminders");
     };
   });
+  root.querySelectorAll("[data-home-nav]").forEach((el) => {
+    el.onclick = () => {
+      const target = el.dataset.homeNav;
+      const status = el.dataset.homeStatus || "";
+      const category = el.dataset.homeCategory || "";
+      const overdueOnly = Number(el.dataset.homeOverdueOnly || 0);
+      if (target === "alerts") {
+        filters.alerts.status = status;
+        filters.alerts.category = category;
+        filters.alerts.search = "";
+        filters.alerts.rule_code = "";
+        state.selections.alertId = null;
+        setView("alerts");
+        return;
+      }
+      if (target === "customers") {
+        filters.customers.operational_only = 1;
+        filters.customers.status = status;
+        filters.customers.search = "";
+        setView("customers");
+        return;
+      }
+      if (target === "reminders") {
+        filters.reminders.status = status;
+        filters.reminders.overdue_only = overdueOnly;
+        filters.reminders.search = "";
+        setView("reminders");
+      }
+    };
+  });
+}
+
+async function selectAlert(alertId, { pushHistory = true } = {}) {
+  state.selections.alertId = Number(alertId);
+  renderAlerts();
+  await loadAlertDetail(state.selections.alertId);
+  if (pushHistory) pushBrowserState();
 }
 
 function renderFilters() {
@@ -784,31 +879,31 @@ function renderHome() {
   const alertCounts = payload.tracked_alert_counts_by_status || [];
   const reminderCounts = payload.reminder_counts || {};
   const cards = [
-    ["Active Customers", payload.active_customer_count],
-    ["Active Pools", payload.active_pool_count],
-    ["Customers With Current Alerts", payload.customers_with_current_alerts],
-    ["Critical Current Alerts", payload.critical_current_alert_count],
-    ["Trend Alerts", payload.chemistry_trend_alert_count],
-    ["Revenue Opportunities", payload.revenue_opportunity_count],
-    ["Tracked Open Reminders", reminderCounts.open_reminder_count],
-    ["Overdue Reminders", reminderCounts.overdue_reminder_count],
+    { label: "Active Customers", value: payload.active_customer_count, target: "customers", status: "active" },
+    { label: "Active Pools", value: payload.active_pool_count, target: "customers", status: "active" },
+    { label: "Customers With Current Alerts", value: payload.customers_with_current_alerts, target: "alerts", status: "open" },
+    { label: "Critical Current Alerts", value: payload.critical_current_alert_count, target: "alerts", status: "open" },
+    { label: "Trend Alerts", value: payload.chemistry_trend_alert_count, target: "alerts", category: "process" },
+    { label: "Revenue Opportunities", value: payload.revenue_opportunity_count, target: "alerts", category: "revenue" },
+    { label: "Tracked Open Reminders", value: reminderCounts.open_reminder_count, target: "reminders", status: "open" },
+    { label: "Overdue Reminders", value: reminderCounts.overdue_reminder_count, target: "reminders", overdueOnly: 1 },
   ];
 
   els.mainPanel.innerHTML = `
     <div class="stat-grid">
-      ${cards.map(([label, value]) => `<article class="stat-card"><span class="muted">${label}</span><strong>${escapeHtml(value ?? "0")}</strong></article>`).join("")}
+      ${cards.map((card) => `<article class="stat-card is-clickable" data-home-nav="${escapeHtml(card.target)}" data-home-status="${escapeHtml(card.status || "")}" data-home-category="${escapeHtml(card.category || "")}" data-home-overdue-only="${escapeHtml(card.overdueOnly || 0)}"><span class="muted">${card.label}</span><strong>${escapeHtml(card.value ?? "0")}</strong></article>`).join("")}
     </div>
     <section class="section-card">
       <h3>Tracked Alert Status Mix</h3>
       <p class="panel-subtitle">Durable workflow state from the web backend, not raw query output.</p>
       <div class="list-grid">
-        ${alertCounts.map((item) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(item.category)}</strong>${badge(item.status)}</div><div class="muted">${escapeHtml(item.count)}</div></div>`).join("") || `<div class="empty-state">No tracked alerts yet.</div>`}
+        ${alertCounts.map((item) => `<div class="item-card is-clickable" data-home-nav="alerts" data-home-status="${escapeHtml(item.status || "")}" data-home-category="${escapeHtml(item.category || "")}"><div class="item-card-header"><strong>${escapeHtml(item.category)}</strong>${badge(item.status)}</div><div class="muted">${escapeHtml(item.count)}</div></div>`).join("") || `<div class="empty-state">No tracked alerts yet.</div>`}
       </div>
     </section>
     <section class="section-card">
       <h3>Recent Alerts</h3>
       <div class="item-list">
-        ${state.data.home.alerts.items.map((item) => `<article class="item-card is-clickable" data-alert-id="${escapeHtml(item.id)}"><div class="item-card-header"><strong>${escapeHtml(item.title)}</strong><div>${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div></div><div class="muted">${formatDateTime(item.last_detected_at)}</div></article>`).join("")}
+        ${state.data.home.alerts.items.map((item) => `<article class="item-card is-clickable" data-alert-open-profile="${escapeHtml(item.id)}"><div class="item-card-header"><strong>${escapeHtml(item.title)}</strong><div>${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div></div><div class="muted">${formatDateTime(item.last_detected_at)}</div></article>`).join("")}
       </div>
     </section>
     <section class="section-card">
@@ -860,7 +955,7 @@ function renderAlerts() {
                 <h4>${escapeHtml(item.title)}</h4>
                 <div class="muted">${escapeHtml(formatAlertSummary(item))}</div>
               </div>
-              <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)}</div>
+              <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)} <button class="button button-ghost" data-alert-open-profile="${item.id}">Open</button></div>
             </div>
             <div class="meta-row">
               <span>${escapeHtml(formatAlertSubline(item))}</span>
