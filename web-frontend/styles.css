@@ -547,6 +547,20 @@ textarea {
   gap: 12px;
 }
 
+.pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.pagination-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
 .day-group {
   display: grid;
   gap: 10px;

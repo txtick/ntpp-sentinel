@@ -113,8 +113,8 @@ const viewMeta = {
 };
 
 const filters = {
-  alerts: { status: "", category: "", rule_code: "", search: "", limit: 40 },
-  customers: { search: "", operational_only: 1, status: "", limit: 50 },
+  alerts: { status: "", category: "", rule_code: "", search: "", limit: 20, offset: 0 },
+  customers: { search: "", operational_only: 1, status: "", limit: 20, offset: 0 },
   technicians: {
     search: "",
     active_only: 0,
@@ -255,6 +255,44 @@ function qs(params) {
 
 function safeName(...values) {
   return values.find((value) => value && String(value).trim()) || "Untitled";
+}
+
+function renderPaginationControls(result, filterKey) {
+  const limit = Number(filters[filterKey]?.limit || 20);
+  const offset = Number(filters[filterKey]?.offset || 0);
+  const total = Number(result?.total || 0);
+  const page = Math.floor(offset / limit) + 1;
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const disablePrev = offset <= 0;
+  const disableNext = offset + limit >= total;
+  return `
+    <div class="pagination-bar">
+      <button class="button button-secondary" data-page-action="prev" data-page-target="${filterKey}" ${disablePrev ? "disabled" : ""}>Previous</button>
+      <span class="pagination-label">Page ${page} of ${pageCount}</span>
+      <button class="button button-secondary" data-page-action="next" data-page-target="${filterKey}" ${disableNext ? "disabled" : ""}>Next</button>
+    </div>
+  `;
+}
+
+function wirePagination(root = document) {
+  root.querySelectorAll("[data-page-action]").forEach((el) => {
+    el.onclick = async () => {
+      const target = el.dataset.pageTarget;
+      const direction = el.dataset.pageAction;
+      const limit = Number(filters[target]?.limit || 20);
+      const currentOffset = Number(filters[target]?.offset || 0);
+      const nextOffset = direction === "next"
+        ? currentOffset + limit
+        : Math.max(0, currentOffset - limit);
+      filters[target].offset = nextOffset;
+      if (target === "alerts") {
+        await loadAlerts();
+      } else if (target === "customers") {
+        await loadCustomers();
+      }
+      pushBrowserState();
+    };
+  });
 }
 
 function formatDateTime(value) {
@@ -566,6 +604,15 @@ function wireNavigationTargets(root = document) {
       setView("customer-profile");
     };
   });
+  root.querySelectorAll("[data-customer-open-profile]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      state.selections.customerId = Number(el.dataset.customerOpenProfile);
+      state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
+      state.selections.customerVisitsExpanded = false;
+      setView("customer-profile");
+    };
+  });
   root.querySelectorAll("[data-alert-id]").forEach((el) => {
     el.onclick = () => {
       const alertId = Number(el.dataset.alertId);
@@ -594,6 +641,13 @@ function wireNavigationTargets(root = document) {
         pushBrowserState();
         return;
       }
+      setView("technician-profile");
+    };
+  });
+  root.querySelectorAll("[data-tech-open-profile]").forEach((el) => {
+    el.onclick = (event) => {
+      event.stopPropagation();
+      state.selections.techId = el.dataset.techOpenProfile;
       setView("technician-profile");
     };
   });
@@ -949,10 +1003,14 @@ function renderHome() {
   `;
 }
 
-async function loadAlerts() {
+async function loadAlerts(resetOffset = false) {
+  if (resetOffset) filters.alerts.offset = 0;
   const result = await api(`/api/alerts${qs(filters.alerts)}`);
   state.data.alerts = result;
   if (!state.selections.alertId && result.items[0]) state.selections.alertId = result.items[0].id;
+  if (state.selections.alertId && !result.items.some((item) => item.id === state.selections.alertId)) {
+    state.selections.alertId = result.items[0]?.id || null;
+  }
   renderAlerts();
   if (state.selections.alertId) await loadAlertDetail(state.selections.alertId);
 }
@@ -980,9 +1038,11 @@ function renderAlerts() {
           </article>
         `).join("")}
       </div>
+      ${renderPaginationControls(result, "alerts")}
     </section>
   `;
   wireNavigationTargets(els.mainPanel);
+  wirePagination(els.mainPanel);
 }
 
 function weekdaySortValue(dayOfWeek) {
@@ -1267,10 +1327,14 @@ function renderAlertProfile(detail) {
   wireNavigationTargets(els.mainPanel);
 }
 
-async function loadCustomers() {
+async function loadCustomers(resetOffset = false) {
+  if (resetOffset) filters.customers.offset = 0;
   const result = await api(`/api/customers${qs(filters.customers)}`);
   state.data.customers = result;
   if (!state.selections.customerId && result.items[0]) state.selections.customerId = result.items[0].id;
+  if (state.selections.customerId && !result.items.some((item) => item.id === state.selections.customerId)) {
+    state.selections.customerId = result.items[0]?.id || null;
+  }
   renderCustomers();
   if (state.selections.customerId) await loadCustomerDetail(state.selections.customerId);
 }
@@ -1280,7 +1344,7 @@ function renderCustomers() {
   els.mainPanel.innerHTML = `
     <section class="section-card">
       <h3>Customer List</h3>
-      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Select a customer to preview details on the right.</p>
+      <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Showing 20 at a time so the preview panel stays useful.</p>
       <div class="item-list">
         ${result.items.map((item) => {
           const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
@@ -1291,16 +1355,18 @@ function renderCustomers() {
                   <h4>${escapeHtml(name)}</h4>
                   <div class="muted">${escapeHtml(item.city || "")}${item.city && item.state ? ", " : ""}${escapeHtml(item.state || "")}</div>
                 </div>
-                <div class="meta-stack">${badge(item.customer_status || "unknown")} ${badge(item.is_operationally_active ? "open" : "cleared", item.is_operationally_active ? "open" : "cleared")}</div>
+                <div class="meta-stack">${badge(item.customer_status || "unknown")} ${badge(item.is_operationally_active ? "open" : "cleared", item.is_operationally_active ? "open" : "cleared")} <button class="button button-ghost" data-customer-open-profile="${item.id}">Open</button></div>
               </div>
               <div class="meta-row"><span>${escapeHtml(item.pool_count || 0)} pools · ${escapeHtml(item.open_alert_count || 0)} tracked alerts</span><span>${escapeHtml(item.mobile_phone || item.phone || "—")}</span></div>
             </article>
           `;
         }).join("")}
       </div>
+      ${renderPaginationControls(result, "customers")}
     </section>
   `;
   wireNavigationTargets(els.mainPanel);
+  wirePagination(els.mainPanel);
 
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
@@ -1655,7 +1721,7 @@ function renderTechnicians() {
                 <h4>${escapeHtml(item.tech_name)}</h4>
                 <div class="muted">${escapeHtml(item.role_type || "Unknown role")} · ${escapeHtml(item.username || item.tech_id)}</div>
               </div>
-              <div class="meta-stack">${badge(item.is_active ? "acknowledged" : "cleared", item.is_active ? "acknowledged" : "cleared")} ${item.has_current_assignments ? badge("current", "info") : ""}</div>
+              <div class="meta-stack">${badge(item.is_active ? "acknowledged" : "cleared", item.is_active ? "acknowledged" : "cleared")} ${item.has_current_assignments ? badge("current", "info") : ""} <button class="button button-ghost" data-tech-open-profile="${escapeHtml(item.tech_id)}">Open</button></div>
             </div>
             <div class="meta-row"><span>${escapeHtml(item.customer_count)} customers · ${escapeHtml(item.route_stop_count_30d)} route stops / 30d</span><span>${formatDateTime(item.latest_service_date)}</span></div>
           </article>
