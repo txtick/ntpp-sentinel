@@ -222,6 +222,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             """
             DELETE FROM trend_rule_config
             WHERE rule_code IN ('psi_rise_5_60d', 'psi_rise_8_60d')
+               OR (reading_key = 'filter_pressure' AND trend_type = 'baseline_or_window_delta')
             """
         )
 
