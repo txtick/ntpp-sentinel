@@ -16,10 +16,10 @@ MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
 DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     "default_days": 90,
     "range_days": [30, 90, 180, 365],
-    "hidden_metrics": ["free_chlorine", "combined_chlorine"],
+    "hidden_metrics": ["total_chlorine", "combined_chlorine"],
     "sparse_metrics": [],
     "required_every_visit_metrics": [
-        "total_chlorine",
+        "free_chlorine",
         "ph",
         "temperature",
         "tds",
@@ -34,7 +34,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "cya",
     ],
     "chart_order": [
-        "total_chlorine",
+        "free_chlorine",
         "ph",
         "filter_pressure",
         "temperature",
@@ -47,7 +47,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "tds",
     ],
     "recommended_highs": {
-        "total_chlorine": 5,
+        "free_chlorine": 5,
         "ph": 9.36,
         "temperature": 98.4,
         "tds": 2400,
@@ -64,6 +64,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     },
     "metric_labels": {
         "ph": "pH",
+        "free_chlorine": "Free Chlorine",
         "total_chlorine": "Total Chlorine",
         "combined_chlorine": "Combined Chlorine",
         "cya": "CYA",
@@ -296,6 +297,8 @@ def _alert_title(category: str, row: Dict[str, Any]) -> str:
     customer_name = row.get("customer_name") or "Unknown Customer"
     pool_name = row.get("pool_name") or "No Pool"
     reading_key = row.get("reading_key") or row.get("opportunity_type") or "alert"
+    if reading_key == "fc_cya_ratio":
+        reading_key = "FC:CYA ratio"
     if category == "revenue":
         return f"{customer_name}: {row.get('opportunity_type') or 'revenue opportunity'}"
     return f"{customer_name}: {reading_key} on {pool_name}"
@@ -312,6 +315,13 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
         observed_value = row.get("observed_value")
     threshold_value = row.get("threshold_value")
     reading_key = row.get("reading_key") or "metric"
+    if reading_key == "fc_cya_ratio" and observed_value is not None and threshold_value is not None:
+        try:
+            observed_pct = float(observed_value) * 100.0
+            threshold_pct = float(threshold_value) * 100.0
+            return f"FC:CYA ratio was {observed_pct:.1f}% vs minimum {threshold_pct:.1f}% on the last 2 paired readings"
+        except Exception:
+            pass
     if threshold_value is None:
         return f"{reading_key} alert detected"
     return f"{reading_key} observed {observed_value} against threshold {threshold_value}"

@@ -170,6 +170,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             """,
             [
                 ("fc_bad_3_of_5", "free_chlorine", "bad_readings_last_n", "lt", "warning", 10, 2, 5, 3, 60, None, None, True, None, None, "3 of last 5 FC readings below 2"),
+                ("fc_cya_ratio_bad_2wk", "fc_cya_ratio", "fc_cya_ratio_last_n", "lt", "warning", 10, 0.075, 2, 2, 21, None, None, True, None, None, "FC:CYA ratio below 7.5% on last 2 paired readings"),
                 ("cya_bad_3_of_5", "cya", "bad_readings_last_n", "gt", "warning", 10, 80, 5, 3, 60, None, None, True, None, None, "3 of last 5 CYA readings above 80"),
                 ("phosphates_bad_3_of_5", "phosphates", "bad_readings_last_n", "gt", "warning", 10, 500, 5, 3, 60, None, None, True, None, None, "3 of last 5 phosphate readings above 500"),
                 ("ph_bad_3_of_5", "ph", "bad_readings_last_n", "gt", "warning", 10, 7.8, 5, 3, 60, None, None, True, None, None, "3 of last 5 pH readings above 7.8"),
@@ -178,20 +179,6 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("psi_rise_5_60d", "filter_pressure", "baseline_or_window_delta", None, "warning", 10, None, None, None, 60, 5, 5, True, None, None, "PSI rising 5+"),
                 ("psi_rise_8_60d", "filter_pressure", "baseline_or_window_delta", None, "critical", 20, None, None, None, 60, 8, 8, True, None, None, "PSI rising 8+"),
             ],
-        )
-        cur.execute(
-            """
-            DELETE FROM alert_rule_config
-            WHERE rule_code IN ('fc_below_2', 'fc_below_1')
-               OR reading_key = 'free_chlorine'
-            """
-        )
-        cur.execute(
-            """
-            DELETE FROM trend_rule_config
-            WHERE rule_code IN ('fc_bad_3_of_5')
-               OR reading_key = 'free_chlorine'
-            """
         )
         cur.executemany(
             """
@@ -352,6 +339,64 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                         )
                    ) >= COALESCE(tr.min_bad_count, 3)
             ),
+            fc_cya_pairs AS (
+                SELECT
+                    r.customer_id,
+                    r.pool_id,
+                    r.service_date,
+                    MAX(CASE WHEN r.reading_key = 'free_chlorine' THEN r.value END) AS free_chlorine,
+                    MAX(CASE WHEN r.reading_key = 'cya' THEN r.value END) AS cya
+                FROM chemistry_readings r
+                JOIN customers c ON c.id = r.customer_id
+                WHERE c.is_operationally_active = TRUE
+                  AND r.reading_key IN ('free_chlorine', 'cya')
+                GROUP BY r.customer_id, r.pool_id, r.service_date
+                HAVING MAX(CASE WHEN r.reading_key = 'free_chlorine' THEN r.value END) IS NOT NULL
+                   AND MAX(CASE WHEN r.reading_key = 'cya' THEN r.value END) IS NOT NULL
+                   AND MAX(CASE WHEN r.reading_key = 'cya' THEN r.value END) > 0
+            ),
+            fc_cya_ratio_bad AS (
+                SELECT
+                    tr.rule_code,
+                    tr.severity,
+                    tr.severity_rank,
+                    ranked.customer_id,
+                    ranked.pool_id,
+                    tr.reading_key,
+                    MAX(ranked.service_date) AS service_date,
+                    MAX(CASE WHEN ranked.rn = 1 THEN ranked.fc_cya_ratio END) AS latest_ratio,
+                    tr.threshold_value
+                FROM (
+                    SELECT
+                        p.*,
+                        (p.free_chlorine / NULLIF(p.cya, 0)) AS fc_cya_ratio,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY p.pool_id
+                            ORDER BY p.service_date DESC
+                        ) AS rn
+                    FROM fc_cya_pairs p
+                ) ranked
+                JOIN trend_rule_config tr
+                  ON tr.enabled = TRUE
+                 AND tr.trend_type = 'fc_cya_ratio_last_n'
+                 AND tr.reading_key = 'fc_cya_ratio'
+                 AND rule_applies_in_month(tr.season_start_month, tr.season_end_month, ranked.service_date::date)
+                WHERE ranked.rn <= COALESCE(tr.sample_size, 2)
+                GROUP BY
+                    tr.rule_code,
+                    tr.severity,
+                    tr.severity_rank,
+                    ranked.customer_id,
+                    ranked.pool_id,
+                    tr.reading_key,
+                    tr.threshold_value,
+                    tr.sample_size,
+                    tr.min_bad_count
+                HAVING COUNT(*) >= COALESCE(tr.sample_size, 2)
+                   AND COUNT(*) FILTER (
+                        WHERE ranked.fc_cya_ratio < COALESCE(tr.threshold_value, 0.075)
+                   ) >= COALESCE(tr.min_bad_count, 2)
+            ),
             delta_over_days AS (
                 SELECT
                     tr.rule_code,
@@ -441,6 +486,10 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 FROM bad_readings
                 UNION ALL
                 SELECT rule_code, severity, severity_rank, customer_id, pool_id, reading_key, service_date,
+                       latest_ratio AS observed_value, threshold_value
+                FROM fc_cya_ratio_bad
+                UNION ALL
+                SELECT rule_code, severity, severity_rank, customer_id, pool_id, reading_key, service_date,
                        observed_delta, delta_threshold
                 FROM delta_over_days
                 UNION ALL
@@ -479,6 +528,30 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 FROM chemistry_readings r
                 JOIN customers c ON c.id = r.customer_id
                 WHERE c.is_operationally_active = TRUE
+            ),
+            filter_clean_eligible_pools AS (
+                SELECT
+                    p.customer_id,
+                    p.id AS pool_id
+                FROM pools p
+                JOIN customers c ON c.id = p.customer_id
+                LEFT JOIN LATERAL (
+                    SELECT MIN(r.service_date) AS first_chemistry_service_date
+                    FROM chemistry_readings r
+                    WHERE r.pool_id = p.id
+                ) history ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS high_psi_count
+                    FROM chemistry_readings r
+                    WHERE r.pool_id = p.id
+                      AND r.reading_key = 'filter_pressure'
+                      AND r.value > 20
+                ) psi ON TRUE
+                WHERE c.is_operationally_active = TRUE
+                  AND (
+                      history.first_chemistry_service_date <= NOW() - INTERVAL '90 days'
+                      OR COALESCE(psi.high_psi_count, 0) >= 2
+                  )
             ),
             repeated_readings AS (
                 SELECT
@@ -521,7 +594,10 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                   ON cfg.enabled = TRUE
                  AND cfg.source_type = 'trend_reference'
                  AND cfg.reading_key = t.reading_key
+                LEFT JOIN filter_clean_eligible_pools fcep
+                  ON fcep.pool_id = t.pool_id
                 GROUP BY cfg.rule_code, cfg.opportunity_type, t.customer_id, t.pool_id, cfg.reading_key
+                HAVING cfg.opportunity_type <> 'filter_clean' OR MAX(fcep.pool_id) IS NOT NULL
             ),
             latest_reading_match AS (
                 SELECT
@@ -558,7 +634,9 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 FROM revenue_rule_config cfg
                 JOIN pools p ON cfg.enabled = TRUE AND cfg.source_type = 'missing_recent_reading'
                 JOIN customers c ON c.id = p.customer_id
+                LEFT JOIN filter_clean_eligible_pools fcep ON fcep.pool_id = p.id
                 WHERE c.is_operationally_active = TRUE
+                  AND (cfg.opportunity_type <> 'filter_clean' OR fcep.pool_id IS NOT NULL)
                   AND NOT EXISTS (
                       SELECT 1
                       FROM chemistry_readings r

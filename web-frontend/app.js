@@ -1,10 +1,10 @@
 const DEFAULT_CUSTOMER_CHART_POLICY = {
   default_days: 90,
   range_days: [30, 90, 180, 365],
-  hidden_metrics: ["free_chlorine", "combined_chlorine"],
+  hidden_metrics: ["total_chlorine", "combined_chlorine"],
   sparse_metrics: [],
   required_every_visit_metrics: [
-    "total_chlorine",
+    "free_chlorine",
     "ph",
     "temperature",
     "tds",
@@ -19,7 +19,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     "cya",
   ],
   chart_order: [
-    "total_chlorine",
+    "free_chlorine",
     "ph",
     "filter_pressure",
     "temperature",
@@ -32,7 +32,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     "tds",
   ],
   recommended_highs: {
-    total_chlorine: 5,
+    free_chlorine: 5,
     ph: 9.36,
     temperature: 98.4,
     tds: 2400,
@@ -49,6 +49,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
   },
   metric_labels: {
     ph: "pH",
+    free_chlorine: "Free Chlorine",
     total_chlorine: "Total Chlorine",
     combined_chlorine: "Combined Chlorine",
     cya: "CYA",
@@ -316,7 +317,7 @@ function normalizeMetricKey(seriesItemOrKey, description = "") {
   if ((raw === "none" || raw === "value") && desc.includes("tds")) return "tds";
   if ((raw === "none" || raw === "value") && (desc.includes("saturation index") || desc.includes("(lsi)") || desc === "lsi")) return "lsi";
   if ((raw === "none" || raw === "value") && desc.includes("hardness")) return "calcium_hardness";
-  if ((raw === "none" || raw === "value") && desc.includes("chlorine")) return "total_chlorine";
+  if ((raw === "none" || raw === "value") && desc.includes("chlorine")) return "free_chlorine";
   if ((raw === "none" || raw === "value") && desc === "ph") return "ph";
   if (raw === "freechlorine") return "free_chlorine";
   if (raw === "totalchlorine") return "total_chlorine";

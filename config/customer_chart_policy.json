@@ -1,10 +1,10 @@
 {
   "default_days": 90,
   "range_days": [30, 90, 180, 365],
-  "hidden_metrics": ["free_chlorine", "combined_chlorine"],
+  "hidden_metrics": ["total_chlorine", "combined_chlorine"],
   "sparse_metrics": [],
   "required_every_visit_metrics": [
-    "total_chlorine",
+    "free_chlorine",
     "ph",
     "temperature",
     "tds",
@@ -19,20 +19,20 @@
     "cya"
   ],
   "chart_order": [
-    "total_chlorine",
+    "free_chlorine",
     "ph",
-    "filter_pressure",
-    "temperature",
-    "alkalinity",
-    "lsi",
     "cya",
+    "alkalinity",
+    "filter_pressure",
     "calcium_hardness",
     "phosphates",
+    "temperature",
+    "lsi",
     "salt",
     "tds"
   ],
   "recommended_highs": {
-    "total_chlorine": 20,
+    "free_chlorine": 20,
     "ph": 10,
     "temperature": 105,
     "tds": 5000,
@@ -49,6 +49,7 @@
   },
   "metric_labels": {
     "ph": "pH",
+    "free_chlorine": "Free Chlorine",
     "total_chlorine": "Total Chlorine",
     "combined_chlorine": "Combined Chlorine",
     "cya": "CYA",
