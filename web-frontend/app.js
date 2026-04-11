@@ -462,7 +462,7 @@ function renderAlertCharts(detail, mode = "detail") {
               <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
               ${seriesItem.poolName && seriesItem.poolName !== "Pool" ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
             </div>
-            ${buildLineChart(seriesItem)}
+            ${buildLineChart(seriesItem, { compact: true })}
             <div class="chart-caption">
               <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}</span>
               <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
@@ -1239,13 +1239,14 @@ async function loadCustomerDetail(customerId) {
   wireNavigationTargets(els.detailPanel);
 }
 
-function buildLineChart(seriesItem) {
+function buildLineChart(seriesItem, options = {}) {
   const points = seriesItem.points || [];
   if (!points.length) {
     return `<div class="empty-state">No chart data.</div>`;
   }
-  const width = 420;
-  const height = 220;
+  const compact = Boolean(options.compact);
+  const width = compact ? 360 : 420;
+  const height = compact ? 210 : 220;
   const margin = { top: 20, right: 18, bottom: 42, left: 54 };
   const values = points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
   if (!values.length) {
@@ -1293,7 +1294,7 @@ function buildLineChart(seriesItem) {
   const metricLabel = formatMetricLabel(seriesItem);
   const meta = chemistrySeriesMeta(seriesItem);
   return `
-    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Chemistry trend chart">
+    <svg class="chart-svg${compact ? " chart-svg-compact" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="${compact ? "xMinYMin meet" : "none"}" role="img" aria-label="Chemistry trend chart">
       ${yTicks.map((tick) => {
         const y = yForValue(tick);
         return `
