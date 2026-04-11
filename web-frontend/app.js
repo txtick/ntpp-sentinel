@@ -92,6 +92,7 @@ function setView(view) {
   const meta = viewMeta[view];
   els.viewKicker.textContent = meta.kicker;
   els.viewTitle.textContent = meta.title;
+  window.scrollTo({ top: 0, behavior: "auto" });
   renderFilters();
   loadCurrentView(true);
 }
@@ -315,6 +316,38 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function wireNavigationTargets(root = document) {
+  root.querySelectorAll("[data-customer-id]").forEach((el) => {
+    el.onclick = () => {
+      state.selections.customerId = Number(el.dataset.customerId);
+      setView("customer-profile");
+    };
+  });
+  root.querySelectorAll("[data-alert-id]").forEach((el) => {
+    el.onclick = () => {
+      state.selections.alertId = Number(el.dataset.alertId);
+      setView("alert-profile");
+    };
+  });
+  root.querySelectorAll("[data-tech-id]").forEach((el) => {
+    el.onclick = () => {
+      state.selections.techId = el.dataset.techId;
+      setView("technician-profile");
+    };
+  });
+  root.querySelectorAll("[data-reminder-id]").forEach((el) => {
+    el.onclick = async () => {
+      state.selections.reminderId = Number(el.dataset.reminderId);
+      if (state.view === "reminders") {
+        renderReminders();
+        await loadReminderDetail(state.selections.reminderId);
+        return;
+      }
+      setView("reminders");
+    };
+  });
 }
 
 function renderFilters() {
@@ -589,16 +622,17 @@ function renderHome() {
     <section class="section-card">
       <h3>Recent Alerts</h3>
       <div class="item-list">
-        ${state.data.home.alerts.items.map((item) => itemCard(item.title, `${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}`, formatDateTime(item.last_detected_at))).join("")}
+        ${state.data.home.alerts.items.map((item) => `<article class="item-card is-clickable" data-alert-id="${escapeHtml(item.id)}"><div class="item-card-header"><strong>${escapeHtml(item.title)}</strong><div>${badge(item.category)} ${badge(item.severity)} ${badge(item.status)}</div></div><div class="muted">${formatDateTime(item.last_detected_at)}</div></article>`).join("")}
       </div>
     </section>
     <section class="section-card">
       <h3>Reminder Pressure</h3>
       <div class="item-list">
-        ${state.data.home.reminders.items.map((item) => itemCard(item.title, `${badge(item.status)} ${item.assigned_to ? `<span class="dense">${escapeHtml(item.assigned_to)}</span>` : ""}`, item.due_at ? `Due ${formatDateTime(item.due_at)}` : "No due date")).join("") || `<div class="empty-state">No reminders in queue.</div>`}
+        ${state.data.home.reminders.items.map((item) => `<article class="item-card is-clickable" data-reminder-id="${escapeHtml(item.id)}"><div class="item-card-header"><strong>${escapeHtml(item.title)}</strong><div>${badge(item.status)} ${item.assigned_to ? `<span class="dense">${escapeHtml(item.assigned_to)}</span>` : ""}</div></div><div class="muted">${item.due_at ? `Due ${formatDateTime(item.due_at)}` : "No due date"}</div></article>`).join("") || `<div class="empty-state">No reminders in queue.</div>`}
       </div>
     </section>
   `;
+  wireNavigationTargets(els.mainPanel);
 
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
@@ -651,12 +685,7 @@ function renderAlerts() {
       </div>
     </section>
   `;
-  els.mainPanel.querySelectorAll("[data-alert-id]").forEach((el) => {
-    el.addEventListener("click", async () => {
-      state.selections.alertId = Number(el.dataset.alertId);
-      setView("alert-profile");
-    });
-  });
+  wireNavigationTargets(els.mainPanel);
 }
 
 function weekdaySortValue(dayOfWeek) {
@@ -958,12 +987,7 @@ function renderCustomers() {
       </div>
     </section>
   `;
-  els.mainPanel.querySelectorAll("[data-customer-id]").forEach((el) => {
-    el.onclick = async () => {
-      state.selections.customerId = Number(el.dataset.customerId);
-      setView("customer-profile");
-    };
-  });
+  wireNavigationTargets(els.mainPanel);
 
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
@@ -1002,14 +1026,15 @@ async function loadCustomerDetail(customerId) {
       </section>
       <section class="detail-card">
         <h3>Alerts</h3>
-        <div class="event-list">${detail.alerts.slice(0, 8).map((alert) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No tracked alerts.</div>`}</div>
+        <div class="event-list">${detail.alerts.slice(0, 8).map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No tracked alerts.</div>`}</div>
       </section>
       <section class="detail-card">
         <h3>Reminders</h3>
-        <div class="event-list">${(detail.reminders || []).slice(0, 8).map((reminder) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") || `<div class="empty-state">No reminders for this customer.</div>`}</div>
+        <div class="event-list">${(detail.reminders || []).slice(0, 8).map((reminder) => `<div class="item-card is-clickable" data-reminder-id="${escapeHtml(reminder.id)}"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") || `<div class="empty-state">No reminders for this customer.</div>`}</div>
       </section>
     </div>
   `;
+  wireNavigationTargets(els.detailPanel);
 }
 
 function buildLineChart(seriesItem) {
@@ -1189,16 +1214,17 @@ async function loadCustomerProfile() {
     <section class="section-card">
       <h3>Tracked Alerts</h3>
       <div class="event-list">
-        ${detail.alerts.length ? detail.alerts.map((alert) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") : `<div class="empty-state">No tracked alerts for this customer.</div>`}
+        ${detail.alerts.length ? detail.alerts.map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") : `<div class="empty-state">No tracked alerts for this customer.</div>`}
       </div>
     </section>
     <section class="section-card">
       <h3>Reminders</h3>
       <div class="event-list">
-        ${detail.reminders.length ? detail.reminders.map((reminder) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") : `<div class="empty-state">No reminders for this customer.</div>`}
+        ${detail.reminders.length ? detail.reminders.map((reminder) => `<div class="item-card is-clickable" data-reminder-id="${escapeHtml(reminder.id)}"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") : `<div class="empty-state">No reminders for this customer.</div>`}
       </div>
     </section>
   `;
+  wireNavigationTargets(els.mainPanel);
 }
 
 async function loadTechnicians() {
@@ -1243,12 +1269,7 @@ function renderTechnicians() {
       </section>
     </div>
   `;
-  els.mainPanel.querySelectorAll("[data-tech-id]").forEach((el) => {
-    el.onclick = async () => {
-      state.selections.techId = el.dataset.techId;
-      setView("technician-profile");
-    };
-  });
+  wireNavigationTargets(els.mainPanel);
 }
 
 async function loadTechnicianDetail(techId) {
@@ -1388,24 +1409,7 @@ function renderTechnicianProfile(detail) {
     </section>
   `;
 
-  els.mainPanel.querySelectorAll("[data-customer-id]").forEach((el) => {
-    el.addEventListener("click", () => {
-      state.selections.customerId = Number(el.dataset.customerId);
-      setView("customer-profile");
-    });
-  });
-  els.mainPanel.querySelectorAll("[data-alert-id]").forEach((el) => {
-    el.addEventListener("click", () => {
-      state.selections.alertId = Number(el.dataset.alertId);
-      setView("alert-profile");
-    });
-  });
-  els.mainPanel.querySelectorAll("[data-reminder-id]").forEach((el) => {
-    el.addEventListener("click", () => {
-      state.selections.reminderId = Number(el.dataset.reminderId);
-      setView("reminders");
-    });
-  });
+  wireNavigationTargets(els.mainPanel);
 }
 
 async function loadReminders() {
