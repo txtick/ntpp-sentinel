@@ -1,3 +1,32 @@
+const DEFAULT_CUSTOMER_CHART_POLICY = {
+  default_days: 90,
+  range_days: [30, 90, 180, 365],
+  hidden_metrics: ["free_chlorine", "combined_chlorine"],
+  sparse_metrics: [
+    "phosphates",
+    "cya",
+    "salt",
+    "tds",
+    "alkalinity",
+    "total_alkalinity",
+    "calcium_hardness",
+    "total_hardness",
+  ],
+  metric_labels: {
+    ph: "pH",
+    total_chlorine: "Total Chlorine",
+    combined_chlorine: "Combined Chlorine",
+    cya: "CYA",
+    alkalinity: "Alkalinity",
+    calcium_hardness: "Calcium Hardness",
+    filter_pressure: "Filter Pressure",
+    salt: "Salt",
+    phosphates: "Phosphates",
+    temperature: "Temperature",
+    tds: "TDS",
+  },
+};
+
 const state = {
   view: "home",
   actor: localStorage.getItem("ntpp.actor") || "",
@@ -5,10 +34,13 @@ const state = {
   selections: {
     alertId: null,
     customerId: null,
-    customerChartDays: 90,
+    customerChartDays: DEFAULT_CUSTOMER_CHART_POLICY.default_days,
     customerVisitsExpanded: false,
     techId: null,
     reminderId: null,
+  },
+  config: {
+    customerCharts: DEFAULT_CUSTOMER_CHART_POLICY,
   },
   data: {
     home: null,
@@ -187,6 +219,30 @@ function currency(value) {
   }).format(number);
 }
 
+function mergeCustomerChartPolicy(policy = {}) {
+  return {
+    ...DEFAULT_CUSTOMER_CHART_POLICY,
+    ...policy,
+    range_days: Array.isArray(policy.range_days) && policy.range_days.length
+      ? policy.range_days
+      : DEFAULT_CUSTOMER_CHART_POLICY.range_days,
+    hidden_metrics: Array.isArray(policy.hidden_metrics)
+      ? policy.hidden_metrics
+      : DEFAULT_CUSTOMER_CHART_POLICY.hidden_metrics,
+    sparse_metrics: Array.isArray(policy.sparse_metrics)
+      ? policy.sparse_metrics
+      : DEFAULT_CUSTOMER_CHART_POLICY.sparse_metrics,
+    metric_labels: {
+      ...DEFAULT_CUSTOMER_CHART_POLICY.metric_labels,
+      ...(policy.metric_labels || {}),
+    },
+  };
+}
+
+function customerChartPolicy() {
+  return state.config.customerCharts || DEFAULT_CUSTOMER_CHART_POLICY;
+}
+
 function normalizeMetricKey(seriesItemOrKey, description = "") {
   const rawValue = typeof seriesItemOrKey === "string"
     ? seriesItemOrKey
@@ -211,19 +267,7 @@ function normalizeMetricKey(seriesItemOrKey, description = "") {
 
 function formatMetricLabel(seriesItem) {
   const raw = normalizeMetricKey(seriesItem);
-  const labels = {
-    ph: "pH",
-    total_chlorine: "Total Chlorine",
-    combined_chlorine: "Combined Chlorine",
-    cya: "CYA",
-    alkalinity: "Alkalinity",
-    calcium_hardness: "Calcium Hardness",
-    filter_pressure: "Filter Pressure",
-    salt: "Salt",
-    phosphates: "Phosphates",
-    temperature: "Temperature",
-    tds: "TDS",
-  };
+  const labels = customerChartPolicy().metric_labels || {};
   if (labels[raw]) return labels[raw];
   return String(raw)
     .replaceAll("_", " ")
@@ -250,24 +294,16 @@ function formatAxisValue(value) {
 
 function chemistrySeriesMeta(seriesItem) {
   const readingKey = normalizeMetricKey(seriesItem);
+  const policy = customerChartPolicy();
   return {
-    hide: readingKey === "free_chlorine",
+    hide: (policy.hidden_metrics || []).includes(readingKey),
     unitLabel: "",
     sparse: isSparseChecklistMetric(readingKey),
   };
 }
 
 function isSparseChecklistMetric(readingKey) {
-  return new Set([
-    "phosphates",
-    "cya",
-    "salt",
-    "tds",
-    "alkalinity",
-    "total_alkalinity",
-    "calcium_hardness",
-    "total_hardness",
-  ]).has(normalizeMetricKey(readingKey));
+  return new Set(customerChartPolicy().sparse_metrics || []).has(normalizeMetricKey(readingKey));
 }
 
 function isLikelyUntestedPoint(row) {
@@ -363,7 +399,7 @@ function wireNavigationTargets(root = document) {
   root.querySelectorAll("[data-customer-id]").forEach((el) => {
     el.onclick = () => {
       state.selections.customerId = Number(el.dataset.customerId);
-      state.selections.customerChartDays = 90;
+      state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
       state.selections.customerVisitsExpanded = false;
       setView("customer-profile");
     };
@@ -1190,9 +1226,12 @@ async function loadCustomerProfile() {
     return;
   }
   const detail = await api(`/api/customers/${customerId}`);
+  state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
   const item = detail.item;
   const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
-  const chartDays = Number(state.selections.customerChartDays || 90);
+  const policy = customerChartPolicy();
+  const chartDays = Number(state.selections.customerChartDays || policy.default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days);
+  const rangeDays = (policy.range_days || DEFAULT_CUSTOMER_CHART_POLICY.range_days).filter((days) => Number.isFinite(Number(days)) && Number(days) > 0);
   const series = filterSeriesByDays(groupChemistrySeries(detail.chemistry_history || []), chartDays);
   const spend = detail.chemical_spend_summary || {};
   const visits = detail.chemical_spend_by_visit || [];
@@ -1230,7 +1269,7 @@ async function loadCustomerProfile() {
               <p class="panel-subtitle">Default view is 3 months. Use the range buttons to zoom in or out.</p>
             </div>
             <div class="range-controls">
-              ${[30, 90, 180, 365].map((days) => `<button class="button button-secondary${chartDays === days ? " is-active-filter" : ""}" data-chart-range="${days}">${days >= 365 ? "12 Mo" : days >= 180 ? "6 Mo" : days >= 90 ? "3 Mo" : "30 D"}</button>`).join("")}
+              ${rangeDays.map((days) => `<button class="button button-secondary${chartDays === days ? " is-active-filter" : ""}" data-chart-range="${days}">${days >= 365 ? "12 Mo" : days >= 180 ? "6 Mo" : days >= 90 ? "3 Mo" : "30 D"}</button>`).join("")}
             </div>
           </div>
           <div class="chart-grid chart-grid-wide">

@@ -13,10 +13,78 @@ ACTIONABLE_ALERT_STATUSES = ("open", "acknowledged", "snoozed", "resolved", "cle
 MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
     os.getenv("MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD", "75")
 )
+DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
+    "default_days": 90,
+    "range_days": [30, 90, 180, 365],
+    "hidden_metrics": ["free_chlorine", "combined_chlorine"],
+    "sparse_metrics": [
+        "phosphates",
+        "cya",
+        "salt",
+        "tds",
+        "alkalinity",
+        "total_alkalinity",
+        "calcium_hardness",
+        "total_hardness",
+    ],
+    "metric_labels": {
+        "ph": "pH",
+        "total_chlorine": "Total Chlorine",
+        "combined_chlorine": "Combined Chlorine",
+        "cya": "CYA",
+        "alkalinity": "Alkalinity",
+        "calcium_hardness": "Calcium Hardness",
+        "filter_pressure": "Filter Pressure",
+        "salt": "Salt",
+        "phosphates": "Phosphates",
+        "temperature": "Temperature",
+        "tds": "TDS",
+    },
+}
+CUSTOMER_CHART_POLICY_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "config", "customer_chart_policy.json")
+)
 
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, default=str)
+
+
+def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    policy = dict(DEFAULT_CUSTOMER_CHART_POLICY)
+    policy["range_days"] = list(DEFAULT_CUSTOMER_CHART_POLICY["range_days"])
+    policy["hidden_metrics"] = list(DEFAULT_CUSTOMER_CHART_POLICY["hidden_metrics"])
+    policy["sparse_metrics"] = list(DEFAULT_CUSTOMER_CHART_POLICY["sparse_metrics"])
+    policy["metric_labels"] = dict(DEFAULT_CUSTOMER_CHART_POLICY["metric_labels"])
+    if not isinstance(override, dict):
+        return policy
+
+    for key in ("default_days",):
+        value = override.get(key)
+        if isinstance(value, int) and value > 0:
+            policy[key] = value
+
+    for key in ("range_days", "hidden_metrics", "sparse_metrics"):
+        value = override.get(key)
+        if isinstance(value, list):
+            policy[key] = list(value)
+
+    labels = override.get("metric_labels")
+    if isinstance(labels, dict):
+        policy["metric_labels"].update(labels)
+
+    return policy
+
+
+def _load_customer_chart_policy() -> Dict[str, Any]:
+    try:
+        with open(CUSTOMER_CHART_POLICY_PATH, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
+        return _merge_customer_chart_policy(None)
+    except Exception:
+        return _merge_customer_chart_policy(None)
+    return _merge_customer_chart_policy(raw)
 
 
 def _view_exists(cur, view_name: str) -> bool:
@@ -1346,6 +1414,7 @@ def list_customers(
 
 def get_customer_detail(customer_id: int) -> Dict[str, Any]:
     require_postgres_configured()
+    chart_policy = _load_customer_chart_policy()
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1579,6 +1648,7 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
         "reminders": reminders,
         "latest_chemistry_service_date": chemistry_summary["latest_service_date"] if chemistry_summary else None,
         "chemistry_history": chemistry_history,
+        "chart_policy": chart_policy,
         "chemical_spend_summary": chemical_spend_summary,
         "chemical_spend_by_visit": chemical_spend_by_visit,
     }
