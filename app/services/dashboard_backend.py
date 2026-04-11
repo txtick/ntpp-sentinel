@@ -2369,6 +2369,7 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
             cur.execute(
                 """
                 SELECT DISTINCT
+                    a.customer_id,
                     a.sk_service_location_id AS service_location_id,
                     a.source_service_location_id AS source_location_id,
                     COALESCE(
@@ -2421,6 +2422,51 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                 (tech_id_value,),
             )
             service_locations = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT
+                    a.source_service_location_id,
+                    p.id AS pool_id,
+                    COALESCE(NULLIF(trim(p.name), ''), CONCAT('Pool ', p.id)) AS pool_name,
+                    COALESCE(
+                        SUM(d.estimated_cost) FILTER (
+                            WHERE d.service_date >= date_trunc('month', CURRENT_DATE)
+                        ),
+                        0
+                    ) AS spend_month_to_date,
+                    COALESCE(
+                        SUM(d.estimated_cost) FILTER (
+                            WHERE d.service_date >= NOW() - INTERVAL '30 days'
+                        ),
+                        0
+                    ) AS spend_30d
+                FROM service_location_technician_assignments a
+                JOIN technicians t ON t.id = a.technician_id
+                JOIN pools p
+                  ON p.source_system = a.source_system
+                 AND p.source_service_location_id = a.source_service_location_id
+                LEFT JOIN chemical_dose_events d
+                  ON d.pool_id = p.id
+                 AND d.source_system = p.source_system
+                WHERE t.source_system = 'skimmer'
+                  AND t.source_account_id = %s
+                  AND a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                GROUP BY a.source_service_location_id, p.id, p.name
+                ORDER BY a.source_service_location_id ASC, pool_name ASC
+                """,
+                (tech_id_value,),
+            )
+            pools_by_location: Dict[str, List[Dict[str, Any]]] = {}
+            for row in cur.fetchall():
+                pool_item = dict(row)
+                key = str(pool_item.get("source_service_location_id") or "")
+                pools_by_location.setdefault(key, []).append(pool_item)
+
+            for location in service_locations:
+                key = str(location.get("source_location_id") or "")
+                location["pools"] = pools_by_location.get(key, [])
 
             cur.execute(
                 """

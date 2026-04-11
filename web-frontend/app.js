@@ -1351,14 +1351,23 @@ function renderTechnicianProfile(detail) {
           <div class="event-list">
             ${group.items.map((location) => {
               const place = [location.city, location.state].filter(Boolean).join(", ");
-              const route = [location.frequency, location.sequence != null ? `Stop ${location.sequence}` : ""].filter(Boolean).join(" · ");
-              return `<div class="item-card assignment-card">
+              const customerId = location.customer_id != null ? String(location.customer_id) : "";
+              const pools = Array.isArray(location.pools) ? location.pools : [];
+              return `<div class="item-card assignment-card${customerId ? " is-clickable" : ""}"${customerId ? ` data-customer-id="${escapeHtml(customerId)}"` : ""}>
                 <div class="item-card-header">
                   <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
-                  <span class="dense">${escapeHtml(location.sequence != null ? `Stop ${location.sequence}` : "No stop #")}</span>
+                  <span class="dense">${escapeHtml(pools.length ? `${pools.length} pool${pools.length === 1 ? "" : "s"}` : "No pools")}</span>
                 </div>
                 <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
                 <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${location.frequency ? ` · ${escapeHtml(location.frequency)}` : ""}</div>
+                <div class="chem-list">
+                  ${pools.length ? pools.map((pool) => `
+                    <div class="chem-chip">
+                      <span>${escapeHtml(pool.pool_name || `Pool ${pool.pool_id}`)}</span>
+                      <span class="dense">${escapeHtml(currency(pool.spend_30d) || "$0.00")} / 30d · ${escapeHtml(currency(pool.spend_month_to_date) || "$0.00")} MTD</span>
+                    </div>
+                  `).join("") : `<div class="muted">No pool spend history linked yet.</div>`}
+                </div>
               </div>`;
             }).join("")}
           </div>
@@ -1368,16 +1377,35 @@ function renderTechnicianProfile(detail) {
     <section class="section-card">
       <h3>Associated Alerts</h3>
       <div class="event-list">
-        ${alerts.map((alert) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong><span class="dense">${formatDateTime(alert.last_detected_at)}</span></div><div class="muted">${escapeHtml(alert.customer_name || "No customer")} · ${escapeHtml(alert.pool_name || "No pool")}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active alerts tied to this technician’s pools.</div>`}
+        ${alerts.map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong><span class="dense">${formatDateTime(alert.last_detected_at)}</span></div><div class="muted">${escapeHtml(alert.customer_name || "No customer")} · ${escapeHtml(alert.pool_name || "No pool")}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active alerts tied to this technician’s pools.</div>`}
       </div>
     </section>
     <section class="section-card">
       <h3>Associated Reminders</h3>
       <div class="event-list">
-        ${reminders.map((reminder) => `<div class="item-card"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong><span class="dense">${reminder.due_at ? formatDateTime(reminder.due_at) : "No due date"}</span></div><div class="muted">${escapeHtml(reminder.customer_name || "No customer")} · ${escapeHtml(reminder.pool_name || "No pool")}</div><div class="muted">${escapeHtml(reminder.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active reminders tied to this technician’s pools.</div>`}
+        ${reminders.map((reminder) => `<div class="item-card is-clickable" data-reminder-id="${escapeHtml(reminder.id)}"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong><span class="dense">${reminder.due_at ? formatDateTime(reminder.due_at) : "No due date"}</span></div><div class="muted">${escapeHtml(reminder.customer_name || "No customer")} · ${escapeHtml(reminder.pool_name || "No pool")}</div><div class="muted">${escapeHtml(reminder.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active reminders tied to this technician’s pools.</div>`}
       </div>
     </section>
   `;
+
+  els.mainPanel.querySelectorAll("[data-customer-id]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.selections.customerId = Number(el.dataset.customerId);
+      setView("customer-profile");
+    });
+  });
+  els.mainPanel.querySelectorAll("[data-alert-id]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.selections.alertId = Number(el.dataset.alertId);
+      setView("alert-profile");
+    });
+  });
+  els.mainPanel.querySelectorAll("[data-reminder-id]").forEach((el) => {
+    el.addEventListener("click", () => {
+      state.selections.reminderId = Number(el.dataset.reminderId);
+      setView("reminders");
+    });
+  });
 }
 
 async function loadReminders() {

@@ -457,6 +457,11 @@ textarea {
   cursor: default;
 }
 
+.item-card.is-clickable,
+.assignment-card.is-clickable {
+  cursor: pointer;
+}
+
 .detail-card {
   padding: 16px;
 }
