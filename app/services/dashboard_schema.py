@@ -536,6 +536,24 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 FROM pools p
                 JOIN customers c ON c.id = p.customer_id
                 LEFT JOIN LATERAL (
+                    SELECT 1 AS has_current_assignment
+                    FROM service_location_technician_assignments a
+                    WHERE a.source_system = p.source_system
+                      AND a.source_service_location_id = p.source_service_location_id
+                      AND a.is_deleted = FALSE
+                      AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                    LIMIT 1
+                ) assignment ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT 1 AS has_recent_route_stop
+                    FROM technician_route_stops s
+                    WHERE s.source_system = p.source_system
+                      AND s.source_service_location_id = p.source_service_location_id
+                      AND s.is_skipped = FALSE
+                      AND s.service_date >= NOW() - INTERVAL '60 days'
+                    LIMIT 1
+                ) recent_stop ON TRUE
+                LEFT JOIN LATERAL (
                     SELECT MIN(r.service_date) AS first_chemistry_service_date
                     FROM chemistry_readings r
                     WHERE r.pool_id = p.id
@@ -548,6 +566,10 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                       AND r.value > 20
                 ) psi ON TRUE
                 WHERE c.is_operationally_active = TRUE
+                  AND (
+                      assignment.has_current_assignment IS NOT NULL
+                      OR recent_stop.has_recent_route_stop IS NOT NULL
+                  )
                   AND (
                       history.first_chemistry_service_date <= NOW() - INTERVAL '90 days'
                       OR COALESCE(psi.high_psi_count, 0) >= 2

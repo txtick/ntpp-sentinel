@@ -1176,6 +1176,8 @@ def list_alert_instances(
             raise HTTPException(status_code=400, detail=f"Unsupported status '{normalized_status}'")
         filters.append("status = %s")
         params.append(normalized_status)
+    else:
+        filters.append("status <> 'cleared'")
     if normalized_category:
         filters.append("category = %s")
         params.append(normalized_category)
