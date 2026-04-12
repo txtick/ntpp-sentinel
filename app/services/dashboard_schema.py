@@ -663,6 +663,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     r.pool_id,
                     r.reading_key,
                     COUNT(*) AS observed_count,
+                    MAX(r.value) AS observed_value,
+                    MAX(cfg.threshold_value) AS threshold_value,
                     MAX(r.service_date) AS service_date
                 FROM revenue_rule_config cfg
                 JOIN chemistry_readings r
@@ -690,6 +692,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     t.pool_id,
                     cfg.reading_key,
                     COUNT(*) AS observed_count,
+                    MAX(t.observed_value) AS observed_value,
+                    MAX(t.threshold_value) AS threshold_value,
                     MAX(t.service_date) AS service_date
                 FROM revenue_rule_config cfg
                 JOIN chemistry_trend_alerts_v t
@@ -709,6 +713,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     lr.pool_id,
                     lr.reading_key,
                     1 AS observed_count,
+                    lr.value AS observed_value,
+                    cfg.threshold_value AS threshold_value,
                     lr.service_date
                 FROM revenue_rule_config cfg
                 JOIN latest_readings lr
@@ -732,6 +738,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     p.id AS pool_id,
                     cfg.reading_key,
                     0 AS observed_count,
+                    NULL::NUMERIC AS observed_value,
+                    cfg.threshold_value AS threshold_value,
                     NULL::TIMESTAMPTZ AS service_date
                 FROM revenue_rule_config cfg
                 JOIN pools p ON cfg.enabled = TRUE AND cfg.source_type = 'missing_recent_reading'
@@ -775,6 +783,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     d.pool_id,
                     NULL::TEXT AS reading_key,
                     SUM(COALESCE(d.estimated_cost, 0)) AS observed_count,
+                    SUM(COALESCE(d.estimated_cost, 0)) AS observed_value,
+                    MAX(cfg.threshold_value) AS threshold_value,
                     MAX(d.service_date) AS service_date
                 FROM revenue_rule_config cfg
                 JOIN chemical_dose_events d
@@ -806,6 +816,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 p.name AS pool_name,
                 u.reading_key,
                 u.observed_count,
+                u.observed_value,
+                u.threshold_value,
                 u.service_date
             FROM unioned u
             JOIN customers c ON c.id = u.customer_id

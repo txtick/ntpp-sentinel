@@ -530,6 +530,11 @@ function isSparseChecklistMetric(readingKey) {
   return new Set(customerChartPolicy().sparse_metrics || []).has(normalizeMetricKey(readingKey));
 }
 
+function numericOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function isLikelyUntestedPoint(row) {
   const readingKey = normalizeMetricKey(row.reading_key, row.description);
   const value = Number(row.value);
@@ -576,6 +581,23 @@ function formatAlertSummary(item) {
   return item.summary || "No summary available.";
 }
 
+function formatAlertReading(item) {
+  const metadata = item.metadata_json || {};
+  const readingKey = metadata.reading_key || "";
+  const observed = numericOrNull(metadata.value ?? metadata.observed_value);
+  const threshold = numericOrNull(metadata.threshold_value);
+  if (observed === null) return "";
+
+  const metricLabel = formatMetricLabel({ readingKey, description: metadata.description || "" });
+  const observedLabel = formatAxisValue(observed, readingKey);
+  if (threshold === null) return `Last ${metricLabel} ${observedLabel}`;
+
+  const thresholdLabel = formatAxisValue(threshold, readingKey);
+  const delta = observed - threshold;
+  const deltaLabel = `${delta >= 0 ? "+" : ""}${formatAxisValue(delta, readingKey)}`;
+  return `Last ${metricLabel} ${observedLabel} vs ${thresholdLabel} (${deltaLabel})`;
+}
+
 function formatAlertSubline(item) {
   const metadata = item.metadata_json || {};
   const assignedTech = metadata.assigned_technician?.tech_name;
@@ -590,7 +612,11 @@ function formatAlertSubline(item) {
       return `revenue · cost ${observedCost}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
     }
   }
-  return `${item.category} · ${friendlyRule}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
+  const readingSummary = formatAlertReading(item);
+  if (readingSummary) {
+    return `${readingSummary}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
+  }
+  return `${friendlyRule}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
 }
 
 function alertRelevantSeries(detail) {
@@ -1093,7 +1119,13 @@ function renderAlerts() {
                 <h4>${escapeHtml(item.title)}</h4>
                 <div class="muted">${escapeHtml(formatAlertSummary(item))}</div>
               </div>
-              <div class="meta-stack">${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)}</div>
+              <div class="meta-stack">
+                ${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)}
+                <div class="row-actions">
+                  <button class="button button-secondary button-inline" data-alert-row-action="ack" data-alert-id="${item.id}">Ack</button>
+                  <button class="button button-danger button-inline" data-alert-row-action="resolve" data-alert-id="${item.id}">Resolve</button>
+                </div>
+              </div>
             </div>
             <div class="meta-row">
               <span>${escapeHtml(formatAlertSubline(item))}</span>
@@ -1107,6 +1139,28 @@ function renderAlerts() {
   `;
   wireNavigationTargets(els.mainPanel);
   wirePagination(els.mainPanel);
+  wireAlertRowActions(els.mainPanel);
+}
+
+function wireAlertRowActions(root = document) {
+  root.querySelectorAll("[data-alert-row-action]").forEach((button) => {
+    button.onclick = async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const alertId = Number(button.dataset.alertId);
+      const action = button.dataset.alertRowAction;
+      if (!alertId || !action) return;
+      const endpoint = action === "resolve" ? "resolve" : "ack";
+      const successMessage = action === "resolve" ? "Alert resolved." : "Alert acknowledged.";
+      await mutate(async () => {
+        await api(`/api/alerts/${alertId}/${endpoint}?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
+        await loadAlerts();
+        if (state.selections.alertId === alertId) {
+          await loadAlertDetail(alertId);
+        }
+      }, successMessage);
+    };
+  });
 }
 
 function weekdaySortValue(dayOfWeek) {

@@ -675,6 +675,20 @@ textarea {
   color: var(--muted);
 }
 
+.row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.button-inline {
+  padding: 8px 12px;
+  min-height: 0;
+  border-radius: 999px;
+  font-size: 0.82rem;
+}
+
 .dense {
   font-family: var(--font-mono);
   font-size: 0.8rem;

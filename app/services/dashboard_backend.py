@@ -687,9 +687,9 @@ def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
                 NULL::TEXT AS reading_type,
                 NULL::TEXT AS description,
                 NULL::TEXT AS unit_of_measure,
-                NULL::NUMERIC AS threshold_value,
+                threshold_value,
                 NULL::NUMERIC AS value,
-                NULL::NUMERIC AS observed_value,
+                observed_value,
                 observed_count,
                 opportunity_type,
                 service_date
