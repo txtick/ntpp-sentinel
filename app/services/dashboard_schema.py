@@ -816,9 +816,9 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 p.name AS pool_name,
                 u.reading_key,
                 u.observed_count,
+                u.service_date,
                 u.observed_value,
-                u.threshold_value,
-                u.service_date
+                u.threshold_value
             FROM unioned u
             JOIN customers c ON c.id = u.customer_id
             LEFT JOIN pools p ON p.id = u.pool_id
