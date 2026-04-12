@@ -23,18 +23,11 @@
           <button class="nav-link" data-view="reminders">Reminders</button>
         </nav>
 
-        <section class="auth-card">
-          <h2>Operator Tools</h2>
-          <label>
-            <span>Actor</span>
-            <input id="actor-input" type="text" placeholder="kevin" />
-          </label>
-          <label>
-            <span>API Secret</span>
-            <input id="secret-input" type="password" placeholder="Needed for queue actions" />
-          </label>
-          <button id="save-auth" class="button button-primary">Save Session</button>
-          <p class="muted">Reads work without a secret. Mutations use the saved secret as `X-NTPP-Secret`.</p>
+        <section class="auth-card" id="session-card">
+          <h2>Dashboard Access</h2>
+          <p id="session-summary" class="muted">Checking sign-in…</p>
+          <a id="login-button" class="button button-primary" href="/auth/google/start">Sign In with Google</a>
+          <button id="logout-button" class="button button-secondary" hidden>Sign Out</button>
         </section>
       </aside>
 

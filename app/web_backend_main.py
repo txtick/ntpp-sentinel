@@ -1,6 +1,11 @@
 import os
+import secrets
+from urllib.parse import urlencode
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 
 from services.dashboard_backend import (
     create_alert_reminder,
@@ -32,14 +37,71 @@ app = FastAPI(
 )
 
 WEB_BACKEND_SECRET = os.getenv("WEB_BACKEND_SECRET", "").strip() or os.getenv("WEBHOOK_SECRET", "").strip()
+DASHBOARD_BASE_URL = os.getenv("DASHBOARD_BASE_URL", "https://dashboard.northtexaspoolpros.com").rstrip("/")
+GOOGLE_DASHBOARD_CLIENT_ID = os.getenv("GOOGLE_DASHBOARD_CLIENT_ID", "").strip()
+GOOGLE_DASHBOARD_CLIENT_SECRET = os.getenv("GOOGLE_DASHBOARD_CLIENT_SECRET", "").strip()
+GOOGLE_DASHBOARD_ALLOWED_DOMAIN = os.getenv("GOOGLE_DASHBOARD_ALLOWED_DOMAIN", "northtexaspoolpros.com").strip().lower()
+DASHBOARD_SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "").strip() or WEB_BACKEND_SECRET or "ntpp-dashboard-dev-session-secret"
+GOOGLE_AUTH_AUTHORIZE_URL = os.getenv("GOOGLE_AUTH_AUTHORIZE_URL", "https://accounts.google.com/o/oauth2/v2/auth").strip()
+GOOGLE_AUTH_TOKEN_URL = os.getenv("GOOGLE_AUTH_TOKEN_URL", "https://oauth2.googleapis.com/token").strip()
+GOOGLE_AUTH_USERINFO_URL = os.getenv("GOOGLE_AUTH_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo").strip()
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=DASHBOARD_SESSION_SECRET,
+    same_site="lax",
+    https_only=DASHBOARD_BASE_URL.startswith("https://"),
+    session_cookie="ntpp_dashboard_session",
+    max_age=60 * 60 * 12,
+)
+
+
+def _dashboard_auth_enabled() -> bool:
+    return bool(GOOGLE_DASHBOARD_CLIENT_ID and GOOGLE_DASHBOARD_CLIENT_SECRET)
+
+
+def _secret_matches(request: Request) -> bool:
+    if not WEB_BACKEND_SECRET:
+        return False
+    provided = (request.headers.get("X-NTPP-Secret") or "").strip()
+    return provided == WEB_BACKEND_SECRET
+
+
+def _dashboard_user(request: Request):
+    session = getattr(request, "session", None) or {}
+    user = session.get("dashboard_user")
+    return user if isinstance(user, dict) else None
 
 
 def _auth_or_401(request: Request) -> None:
     if not WEB_BACKEND_SECRET:
         raise HTTPException(status_code=500, detail="WEB_BACKEND_SECRET is not configured")
-    provided = (request.headers.get("X-NTPP-Secret") or "").strip()
-    if provided != WEB_BACKEND_SECRET:
+    if not _secret_matches(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _dashboard_mutation_auth_or_401(request: Request) -> None:
+    if _dashboard_auth_enabled():
+        if _dashboard_user(request) or _secret_matches(request):
+            return
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    _auth_or_401(request)
+
+
+@app.middleware("http")
+async def _dashboard_auth_middleware(request: Request, call_next):
+    path = request.url.path or ""
+    if _dashboard_auth_enabled() and path.startswith("/api/"):
+        if not (_dashboard_user(request) or _secret_matches(request)):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": "Dashboard login required",
+                    "auth_required": True,
+                    "login_url": "/auth/google/start",
+                },
+            )
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -56,6 +118,99 @@ def health():
 @app.get("/health/postgres")
 def health_postgres():
     return get_postgres_health()
+
+
+@app.get("/auth/session")
+def auth_session(request: Request):
+    user = _dashboard_user(request)
+    return {
+        "ok": True,
+        "enabled": _dashboard_auth_enabled(),
+        "authenticated": bool(user),
+        "login_url": "/auth/google/start" if _dashboard_auth_enabled() else None,
+        "user": user,
+    }
+
+
+@app.get("/auth/google/start")
+async def auth_google_start(request: Request, next: str = "/"):
+    if not _dashboard_auth_enabled():
+        raise HTTPException(status_code=503, detail="Google dashboard auth is not configured")
+    state = secrets.token_urlsafe(24)
+    request.session["oauth_state"] = state
+    request.session["oauth_next"] = next if next.startswith("/") else "/"
+    query = urlencode(
+        {
+            "client_id": GOOGLE_DASHBOARD_CLIENT_ID,
+            "redirect_uri": f"{DASHBOARD_BASE_URL}/auth/google/callback",
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "access_type": "online",
+            "prompt": "select_account",
+            "hd": GOOGLE_DASHBOARD_ALLOWED_DOMAIN,
+        }
+    )
+    return RedirectResponse(url=f"{GOOGLE_AUTH_AUTHORIZE_URL}?{query}", status_code=302)
+
+
+@app.get("/auth/google/callback")
+async def auth_google_callback(request: Request, code: str = "", state: str = ""):
+    if not _dashboard_auth_enabled():
+        raise HTTPException(status_code=503, detail="Google dashboard auth is not configured")
+    expected_state = (request.session.get("oauth_state") or "").strip()
+    if not state or not expected_state or state != expected_state:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_response = await client.post(
+            GOOGLE_AUTH_TOKEN_URL,
+            data={
+                "client_id": GOOGLE_DASHBOARD_CLIENT_ID,
+                "client_secret": GOOGLE_DASHBOARD_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": f"{DASHBOARD_BASE_URL}/auth/google/callback",
+            },
+            headers={"Accept": "application/json"},
+        )
+        token_response.raise_for_status()
+        token_payload = token_response.json()
+        access_token = token_payload.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Google login did not return an access token")
+
+        userinfo_response = await client.get(
+            GOOGLE_AUTH_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+        )
+        userinfo_response.raise_for_status()
+        profile = userinfo_response.json()
+
+    email = str(profile.get("email") or "").strip().lower()
+    email_verified = bool(profile.get("email_verified"))
+    hosted_domain = str(profile.get("hd") or "").strip().lower()
+    if not email or not email_verified:
+        raise HTTPException(status_code=401, detail="Google account email is not verified")
+    if not email.endswith(f"@{GOOGLE_DASHBOARD_ALLOWED_DOMAIN}") and hosted_domain != GOOGLE_DASHBOARD_ALLOWED_DOMAIN:
+        raise HTTPException(status_code=403, detail="Google account is not in the allowed Workspace domain")
+
+    request.session.pop("oauth_state", None)
+    redirect_to = request.session.pop("oauth_next", "/")
+    request.session["dashboard_user"] = {
+        "email": email,
+        "name": profile.get("name") or email,
+        "given_name": profile.get("given_name") or "",
+        "picture": profile.get("picture") or "",
+        "actor": email.split("@", 1)[0],
+    }
+    return RedirectResponse(url=redirect_to if str(redirect_to).startswith("/") else "/", status_code=302)
+
+
+@app.post("/auth/logout")
+def auth_logout(request: Request):
+    request.session.clear()
+    return {"ok": True}
 
 
 @app.get("/api/home/summary")
@@ -157,7 +312,7 @@ def api_alert_create_reminder(
     title: str = "",
     note: str = "",
 ):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return create_alert_reminder(
         alert_id,
         actor=actor,
@@ -170,7 +325,7 @@ def api_alert_create_reminder(
 
 @app.post("/api/alerts/{alert_id}/ack")
 def api_alert_ack(request: Request, alert_id: int, actor: str = "api", note: str = ""):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_alert_instance_status(
         alert_id,
         next_status="acknowledged",
@@ -181,7 +336,7 @@ def api_alert_ack(request: Request, alert_id: int, actor: str = "api", note: str
 
 @app.post("/api/alerts/{alert_id}/resolve")
 def api_alert_resolve(request: Request, alert_id: int, actor: str = "api", note: str = ""):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_alert_instance_status(
         alert_id,
         next_status="resolved",
@@ -198,7 +353,7 @@ def api_alert_snooze(
     actor: str = "api",
     note: str = "",
 ):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_alert_instance_status(
         alert_id,
         next_status="snoozed",
@@ -257,7 +412,7 @@ def api_reminder_detail(reminder_id: int):
 
 @app.post("/api/reminders/{reminder_id}/ack")
 def api_reminder_ack(request: Request, reminder_id: int, actor: str = "api", note: str = ""):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_reminder_status(
         reminder_id,
         next_status="acknowledged",
@@ -276,7 +431,7 @@ def api_reminder_update(
     title: str = "",
     note: str = "",
 ):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_reminder_fields(
         reminder_id,
         actor=actor,
@@ -295,7 +450,7 @@ def api_reminder_snooze(
     actor: str = "api",
     note: str = "",
 ):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return snooze_reminder(
         reminder_id,
         actor=actor,
@@ -306,7 +461,7 @@ def api_reminder_snooze(
 
 @app.post("/api/reminders/{reminder_id}/complete")
 def api_reminder_complete(request: Request, reminder_id: int, actor: str = "api", note: str = ""):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_reminder_status(
         reminder_id,
         next_status="completed",
@@ -317,7 +472,7 @@ def api_reminder_complete(request: Request, reminder_id: int, actor: str = "api"
 
 @app.post("/api/reminders/{reminder_id}/cancel")
 def api_reminder_cancel(request: Request, reminder_id: int, actor: str = "api", note: str = ""):
-    _auth_or_401(request)
+    _dashboard_mutation_auth_or_401(request)
     return update_reminder_status(
         reminder_id,
         next_status="canceled",

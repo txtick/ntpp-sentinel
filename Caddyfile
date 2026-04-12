@@ -1,3 +1,7 @@
 sentinel.northtexaspoolpros.com {
     reverse_proxy sentinel:8000
 }
+
+dashboard.northtexaspoolpros.com {
+    reverse_proxy web-frontend:8030
+}

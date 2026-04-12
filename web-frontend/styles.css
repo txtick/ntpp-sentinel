@@ -140,6 +140,10 @@ textarea {
   background: transparent;
   color: var(--ink);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
   transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
 }
 

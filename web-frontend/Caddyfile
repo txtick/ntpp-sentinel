@@ -1,6 +1,10 @@
 :8030 {
     encode zstd gzip
 
+    handle /auth/* {
+        reverse_proxy web-backend:8020
+    }
+
     handle /api/* {
         reverse_proxy web-backend:8020
     }

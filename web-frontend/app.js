@@ -66,8 +66,13 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
 
 const state = {
   view: "home",
-  actor: localStorage.getItem("ntpp.actor") || "",
-  secret: localStorage.getItem("ntpp.secret") || "",
+  actor: "",
+  auth: {
+    enabled: false,
+    authenticated: false,
+    loginUrl: "/auth/google/start",
+    user: null,
+  },
   selections: {
     alertId: null,
     customerId: null,
@@ -96,8 +101,10 @@ const els = {
   viewKicker: document.getElementById("view-kicker"),
   statusPill: document.getElementById("status-pill"),
   filters: document.getElementById("view-filters"),
-  actorInput: document.getElementById("actor-input"),
-  secretInput: document.getElementById("secret-input"),
+  sessionCard: document.getElementById("session-card"),
+  sessionSummary: document.getElementById("session-summary"),
+  loginButton: document.getElementById("login-button"),
+  logoutButton: document.getElementById("logout-button"),
   toast: document.getElementById("toast"),
 };
 
@@ -152,21 +159,67 @@ function pushBrowserState() {
   window.history.pushState(snapshotAppState(), "", "");
 }
 
-function init() {
-  els.actorInput.value = state.actor;
-  els.secretInput.value = state.secret;
+function renderSessionCard() {
+  if (!els.sessionCard) return;
+  if (!state.auth.enabled) {
+    els.sessionSummary.textContent = "Dashboard auth is not configured. Secret-based local development is still available.";
+    els.loginButton.hidden = true;
+    els.logoutButton.hidden = true;
+    return;
+  }
+  if (state.auth.authenticated && state.auth.user) {
+    const name = state.auth.user.name || state.auth.user.email || "Signed in";
+    const email = state.auth.user.email ? ` (${state.auth.user.email})` : "";
+    els.sessionSummary.textContent = `Signed in as ${name}${email}`;
+    els.loginButton.hidden = true;
+    els.logoutButton.hidden = false;
+    return;
+  }
+  els.sessionSummary.textContent = "Sign in with your North Texas Pool Pros Google Workspace account to use the dashboard.";
+  els.loginButton.hidden = false;
+  els.logoutButton.hidden = true;
+  els.loginButton.href = state.auth.loginUrl || "/auth/google/start";
+}
+
+function renderAuthRequired() {
+  const loginUrl = state.auth.loginUrl || "/auth/google/start";
+  els.mainPanel.innerHTML = `
+    <div class="empty-state">
+      Sign in is required to use the dashboard.<br /><br />
+      <a class="button button-primary" href="${escapeHtml(loginUrl)}">Sign In with Google</a>
+    </div>
+  `;
+}
+
+async function hydrateSession() {
+  const response = await fetch("/auth/session", { credentials: "same-origin" });
+  const payload = await response.json().catch(() => ({}));
+  state.auth.enabled = Boolean(payload.enabled);
+  state.auth.authenticated = Boolean(payload.authenticated);
+  state.auth.loginUrl = payload.login_url || "/auth/google/start";
+  state.auth.user = payload.user || null;
+  state.actor = state.auth.user?.actor || state.auth.user?.email || "";
+  renderSessionCard();
+}
+
+async function init() {
+  await hydrateSession();
 
   document.querySelectorAll(".nav-link").forEach((button) => {
     button.addEventListener("click", () => setView(button.dataset.view));
   });
 
-  document.getElementById("save-auth").addEventListener("click", () => {
-    state.actor = els.actorInput.value.trim();
-    state.secret = els.secretInput.value.trim();
-    localStorage.setItem("ntpp.actor", state.actor);
-    localStorage.setItem("ntpp.secret", state.secret);
-    showToast("Operator session saved.");
-  });
+  if (els.logoutButton) {
+    els.logoutButton.addEventListener("click", async () => {
+      await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+      state.auth.authenticated = false;
+      state.auth.user = null;
+      state.actor = "";
+      renderSessionCard();
+      renderAuthRequired();
+      showToast("Signed out.");
+    });
+  }
 
   document.getElementById("refresh-view").addEventListener("click", () => loadCurrentView(true));
 
@@ -230,13 +283,17 @@ function showToast(message, timeout = 2800) {
 
 async function api(path, { method = "GET", auth = false } = {}) {
   const headers = {};
-  if (auth) {
-    if (!state.secret) throw new Error("Save an API secret first to run queue actions.");
-    headers["X-NTPP-Secret"] = state.secret;
-  }
-  const response = await fetch(path, { method, headers });
+  const response = await fetch(path, { method, headers, credentials: "same-origin" });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && data.auth_required) {
+      state.auth.enabled = true;
+      state.auth.authenticated = false;
+      state.auth.loginUrl = data.login_url || "/auth/google/start";
+      renderSessionCard();
+      renderAuthRequired();
+      throw new Error("Dashboard login required.");
+    }
     const detail = data.detail ? JSON.stringify(data.detail) : `${response.status} ${response.statusText}`;
     throw new Error(detail);
   }
@@ -2022,4 +2079,7 @@ function itemCard(title, meta, footer) {
   return `<article class="item-card"><div class="item-card-header"><strong>${escapeHtml(title)}</strong><div>${meta}</div></div><div class="muted">${footer}</div></article>`;
 }
 
-init();
+init().catch((error) => {
+  setStatus("Error", "critical");
+  els.mainPanel.innerHTML = `<div class="empty-state">Could not initialize the dashboard.<br /><br />${escapeHtml(error.message || String(error))}</div>`;
+});
