@@ -2854,8 +2854,8 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                     ) AS avg_minutes_per_assigned_pool_30d,
                     (SELECT COUNT(*) FROM route_days) AS route_day_count_30d,
                     (SELECT COUNT(*) FROM route_days WHERE first_start_time::time > TIME '10:00') AS late_start_count_30d,
-                    (SELECT MIN(first_start_time) FROM route_days) AS earliest_route_start_30d,
-                    (SELECT MAX(first_start_time) FROM route_days) AS latest_route_start_30d
+                    (SELECT MIN(first_start_time::time) FROM route_days) AS earliest_route_start_30d,
+                    (SELECT MAX(first_start_time::time) FROM route_days) AS latest_route_start_30d
                 FROM recent_stops
                 """,
                 (tech_id_value,),

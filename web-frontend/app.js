@@ -308,6 +308,18 @@ function formatDateTime(value) {
   });
 }
 
+function formatClockTime(value) {
+  if (!value) return "—";
+  const raw = String(value).trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+  if (!match) return raw;
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const suffix = hour >= 12 ? "PM" : "AM";
+  hour = hour % 12 || 12;
+  return `${hour}:${minute} ${suffix}`;
+}
+
 function toDatetimeLocalValue(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -1803,8 +1815,8 @@ function renderTechnicianProfile(detail) {
         <div class="meta-row"><span>Role</span><strong>${escapeHtml(item.role_type || "—")}</strong></div>
         <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
         <div class="meta-row"><span>Recent Route Activity</span><strong>${escapeHtml(item.route_stop_count_30d)}</strong></div>
-        <div class="meta-row"><span>Earliest Route Start (30d)</span><strong>${formatDateTime(timing.earliest_route_start_30d)}</strong></div>
-        <div class="meta-row"><span>Latest Route Start (30d)</span><strong>${formatDateTime(timing.latest_route_start_30d)}</strong></div>
+        <div class="meta-row"><span>Earliest Start Time (30d)</span><strong>${formatClockTime(timing.earliest_route_start_30d)}</strong></div>
+        <div class="meta-row"><span>Latest Start Time (30d)</span><strong>${formatClockTime(timing.latest_route_start_30d)}</strong></div>
       </div>
     </section>
     <section class="section-card">
