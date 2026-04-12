@@ -88,20 +88,18 @@ def _dashboard_mutation_auth_or_401(request: Request) -> None:
     _auth_or_401(request)
 
 
-@app.middleware("http")
-async def _dashboard_auth_middleware(request: Request, call_next):
-    path = request.url.path or ""
-    if _dashboard_auth_enabled() and path.startswith("/api/"):
-        if not (_dashboard_user(request) or _secret_matches(request)):
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "detail": "Dashboard login required",
-                    "auth_required": True,
-                    "login_url": "/auth/google/start",
-                },
-            )
-    return await call_next(request)
+def _dashboard_read_auth_or_401(request: Request) -> None:
+    if _dashboard_auth_enabled():
+        if _dashboard_user(request) or _secret_matches(request):
+            return
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "message": "Dashboard login required",
+                "auth_required": True,
+                "login_url": "/auth/google/start",
+            },
+        )
 
 
 @app.on_event("startup")
@@ -214,7 +212,8 @@ def auth_logout(request: Request):
 
 
 @app.get("/api/home/summary")
-def api_home_summary():
+def api_home_summary(request: Request):
+    _dashboard_read_auth_or_401(request)
     return {
         "ok": True,
         "summary": get_dashboard_summary(),
@@ -223,12 +222,14 @@ def api_home_summary():
 
 @app.get("/api/customers")
 def api_customers(
+    request: Request,
     status: str = "",
     search: str = "",
     operational_only: int = 0,
     limit: int = 100,
     offset: int = 0,
 ):
+    _dashboard_read_auth_or_401(request)
     return list_customers(
         status=status or None,
         search=search or None,
@@ -239,12 +240,14 @@ def api_customers(
 
 
 @app.get("/api/customers/{customer_id}")
-def api_customer_detail(customer_id: int):
+def api_customer_detail(request: Request, customer_id: int):
+    _dashboard_read_auth_or_401(request)
     return get_customer_detail(customer_id)
 
 
 @app.get("/api/technicians")
 def api_technicians(
+    request: Request,
     search: str = "",
     active_only: int = 0,
     with_current_assignments_only: int = 0,
@@ -254,6 +257,7 @@ def api_technicians(
     limit: int = 100,
     offset: int = 0,
 ):
+    _dashboard_read_auth_or_401(request)
     return list_technicians(
         search=search or None,
         active_only=bool(active_only),
@@ -267,12 +271,14 @@ def api_technicians(
 
 
 @app.get("/api/technicians/{tech_id}")
-def api_technician_detail(tech_id: str):
+def api_technician_detail(request: Request, tech_id: str):
+    _dashboard_read_auth_or_401(request)
     return get_technician_detail(tech_id)
 
 
 @app.get("/api/alerts")
 def api_alerts(
+    request: Request,
     status: str = "",
     category: str = "",
     severity: str = "",
@@ -281,6 +287,7 @@ def api_alerts(
     limit: int = 100,
     offset: int = 0,
 ):
+    _dashboard_read_auth_or_401(request)
     return list_alert_instances(
         status=status or None,
         category=category or None,
@@ -293,12 +300,14 @@ def api_alerts(
 
 
 @app.get("/api/alerts/{alert_id}")
-def api_alert_detail(alert_id: int):
+def api_alert_detail(request: Request, alert_id: int):
+    _dashboard_read_auth_or_401(request)
     return get_alert_instance(alert_id)
 
 
 @app.get("/api/alerts/{alert_id}/events")
-def api_alert_events(alert_id: int, limit: int = 100):
+def api_alert_events(request: Request, alert_id: int, limit: int = 100):
+    _dashboard_read_auth_or_401(request)
     return list_alert_events(alert_id, limit=limit)
 
 
@@ -370,22 +379,26 @@ def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
 
 
 @app.get("/api/refresh-runs")
-def api_refresh_runs(limit: int = 20):
+def api_refresh_runs(request: Request, limit: int = 20):
+    _dashboard_read_auth_or_401(request)
     return list_refresh_runs(limit=limit)
 
 
 @app.get("/api/refresh-runs/{refresh_run_id}")
-def api_refresh_run_detail(refresh_run_id: int):
+def api_refresh_run_detail(request: Request, refresh_run_id: int):
+    _dashboard_read_auth_or_401(request)
     return get_refresh_run(refresh_run_id)
 
 
 @app.get("/api/config/alerts")
-def api_config_alerts():
+def api_config_alerts(request: Request):
+    _dashboard_read_auth_or_401(request)
     return list_alert_rule_configs()
 
 
 @app.get("/api/reminders")
 def api_reminders(
+    request: Request,
     status: str = "",
     assigned_to: str = "",
     source_type: str = "",
@@ -394,6 +407,7 @@ def api_reminders(
     limit: int = 100,
     offset: int = 0,
 ):
+    _dashboard_read_auth_or_401(request)
     return list_reminders(
         status=status or None,
         assigned_to=assigned_to or None,
@@ -406,7 +420,8 @@ def api_reminders(
 
 
 @app.get("/api/reminders/{reminder_id}")
-def api_reminder_detail(reminder_id: int):
+def api_reminder_detail(request: Request, reminder_id: int):
+    _dashboard_read_auth_or_401(request)
     return get_reminder_detail(reminder_id)
 
 
