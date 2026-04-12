@@ -68,7 +68,7 @@ def _secret_matches(request: Request) -> bool:
 
 
 def _dashboard_user(request: Request):
-    session = getattr(request, "session", None) or {}
+    session = request.scope.get("session") or {}
     user = session.get("dashboard_user")
     return user if isinstance(user, dict) else None
 
