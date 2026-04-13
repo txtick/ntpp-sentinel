@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Export a CSV of live Skimmer-tagged customers with their current service rate
-from the local Skimmer SQLite export and proposed 12% / 15% increased rates.
+from the local Skimmer SQLite export and a threshold-based proposed increase.
 
 Source model:
 - live Skimmer API determines who is in the cohort via --skimmer-tag
@@ -27,12 +27,16 @@ import httpx  # type: ignore
 SKIMMER_API_BASE_URL = os.getenv("SKIMMER_API_BASE_URL", "https://publicapi.getskimmer.com")
 SKIMMER_API_KEY = os.getenv("SKIMMER_API_KEY", "")
 DEFAULT_SQLITE_PATH = os.getenv("SKIMMER_DB_PATH", "/data/skimmer/skimmer.db")
+TARGET_SKIMMER_TAG = "sri-042026"
 PACKAGE_TAG_ADJUSTMENTS: Dict[str, Decimal] = {
     "patriot": Decimal("55"),
     "freedom": Decimal("40"),
     "liberty": Decimal("20"),
 }
 EXCLUDED_TAGS = {"not-invoiced"}
+BASE_RATE_PERCENT_THRESHOLD = Decimal("200.00")
+BELOW_THRESHOLD_INCREASE_PERCENT = Decimal("15")
+ABOVE_THRESHOLD_FLAT_INCREASE = Decimal("20.00")
 
 
 def clean_text(value: Any) -> str:
@@ -43,9 +47,8 @@ def clean_text(value: Any) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Export tagged Skimmer customers with current, +12%, and +15% service rates."
+        description="Export sri-042026 Skimmer customers with threshold-based proposed service rates."
     )
-    parser.add_argument("--skimmer-tag", required=True, help="Live Skimmer tag that defines the customer cohort.")
     parser.add_argument("--sqlite", default=DEFAULT_SQLITE_PATH, help="Path to the Skimmer SQLite export.")
     parser.add_argument("--csv-out", required=True, help="Output CSV path.")
     parser.add_argument("--include-inactive", action="store_true", help="Include inactive tagged customers.")
@@ -77,12 +80,11 @@ def _extract_tag_names(value: Any) -> List[str]:
 
 def fetch_tagged_customers(
     *,
-    skimmer_tag: str,
     include_inactive: bool,
     include_leads: bool,
     company_id: Optional[str],
 ) -> List[Dict[str, Any]]:
-    target_tag_lc = skimmer_tag.strip().lower()
+    target_tag_lc = TARGET_SKIMMER_TAG.lower()
     with httpx.Client(timeout=30.0) as client:
         response = client.get(
             SKIMMER_API_BASE_URL.rstrip("/") + "/Customers",
@@ -193,22 +195,28 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str]) -> Dict[str, st
             "current_service_rate": "",
             "all_customer_tags": "|".join(sorted(set(tags), key=str.lower)),
             "current_base_rate": "",
-            "increased_base_rate_12pct": "",
-            "projected_new_total_rate_12pct": "",
-            "increased_base_rate_15pct": "",
-            "projected_new_total_rate_15pct": "",
             "package_adjustment_applied": "",
             "package_tag_used": "",
+            "increase_rule_applied": "",
+            "base_rate_increase_amount": "",
+            "projected_new_base_rate": "",
+            "projected_new_total_rate": "",
         }
 
     current = Decimal(str(current_rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     adjustment = package_adjustment(tags)
     applied_package_tags = package_tags_used(tags)
     base = (current - adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    increased_base_12 = (base * Decimal("1.12")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    projected_total_12 = (increased_base_12 + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    increased_base_15 = (base * Decimal("1.15")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    projected_total_15 = (increased_base_15 + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if base < BASE_RATE_PERCENT_THRESHOLD:
+        increase_rule_applied = "15% under 200 base"
+        projected_base = (base * (Decimal("1") + (BELOW_THRESHOLD_INCREASE_PERCENT / Decimal("100")))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    else:
+        increase_rule_applied = "$20 at or above 200 base"
+        projected_base = (base + ABOVE_THRESHOLD_FLAT_INCREASE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    increase_amount = (projected_base - base).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    projected_total = (projected_base + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     return {
         "current_service_rate": format(current, "f"),
@@ -216,10 +224,10 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str]) -> Dict[str, st
         "package_adjustment_applied": format(adjustment.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"),
         "package_tag_used": "|".join(applied_package_tags),
         "current_base_rate": format(base, "f"),
-        "increased_base_rate_12pct": format(increased_base_12, "f"),
-        "projected_new_total_rate_12pct": format(projected_total_12, "f"),
-        "increased_base_rate_15pct": format(increased_base_15, "f"),
-        "projected_new_total_rate_15pct": format(projected_total_15, "f"),
+        "increase_rule_applied": increase_rule_applied,
+        "base_rate_increase_amount": format(increase_amount, "f"),
+        "projected_new_base_rate": format(projected_base, "f"),
+        "projected_new_total_rate": format(projected_total, "f"),
     }
 
 
@@ -239,10 +247,10 @@ def write_csv(
         "package_adjustment_applied",
         "package_tag_used",
         "current_base_rate",
-        "increased_base_rate_12pct",
-        "projected_new_total_rate_12pct",
-        "increased_base_rate_15pct",
-        "projected_new_total_rate_15pct",
+        "increase_rule_applied",
+        "base_rate_increase_amount",
+        "projected_new_base_rate",
+        "projected_new_total_rate",
         "approved_for_increase",
         "final_new_rate",
         "notes",
@@ -297,7 +305,6 @@ def main() -> int:
     args = parse_args()
 
     tagged_customers = fetch_tagged_customers(
-        skimmer_tag=args.skimmer_tag,
         include_inactive=args.include_inactive,
         include_leads=args.include_leads,
         company_id=args.company_id,
@@ -309,7 +316,7 @@ def main() -> int:
         service_locations_by_customer,
     )
 
-    print(f"Tagged customers fetched from Skimmer API: {len(tagged_customers)}")
+    print(f"Tagged customers fetched from Skimmer API for tag '{TARGET_SKIMMER_TAG}': {len(tagged_customers)}")
     print(f"CSV rows written: {row_count}")
     print(f"CSV path: {args.csv_out}")
     return 0
