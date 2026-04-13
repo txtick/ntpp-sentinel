@@ -146,9 +146,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 description = EXCLUDED.description
             """,
             [
-                ("cya_above_80", "cya", "gt", "critical", 20, 80, True, None, None, "CYA above 80 ppm"),
-                ("phosphates_above_500", "phosphates", "gt", "warning", 10, 500, True, None, None, "Phosphates above 500 ppb"),
-                ("phosphates_above_1000", "phosphates", "gt", "critical", 20, 1000, True, None, None, "Phosphates above 1000 ppb"),
+                ("cya_above_100", "cya", "gt", "critical", 20, 100, True, None, None, "CYA above 100 ppm"),
             ],
         )
         cur.executemany(
@@ -190,10 +188,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 description = EXCLUDED.description
             """,
             [
-                ("fc_zero_2_of_2_14d", "free_chlorine", "bad_readings_last_n", "lte", "warning", 10, 0, 2, 2, 14, None, None, True, None, None, "2 free chlorine readings at 0 in the last 14 days"),
                 ("fc_cya_ratio_bad_2wk", "fc_cya_ratio", "fc_cya_ratio_last_n", "lt", "warning", 10, 0.075, 2, 2, 21, None, None, True, None, None, "FC:CYA ratio below 7.5% on last 2 paired readings"),
-                ("cya_rise_above_50_15_60d", "cya", "delta_over_days", None, "warning", 10, 50, None, None, 60, 15, None, True, None, None, "CYA above 50 and rising 15+ over 60 days"),
-                ("phosphates_bad_3_of_5", "phosphates", "bad_readings_last_n", "gt", "warning", 10, 500, 5, 3, 60, None, None, True, None, None, "3 of last 5 phosphate readings above 500"),
                 ("ph_bad_2_of_2_14d", "ph", "bad_readings_last_n", "gt", "warning", 10, 7.8, 2, 2, 14, None, None, True, None, None, "2 pH readings above 7.8 in the last 14 days"),
             ],
         )
@@ -212,13 +207,20 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
         cur.execute(
             """
             DELETE FROM alert_rule_config
-            WHERE rule_code IN ('cya_above_100')
+            WHERE rule_code IN ('cya_above_80', 'phosphates_above_500', 'phosphates_above_1000')
             """
         )
         cur.execute(
             """
             DELETE FROM trend_rule_config
-            WHERE rule_code IN ('cya_bad_3_of_5', 'cya_rise_15_60d', 'cya_rise_30_60d')
+            WHERE rule_code IN (
+                'cya_bad_3_of_5',
+                'cya_rise_15_60d',
+                'cya_rise_30_60d',
+                'fc_zero_2_of_2_14d',
+                'cya_rise_above_50_15_60d',
+                'phosphates_bad_3_of_5'
+            )
             """
         )
         cur.execute(
@@ -274,9 +276,14 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("drain_refill_cya_repeat", "drain_refill", "reading_repeat", "cya", None, "gt", "warning", 10, 100, 2, 60, True, None, None, "Repeated high CYA suggests drain/refill"),
                 ("filter_clean_trend", "filter_clean", "reading_repeat", "filter_pressure", None, "gte", "warning", 10, 20, 2, 21, True, None, None, "2 recent PSI readings at or above 20 suggest filter clean"),
                 ("filter_clean_missing_psi", "filter_clean", "missing_recent_reading", "filter_pressure", None, None, "warning", 10, None, None, 90, True, None, None, "Missing recent PSI reading"),
-                ("phosphate_treatment_high", "phosphate_treatment", "latest_reading", "phosphates", None, "gt", "warning", 10, 500, None, 60, True, None, None, "High phosphates suggest treatment"),
                 ("chemical_cost_review_high", "chemical_cost_review", "monthly_cost", None, None, "gte", "warning", 10, monthly_chemical_cost_review_threshold, None, 30, True, None, None, "High recent chemical cost"),
             ],
+        )
+        cur.execute(
+            """
+            DELETE FROM revenue_rule_config
+            WHERE rule_code = 'phosphate_treatment_high'
+            """
         )
         cur.execute(
             """

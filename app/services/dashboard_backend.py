@@ -153,15 +153,9 @@ def _rule_label(rule_code: str) -> str:
         "filter_clean_trend": "Filter Pressure Stays High",
         "chemical_cost_review_high": "Chemical Cost Review",
         "drain_refill_cya_repeat": "Drain / Refill Review",
-        "phosphate_treatment_high": "Phosphate Treatment Review",
-        "fc_zero_2_of_2_14d": "Free Chlorine 0 Two Weeks In A Row",
         "fc_cya_ratio_bad_2wk": "FC:CYA Ratio Out Of Balance",
         "ph_bad_2_of_2_14d": "pH High Two Weeks In A Row",
-        "cya_rise_above_50_15_60d": "CYA Rising Above 50",
-        "cya_above_80": "CYA Above 80",
-        "phosphates_bad_3_of_5": "Phosphates High On 3 Of 5 Visits",
-        "phosphates_above_500": "Phosphates Above 500",
-        "phosphates_above_1000": "Phosphates Above 1000",
+        "cya_above_100": "CYA Above 100",
     }
     if rule_code in labels:
         return labels[rule_code]
@@ -351,8 +345,6 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
             return "Chemical cost is above the monthly review threshold."
         if rule_code == "drain_refill_cya_repeat":
             return "CYA has stayed high enough long enough to consider a drain and refill."
-        if rule_code == "phosphate_treatment_high":
-            return "Phosphates are high enough to review treatment."
         return _rule_label(rule_code)
 
     observed_value = row.get("value")
@@ -360,20 +352,10 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
         observed_value = row.get("observed_value")
     threshold_value = row.get("threshold_value")
     reading_key = row.get("reading_key") or "metric"
-    if rule_code == "fc_zero_2_of_2_14d":
-        return "Free chlorine was 0 on the last 2 readings."
     if rule_code == "ph_bad_2_of_2_14d":
         return f"pH was above {threshold_value} on the last 2 readings."
-    if rule_code == "cya_rise_above_50_15_60d":
-        return "CYA is above 50 and still rising."
-    if rule_code == "cya_above_80":
-        return "CYA is above 80."
-    if rule_code == "phosphates_bad_3_of_5":
-        return f"Phosphates were above {threshold_value} on 3 of the last 5 readings."
-    if rule_code == "phosphates_above_500":
-        return "Phosphates are above 500."
-    if rule_code == "phosphates_above_1000":
-        return "Phosphates are above 1000."
+    if rule_code == "cya_above_100":
+        return "CYA is above 100."
     if reading_key == "fc_cya_ratio" and observed_value is not None and threshold_value is not None:
         try:
             observed_pct = float(observed_value) * 100.0
