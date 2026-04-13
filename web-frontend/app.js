@@ -1933,7 +1933,10 @@ function renderTechnicianProfile(detail) {
           </div>
         </section>
         <section class="section-card">
-          <h3>Alerts Assigned</h3>
+          <div class="item-card-header">
+            <h3>Alerts Assigned</h3>
+            <span class="dense">${escapeHtml(alerts.length)} active</span>
+          </div>
           <div class="event-list">
             ${alerts.map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong><span class="dense">${formatDateTime(alert.last_detected_at)}</span></div><div class="muted">${escapeHtml(alert.customer_name || "No customer")} · ${escapeHtml(alert.pool_name || "No pool")}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No active alerts tied to this technician’s pools.</div>`}
           </div>
