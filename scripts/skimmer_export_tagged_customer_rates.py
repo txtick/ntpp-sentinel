@@ -34,9 +34,11 @@ PACKAGE_TAG_ADJUSTMENTS: Dict[str, Decimal] = {
     "liberty": Decimal("20"),
 }
 EXCLUDED_TAGS = {"not-invoiced"}
-BASE_RATE_PERCENT_THRESHOLD = Decimal("200.00")
-BELOW_THRESHOLD_INCREASE_PERCENT = Decimal("15")
-ABOVE_THRESHOLD_FLAT_INCREASE = Decimal("20.00")
+LOW_BASE_RATE_THRESHOLD = Decimal("180.00")
+TARGET_BASE_RATE_THRESHOLD = Decimal("200.00")
+LOW_BASE_RATE_INCREASE_PERCENT = Decimal("15")
+MID_BASE_RATE_INCREASE_PERCENT = Decimal("10")
+TARGET_AND_ABOVE_INCREASE_PERCENT = Decimal("8")
 
 
 def clean_text(value: Any) -> str:
@@ -47,7 +49,7 @@ def clean_text(value: Any) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Export sri-042026 Skimmer customers with threshold-based proposed service rates."
+        description="Export sri-042026 Skimmer customers with tiered proposed service rates."
     )
     parser.add_argument("--sqlite", default=DEFAULT_SQLITE_PATH, help="Path to the Skimmer SQLite export.")
     parser.add_argument("--csv-out", required=True, help="Output CSV path.")
@@ -207,14 +209,21 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str]) -> Dict[str, st
     adjustment = package_adjustment(tags)
     applied_package_tags = package_tags_used(tags)
     base = (current - adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if base < BASE_RATE_PERCENT_THRESHOLD:
-        increase_rule_applied = "15% under 200 base"
-        projected_base = (base * (Decimal("1") + (BELOW_THRESHOLD_INCREASE_PERCENT / Decimal("100")))).quantize(
+    if base < LOW_BASE_RATE_THRESHOLD:
+        increase_rule_applied = "15% under 180 base"
+        projected_base = (base * (Decimal("1") + (LOW_BASE_RATE_INCREASE_PERCENT / Decimal("100")))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+    elif base < TARGET_BASE_RATE_THRESHOLD:
+        increase_rule_applied = "10% from 180 to under 200 base"
+        projected_base = (base * (Decimal("1") + (MID_BASE_RATE_INCREASE_PERCENT / Decimal("100")))).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
     else:
-        increase_rule_applied = "$20 at or above 200 base"
-        projected_base = (base + ABOVE_THRESHOLD_FLAT_INCREASE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        increase_rule_applied = "8% at or above 200 base"
+        projected_base = (base * (Decimal("1") + (TARGET_AND_ABOVE_INCREASE_PERCENT / Decimal("100")))).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
     increase_amount = (projected_base - base).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     projected_total = (projected_base + adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
