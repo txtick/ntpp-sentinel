@@ -446,6 +446,10 @@ textarea {
   align-items: start;
 }
 
+.technician-profile-grid {
+  margin-top: 18px;
+}
+
 .profile-main,
 .profile-side,
 .range-controls {

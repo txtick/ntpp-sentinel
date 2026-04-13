@@ -13,6 +13,7 @@ ACTIONABLE_ALERT_STATUSES = ("open", "acknowledged", "snoozed", "resolved", "cle
 MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
     os.getenv("MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD", "75")
 )
+DASHBOARD_TIMEZONE = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     "default_days": 90,
     "range_days": [30, 90, 180, 365],
@@ -2815,7 +2816,7 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                 route_days AS (
                     SELECT
                         service_date::date AS route_day,
-                        MIN(start_time) AS first_start_time
+                        MIN(start_time AT TIME ZONE %s) AS first_start_local
                     FROM recent_stops
                     WHERE start_time IS NOT NULL
                     GROUP BY service_date::date
@@ -2835,12 +2836,12 @@ def get_technician_detail(tech_id: str) -> Dict[str, Any]:
                         0
                     ) AS avg_minutes_per_assigned_pool_30d,
                     (SELECT COUNT(*) FROM route_days) AS route_day_count_30d,
-                    (SELECT COUNT(*) FROM route_days WHERE first_start_time::time > TIME '10:00') AS late_start_count_30d,
-                    (SELECT MIN(first_start_time::time) FROM route_days) AS earliest_route_start_30d,
-                    (SELECT MAX(first_start_time::time) FROM route_days) AS latest_route_start_30d
+                    (SELECT COUNT(*) FROM route_days WHERE first_start_local::time > TIME '10:00') AS late_start_count_30d,
+                    (SELECT MIN(first_start_local::time) FROM route_days) AS earliest_route_start_30d,
+                    (SELECT MAX(first_start_local::time) FROM route_days) AS latest_route_start_30d
                 FROM recent_stops
                 """,
-                (tech_id_value,),
+                (tech_id_value, DASHBOARD_TIMEZONE),
             )
             route_timing_summary = dict(cur.fetchone() or {})
 
