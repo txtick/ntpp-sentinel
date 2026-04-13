@@ -34,10 +34,8 @@ PACKAGE_TAG_ADJUSTMENTS: Dict[str, Decimal] = {
     "liberty": Decimal("20"),
 }
 EXCLUDED_TAGS = {"not-invoiced"}
-LOW_BASE_RATE_THRESHOLD = Decimal("180.00")
-TARGET_BASE_RATE_THRESHOLD = Decimal("200.00")
-LOW_BASE_RATE_INCREASE_PERCENT = Decimal("15")
-MID_BASE_RATE_INCREASE_PERCENT = Decimal("10")
+TARGET_BASE_RATE_THRESHOLD = Decimal("220.00")
+BELOW_TARGET_BASE_RATE_INCREASE_PERCENT = Decimal("10")
 TARGET_AND_ABOVE_INCREASE_PERCENT = Decimal("8")
 
 
@@ -209,18 +207,13 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str]) -> Dict[str, st
     adjustment = package_adjustment(tags)
     applied_package_tags = package_tags_used(tags)
     base = (current - adjustment).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if base < LOW_BASE_RATE_THRESHOLD:
-        increase_rule_applied = "15% under 180 base"
-        projected_base = (base * (Decimal("1") + (LOW_BASE_RATE_INCREASE_PERCENT / Decimal("100")))).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-    elif base < TARGET_BASE_RATE_THRESHOLD:
-        increase_rule_applied = "10% from 180 to under 200 base"
-        projected_base = (base * (Decimal("1") + (MID_BASE_RATE_INCREASE_PERCENT / Decimal("100")))).quantize(
+    if base < TARGET_BASE_RATE_THRESHOLD:
+        increase_rule_applied = "10% under 220 base"
+        projected_base = (base * (Decimal("1") + (BELOW_TARGET_BASE_RATE_INCREASE_PERCENT / Decimal("100")))).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
     else:
-        increase_rule_applied = "8% at or above 200 base"
+        increase_rule_applied = "8% at or above 220 base"
         projected_base = (base * (Decimal("1") + (TARGET_AND_ABOVE_INCREASE_PERCENT / Decimal("100")))).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
