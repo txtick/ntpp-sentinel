@@ -447,6 +447,10 @@ textarea {
 }
 
 .technician-profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.9fr);
+  gap: 18px;
+  align-items: start;
   margin-top: 18px;
 }
 
@@ -740,6 +744,10 @@ textarea {
   }
 
   .profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .technician-profile-grid {
     grid-template-columns: 1fr;
   }
 
