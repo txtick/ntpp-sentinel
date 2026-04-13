@@ -77,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--create-tag-if-missing", action="store_true", help="Create the GHL tag if it does not already exist.")
     parser.add_argument("--apply", action="store_true", help="Actually update the GHL field and add the tag.")
     parser.add_argument("--apply-tag", action="store_true", help="When used with --apply, also attach the configured GHL tag.")
+    parser.add_argument("--list-fields", action="store_true", help="List available GHL custom fields and exit.")
     return parser
 
 
@@ -193,6 +194,19 @@ def ghl_find_custom_field(client: httpx.Client, field_key: str) -> Optional[Dict
         if any(value.lower() == target for value in candidates if value):
             return field
     return None
+
+
+def summarize_custom_field(field: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": clean_text(field.get("id")),
+        "name": clean_text(field.get("name")),
+        "fieldKey": clean_text(field.get("fieldKey")),
+        "key": clean_text(field.get("key")),
+        "slug": clean_text(field.get("slug")),
+        "dataType": clean_text(field.get("dataType") or field.get("type")),
+        "objectKey": clean_text(field.get("objectKey")),
+        "placeholder": clean_text(field.get("placeholder")),
+    }
 
 
 def _skimmer_headers() -> Dict[str, str]:
@@ -412,6 +426,11 @@ def main() -> int:
     ghl_hints = load_ghl_contact_hints()
 
     with httpx.Client(timeout=30.0) as client:
+        if args.list_fields:
+            fields = [summarize_custom_field(field) for field in ghl_get_custom_fields(client)]
+            print(json.dumps({"custom_fields": fields}, indent=2))
+            return 0
+
         field = ghl_find_custom_field(client, args.field_key)
         if not field:
             raise RuntimeError(f"GHL custom field not found for key/name/id: {args.field_key}")
