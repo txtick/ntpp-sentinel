@@ -221,13 +221,13 @@ def calculate_adjusted_rates(current_rate: Any, tags: List[str]) -> Dict[str, st
     return {
         "current_service_rate": format(current, "f"),
         "all_customer_tags": "|".join(sorted(set(tags), key=str.lower)),
+        "projected_new_total_rate": format(projected_total, "f"),
         "package_adjustment_applied": format(adjustment.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"),
         "package_tag_used": "|".join(applied_package_tags),
         "current_base_rate": format(base, "f"),
         "increase_rule_applied": increase_rule_applied,
         "base_rate_increase_amount": format(increase_amount, "f"),
         "projected_new_base_rate": format(projected_base, "f"),
-        "projected_new_total_rate": format(projected_total, "f"),
     }
 
 
@@ -244,19 +244,21 @@ def write_csv(
         "zip_code",
         "all_customer_tags",
         "current_service_rate",
+        "projected_new_total_rate",
         "package_adjustment_applied",
         "package_tag_used",
         "current_base_rate",
         "increase_rule_applied",
         "base_rate_increase_amount",
         "projected_new_base_rate",
-        "projected_new_total_rate",
         "approved_for_increase",
         "final_new_rate",
         "notes",
     ]
 
     row_count = 0
+    total_current_service_rate = Decimal("0.00")
+    total_projected_new_total_rate = Decimal("0.00")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -283,6 +285,12 @@ def write_csv(
 
             for location in locations:
                 rates = calculate_adjusted_rates(location.get("Rate"), customer["tags"])
+                current_service_rate = rates.get("current_service_rate", "")
+                projected_new_total_rate = rates.get("projected_new_total_rate", "")
+                if current_service_rate:
+                    total_current_service_rate += Decimal(current_service_rate)
+                if projected_new_total_rate:
+                    total_projected_new_total_rate += Decimal(projected_new_total_rate)
                 writer.writerow(
                     {
                         "customer_id": customer["customer_id"],
@@ -297,6 +305,32 @@ def write_csv(
                     }
                 )
                 row_count += 1
+
+        writer.writerow(
+            {
+                "customer_id": "TOTAL",
+                "service_location_id": "",
+                "full_name": "",
+                "city": "",
+                "zip_code": "",
+                "all_customer_tags": "",
+                "current_service_rate": format(
+                    total_current_service_rate.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"
+                ),
+                "projected_new_total_rate": format(
+                    total_projected_new_total_rate.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"
+                ),
+                "package_adjustment_applied": "",
+                "package_tag_used": "",
+                "current_base_rate": "",
+                "increase_rule_applied": "",
+                "base_rate_increase_amount": "",
+                "projected_new_base_rate": "",
+                "approved_for_increase": "",
+                "final_new_rate": "",
+                "notes": "",
+            }
+        )
 
     return row_count
 
