@@ -313,6 +313,19 @@ echo "AI gate cached last_msg_ts: ${AI_GATE_LAST_MSG_TS:-n/a}"
 echo "AI gate evidence: ${AI_GATE_EVIDENCE_JSON:-n/a}"
 
 echo
+echo "=== 7c) Recheck hint ==="
+if [[ -n "${LATEST_CONVERSATION_ID}" ]]; then
+  echo "Force a fresh AI classification for this thread:"
+  echo "./curl_job.sh \"/jobs/recheck_issue?conversation_id=${LATEST_CONVERSATION_ID}\""
+  if [[ -n "${LATEST_ISSUE_ID}" ]]; then
+    echo "Or by issue id:"
+    echo "./curl_job.sh \"/jobs/recheck_issue?id=${LATEST_ISSUE_ID}\""
+  fi
+else
+  echo "Skipped: no conversation_id found on latest issue for this phone."
+fi
+
+echo
 echo "=== 7b) AI gate cache row ==="
 if [[ -n "${LATEST_CONVERSATION_ID}" ]]; then
   sqlite3 -header -column "$DB" "
