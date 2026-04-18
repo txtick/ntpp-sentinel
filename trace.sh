@@ -147,6 +147,8 @@ ORDER BY id DESC
 LIMIT 1;
 ")"
 
+LATEST_AI_GATE_RAW=""
+
 LATEST_UNANSWERED_RAW="$(sqlite3 -noheader -separator '|' "$DB" "
 SELECT
   id,
@@ -174,10 +176,37 @@ if [[ -n "$LATEST_ISSUE_RAW" ]]; then
   IFS='|' read -r LATEST_ISSUE_ID LATEST_ISSUE_STATUS LATEST_CONVERSATION_ID <<< "$LATEST_ISSUE_RAW"
 fi
 
+if [[ -n "${LATEST_CONVERSATION_ID}" ]]; then
+  LATEST_AI_GATE_RAW="$(sqlite3 -noheader -separator '|' "$DB" "
+SELECT
+  conversation_id,
+  last_msg_ts,
+  needs_follow_up,
+  confidence,
+  COALESCE(evidence_json, ''),
+  COALESCE(model, ''),
+  created_ts
+FROM conversation_ai_gate
+WHERE conversation_id='${LATEST_CONVERSATION_ID}'
+LIMIT 1;
+")"
+fi
+
 LATEST_UNANSWERED_ID=""
 LATEST_UNANSWERED_TS=""
 if [[ -n "$LATEST_UNANSWERED_RAW" ]]; then
   IFS='|' read -r LATEST_UNANSWERED_ID LATEST_UNANSWERED_TS <<< "$LATEST_UNANSWERED_RAW"
+fi
+
+AI_GATE_CONVERSATION_ID=""
+AI_GATE_LAST_MSG_TS=""
+AI_GATE_NEEDS_FOLLOW_UP=""
+AI_GATE_CONFIDENCE=""
+AI_GATE_EVIDENCE_JSON=""
+AI_GATE_MODEL=""
+AI_GATE_CREATED_TS=""
+if [[ -n "$LATEST_AI_GATE_RAW" ]]; then
+  IFS='|' read -r AI_GATE_CONVERSATION_ID AI_GATE_LAST_MSG_TS AI_GATE_NEEDS_FOLLOW_UP AI_GATE_CONFIDENCE AI_GATE_EVIDENCE_JSON AI_GATE_MODEL AI_GATE_CREATED_TS <<< "$LATEST_AI_GATE_RAW"
 fi
 
 echo
@@ -276,6 +305,29 @@ echo "Latest event body: ${EVENT_BODY:-n/a}"
 echo "Latest contact_id: ${EVENT_CONTACT_ID:-n/a}"
 echo "Latest issue id/status: ${LATEST_ISSUE_ID:-n/a} / ${LATEST_ISSUE_STATUS:-n/a}"
 echo "Latest conversation_id: ${LATEST_CONVERSATION_ID:-n/a}"
+echo "AI gate cache decision: ${AI_GATE_NEEDS_FOLLOW_UP:-n/a}"
+echo "AI gate confidence: ${AI_GATE_CONFIDENCE:-n/a}"
+echo "AI gate model: ${AI_GATE_MODEL:-n/a}"
+echo "AI gate cached at: ${AI_GATE_CREATED_TS:-n/a}"
+echo "AI gate cached last_msg_ts: ${AI_GATE_LAST_MSG_TS:-n/a}"
+echo "AI gate evidence: ${AI_GATE_EVIDENCE_JSON:-n/a}"
+
+echo
+echo "=== 7b) AI gate cache row ==="
+if [[ -n "${LATEST_CONVERSATION_ID}" ]]; then
+  sqlite3 -header -column "$DB" "
+SELECT conversation_id, last_msg_ts, needs_follow_up, confidence, evidence_json, model, created_ts
+FROM conversation_ai_gate
+WHERE conversation_id='${LATEST_CONVERSATION_ID}';
+"
+else
+  echo "Skipped: no conversation_id found on latest issue for this phone."
+fi
+
+FOCUSED_LOG_CMD=""
+if [[ -n "${EVENT_TS}" ]]; then
+  FOCUSED_LOG_CMD="docker compose logs --since=${EVENT_TS} --tail=400 sentinel"
+fi
 
 if command -v rg >/dev/null 2>&1; then
   LOG_CMD="docker compose logs --tail=${LOG_TAIL} sentinel"
@@ -299,6 +351,12 @@ if command -v rg >/dev/null 2>&1; then
     echo "--- filtered by conversation_id ${LATEST_CONVERSATION_ID} ---"
     eval "$LOG_CMD" | rg -F "${LATEST_CONVERSATION_ID}" || true
   fi
+
+  if [[ -n "${FOCUSED_LOG_CMD}" ]]; then
+    echo
+    echo "--- focused logs since latest event ts ${EVENT_TS} ---"
+    eval "$FOCUSED_LOG_CMD" | rg "FLOW|ai_gate|ignored_|issue_created|issue_updated|auto_resolved|Traceback|ERROR" || true
+  fi
 else
   LOG_CMD="docker compose logs --tail=${LOG_TAIL} sentinel"
 
@@ -320,6 +378,12 @@ else
     echo
     echo "--- filtered by conversation_id ${LATEST_CONVERSATION_ID} ---"
     eval "$LOG_CMD" | grep -F "${LATEST_CONVERSATION_ID}" || true
+  fi
+
+  if [[ -n "${FOCUSED_LOG_CMD}" ]]; then
+    echo
+    echo "--- focused logs since latest event ts ${EVENT_TS} ---"
+    eval "$FOCUSED_LOG_CMD" | grep -E "FLOW|ai_gate|ignored_|issue_created|issue_updated|auto_resolved|Traceback|ERROR" || true
   fi
 fi
 

@@ -1,0 +1,315 @@
+trace.sh mode: phone=+18173076330 summary=0 save=1
+trace.sh output: /tmp/trace-+18173076330-20260418-083718.txt
+
+=== 1) Recent cron activity ===
+2026-04-17 17:49:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:49:01 CDT cron: escalations <- http=200
+2026-04-17 17:50:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:50:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-17 17:50:01 CDT cron: escalations <- http=200
+2026-04-17 17:50:01 CDT cron: poll_resolver <- http=200
+2026-04-17 17:51:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:51:01 CDT cron: escalations <- http=200
+2026-04-17 17:52:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:52:01 CDT cron: escalations <- http=200
+2026-04-17 17:53:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:53:01 CDT cron: escalations <- http=200
+2026-04-17 17:54:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:54:01 CDT cron: escalations <- http=200
+2026-04-17 17:55:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:55:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-17 17:55:01 CDT cron: escalations <- http=200
+2026-04-17 17:55:01 CDT cron: poll_resolver <- http=200
+2026-04-17 17:56:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:56:01 CDT cron: escalations <- http=200
+2026-04-17 17:57:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:57:01 CDT cron: escalations <- http=200
+2026-04-17 17:58:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:58:01 CDT cron: escalations <- http=200
+2026-04-17 17:59:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 17:59:01 CDT cron: escalations <- http=200
+2026-04-17 18:00:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-17 18:00:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-17 18:00:01 CDT cron: escalations <- http=200
+2026-04-17 18:00:01 CDT cron: poll_resolver <- http=200
+2026-04-17 23:15:01 CDT cron: skimmer_drive_sync -> POST http://localhost:8000/jobs/skimmer_drive_sync?import_after=1
+2026-04-17 23:15:01 CDT cron: skimmer_drive_sync <- http=200
+2026-04-18 08:00:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:00:01 CDT cron: morning -> POST http://localhost:8000/jobs/send_summary?slot=morning
+2026-04-18 08:00:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:00:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:00:01 CDT cron: escalations <- http=200
+2026-04-18 08:00:01 CDT cron: morning <- http=200
+2026-04-18 08:01:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:01:01 CDT cron: escalations <- http=200
+2026-04-18 08:02:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:02:01 CDT cron: escalations <- http=200
+2026-04-18 08:03:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:03:01 CDT cron: escalations <- http=200
+2026-04-18 08:04:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:04:01 CDT cron: escalations <- http=200
+2026-04-18 08:05:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:05:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:05:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:05:01 CDT cron: escalations <- http=200
+2026-04-18 08:06:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:06:01 CDT cron: escalations <- http=200
+2026-04-18 08:07:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:07:01 CDT cron: escalations <- http=200
+2026-04-18 08:08:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:08:01 CDT cron: escalations <- http=200
+2026-04-18 08:09:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:09:01 CDT cron: escalations <- http=200
+2026-04-18 08:10:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:10:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:10:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:10:01 CDT cron: escalations <- http=200
+2026-04-18 08:11:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:11:01 CDT cron: escalations <- http=200
+2026-04-18 08:12:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:12:01 CDT cron: escalations <- http=200
+2026-04-18 08:13:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:13:01 CDT cron: escalations <- http=200
+2026-04-18 08:14:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:14:01 CDT cron: escalations <- http=200
+2026-04-18 08:15:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:15:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:15:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:15:01 CDT cron: escalations <- http=200
+2026-04-18 08:16:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:16:01 CDT cron: escalations <- http=200
+2026-04-18 08:17:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:17:01 CDT cron: escalations <- http=200
+2026-04-18 08:18:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:18:01 CDT cron: escalations <- http=200
+2026-04-18 08:19:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:19:01 CDT cron: escalations <- http=200
+2026-04-18 08:20:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:20:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:20:01 CDT cron: escalations <- http=200
+2026-04-18 08:20:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:21:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:21:01 CDT cron: escalations <- http=200
+2026-04-18 08:22:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:22:01 CDT cron: escalations <- http=200
+2026-04-18 08:23:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:23:01 CDT cron: escalations <- http=200
+2026-04-18 08:24:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:24:01 CDT cron: escalations <- http=200
+2026-04-18 08:25:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:25:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:25:01 CDT cron: escalations <- http=200
+2026-04-18 08:25:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:26:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:26:01 CDT cron: escalations <- http=200
+2026-04-18 08:27:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:27:01 CDT cron: escalations <- http=200
+2026-04-18 08:28:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:28:01 CDT cron: escalations <- http=200
+2026-04-18 08:29:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:29:01 CDT cron: escalations <- http=200
+2026-04-18 08:32:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:32:01 CDT cron: escalations <- http=200
+2026-04-18 08:33:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:33:01 CDT cron: escalations <- http=200
+2026-04-18 08:34:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:34:01 CDT cron: escalations <- http=200
+2026-04-18 08:35:01 CDT cron: poll_resolver -> POST http://localhost:8000/jobs/poll_resolver
+2026-04-18 08:35:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:35:01 CDT cron: poll_resolver <- http=200
+2026-04-18 08:35:02 CDT cron: escalations <- http=200
+2026-04-18 08:36:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:36:01 CDT cron: escalations <- http=200
+2026-04-18 08:37:01 CDT cron: escalations -> POST http://localhost:8000/jobs/escalations
+2026-04-18 08:37:01 CDT cron: escalations <- http=200
+
+=== 2) Active runtime crontab ===
+TZ=America/Chicago
+0 8 * * 1-6 /app/cron/cron.sh morning >> /logs/cron.log 2>&1
+0 11 * * 1-6 /app/cron/cron.sh midday >> /logs/cron.log 2>&1
+0 15 * * 1-6 /app/cron/cron.sh afternoon >> /logs/cron.log 2>&1
+
+*/1 8-17 * * 1-6 /app/cron/cron.sh escalations >> /logs/cron.log 2>&1
+0 18 * * 1-6 /app/cron/cron.sh escalations >> /logs/cron.log 2>&1
+
+*/5 8-17 * * 1-6 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
+0 18 * * 1-6 /app/cron/cron.sh poll_resolver >> /logs/cron.log 2>&1
+
+15 23 * * * /app/cron/cron.sh skimmer_drive_sync >> /logs/cron.log 2>&1
+
+=== 3) Manual job checks ===
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-type: application/json
+date: Sat, 18 Apr 2026 13:37:17 GMT
+server: uvicorn
+via: 1.1 Caddy
+content-length: 244
+
+{"job":"verify_pending","checked":2,"promoted_open":0,"auto_resolved":0,"updated_counts":0,"errors":0,"call_checked":0,"call_promoted_open":0,"call_auto_resolved":0,"call_updated_counts":0,"ai_checked":0,"ai_suppressed":0,"ai_skipped_budget":0}
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-type: application/json
+date: Sat, 18 Apr 2026 13:37:18 GMT
+server: uvicorn
+via: 1.1 Caddy
+content-length: 67
+
+{"job":"escalations","new_breaches":0,"dry_run":false,"sent":false}
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-type: application/json
+date: Sat, 18 Apr 2026 13:37:19 GMT
+server: uvicorn
+via: 1.1 Caddy
+content-length: 126
+
+{"job":"poll_resolver","checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0}
+
+=== 4) App logs (system-level verify/escalation errors) ===
+ntpp-sentinel  | [2026-04-18 08:37:01] FLOW {"ts":"2026-04-18T08:37:01.905230-05:00","event":"poll_resolver.completed","limit":500,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":379.3,"total_elapsed_ms":383.3,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | INFO:     127.0.0.1:51902 - "POST /jobs/escalations HTTP/1.1" 200 OK
+ntpp-sentinel  | [2026-04-18 08:37:19] FLOW {"ts":"2026-04-18T08:37:19.502153-05:00","event":"poll_resolver.completed","limit":200,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":631.4,"total_elapsed_ms":634.5,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | INFO:     172.18.0.3:39282 - "POST /jobs/verify_pending HTTP/1.1" 200 OK
+ntpp-sentinel  | [2026-04-18 08:37:19] FLOW {"ts":"2026-04-18T08:37:19.928131-05:00","event":"poll_resolver.completed","limit":500,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":328.0,"total_elapsed_ms":331.1,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | INFO:     172.18.0.3:39282 - "POST /jobs/escalations HTTP/1.1" 200 OK
+ntpp-sentinel  | [2026-04-18 08:37:20] FLOW {"ts":"2026-04-18T08:37:20.407623-05:00","event":"poll_resolver.completed","limit":200,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":374.7,"total_elapsed_ms":378.3,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | INFO:     172.18.0.3:39282 - "POST /jobs/poll_resolver HTTP/1.1" 200 OK
+
+=== 5) Issues for +18173076330 ===
+id   issue_type  status    name            phone         conversation_id       created_ts                        due_ts                            resolved_ts                       breach_notified_ts                resolved_by       resolution_signal
+---  ----------  --------  --------------  ------------  --------------------  --------------------------------  --------------------------------  --------------------------------  --------------------------------  ----------------  -----------------
+444  SMS         OPEN      Kevin Sourjohn  +18173076330  UHOpErKZ9wDHBlbH3PX2  2026-04-16T17:41:03.198655-05:00  2026-04-17T08:11:03.198655-05:00                                    2026-04-17T08:12:02.022945-05:00                                     
+79   CALL        RESOLVED  Kevin Sourjohn  +18173076330  UHOpErKZ9wDHBlbH3PX2  2026-03-03T13:46:51.088684-06:00  2026-03-03T14:16:51.088684-06:00  2026-03-03T20:48:42.337322-06:00  2026-03-03T14:17:01.714844-06:00  BACKFILL_UNKNOWN                   
+78   SMS         RESOLVED  Kevin Sourjohn  +18173076330  UHOpErKZ9wDHBlbH3PX2  2026-03-03T13:46:22.312384-06:00  2026-03-03T14:16:22.312384-06:00  2026-03-03T13:47:03.027457-06:00                                    BACKFILL_UNKNOWN                   
+77   SMS         RESOLVED  Kevin Sourjohn  +18173076330  UHOpErKZ9wDHBlbH3PX2  2026-03-03T13:44:43.098558-06:00  2026-03-03T14:14:43.098558-06:00  2026-03-03T13:46:02.022208-06:00                                    BACKFILL_UNKNOWN                   
+
+=== 6) Raw webhook events for +18173076330 ===
+id    received_ts                       source         
+----  --------------------------------  ---------------
+1096  2026-04-16T22:41:03.198567+00:00  inbound_sms    
+1065  2026-04-15T18:50:18.918605+00:00  inbound_sms    
+1061  2026-04-15T18:07:42.740645+00:00  inbound_sms    
+1060  2026-04-15T17:59:29.122672+00:00  inbound_sms    
+1059  2026-04-15T17:38:53.561314+00:00  inbound_sms    
+1058  2026-04-15T17:34:37.403087+00:00  unanswered_call
+364   2026-03-13T17:46:37.636549        inbound_sms    
+363   2026-03-13T17:38:03.857173        inbound_sms    
+182   2026-03-03T19:46:50.885609        unanswered_call
+181   2026-03-03T19:46:22.305724        inbound_sms    
+180   2026-03-03T19:45:59.967443        inbound_sms    
+179   2026-03-03T19:44:43.091941        inbound_sms    
+
+=== 6b) Unanswered-call evidence for +18173076330 ===
+id    received_ts                       source           voicemail_route    sentinel_missed_call  missed_call  is_missed_call  conversation_id
+----  --------------------------------  ---------------  -----------------  --------------------  -----------  --------------  ---------------
+1058  2026-04-15T17:34:37.403087+00:00  unanswered_call  ["tech_sentinel"]  true                                                              
+182   2026-03-03T19:46:50.885609        unanswered_call  ["tech_sentinel"]                                                                    
+
+=== 6c) Latest unanswered_call payload (full) ===
+{
+  "_meta": {
+    "content_type": "application/json",
+    "content_length": 897
+  },
+  "Phone 2": "",
+  "Payment Method": "",
+  "Chemical Billing": "",
+  "Email Address 2": "",
+  "Your Message": "",
+  "What Can We Help With": "",
+  "Lead Source": "",
+  "Message": "",
+  "voicemail_route": [
+    "tech_sentinel"
+  ],
+  "Monthly Price": "",
+  "Rental": "",
+  "contact_id": "ekPoztfziw722NYjoEcW",
+  "first_name": "Kevin",
+  "last_name": "Sourjohn",
+  "full_name": "Kevin Sourjohn",
+  "email": "sourjohn@aol.com",
+  "phone": "+18173076330",
+  "tags": "",
+  "country": "US",
+  "date_created": "2026-02-23T21:02:29.908Z",
+  "full_address": "",
+  "contact_type": "customer",
+  "location": {
+    "name": "North Texas Pool Pros",
+    "address": "2233 YALE ST STE 300",
+    "city": "Houston",
+    "state": "TX",
+    "country": "US",
+    "postalCode": "77008",
+    "fullAddress": "2233 YALE ST STE 300, Houston TX 77008",
+    "id": "74pWgJL459jf8GzoYOmz"
+  },
+  "message": {
+    "type": 24
+  },
+  "workflow": {
+    "id": "b0106a21-1753-4c5f-9b29-aee95fadc21b",
+    "name": "NTPP Sentinel – Inbound Calls"
+  },
+  "triggerData": {},
+  "customData": {
+    "sentinel_missed_call": "true"
+  }
+}
+
+=== 7) Latest inbound + decision trace (most relevant) ===
+Latest event id: 1096
+Latest event ts: 2026-04-16T22:41:03.198567+00:00
+Latest event source: inbound_sms
+Latest event body: ASAP is fine. Thank you
+Latest contact_id: ekPoztfziw722NYjoEcW
+Latest issue id/status: 444 / OPEN
+Latest conversation_id: UHOpErKZ9wDHBlbH3PX2
+
+--- decision events (FLOW + SMS/CALL decisions) ---
+ntpp-sentinel  | [2026-04-18 08:37:01] FLOW {"ts":"2026-04-18T08:37:01.905230-05:00","event":"poll_resolver.completed","limit":500,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":379.3,"total_elapsed_ms":383.3,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | [2026-04-18 08:37:19] FLOW {"ts":"2026-04-18T08:37:19.502153-05:00","event":"poll_resolver.completed","limit":200,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":631.4,"total_elapsed_ms":634.5,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | [2026-04-18 08:37:19] FLOW {"ts":"2026-04-18T08:37:19.928131-05:00","event":"poll_resolver.completed","limit":500,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":328.0,"total_elapsed_ms":331.1,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+ntpp-sentinel  | [2026-04-18 08:37:20] FLOW {"ts":"2026-04-18T08:37:20.407623-05:00","event":"poll_resolver.completed","limit":200,"sms_issue_rows":2,"call_issue_rows":0,"sms_conversations_fetched":2,"call_conversations_fetched":0,"fetch_elapsed_ms":374.7,"total_elapsed_ms":378.3,"checked":2,"resolved":0,"updated_counts":0,"call_checked":0,"call_resolved":0,"call_updated_counts":0,"concurrency":8}
+
+--- filtered by contact_id ekPoztfziw722NYjoEcW ---
+
+--- filtered by conversation_id UHOpErKZ9wDHBlbH3PX2 ---
+
+=== 9) Share hint ===
+Saved trace report to: /tmp/trace-+18173076330-20260418-083718.txt
+Smallest useful command to share it later:
+  sed -n '1,220p' /tmp/trace-+18173076330-20260418-083718.txt
+
+=== 8) GHL conversation timeline (for resolver proof) ===
+2026-04-16T22:41:01.709Z	inbound	2		delivered	ASAP is fine. Thank you
+2026-04-16T01:13:18.784Z	outbound	2	DIzIXKqPQIHwRrjIq7Vd	delivered	I apologize but when i told you earlier that I would be there friday I had forgotten that I had to run a route that day.
+2026-04-15T18:50:17.044Z	inbound	2		delivered	Great thank you
+2026-04-15T18:44:57.972Z	outbound	2	DIzIXKqPQIHwRrjIq7Vd	delivered	I will be out there friday to do the external vac
+2026-04-15T18:09:41.901Z	outbound	2	Ld7VSI4H0fiG5OXJ2rn4	delivered	My pleasure
+2026-04-15T18:07:41.265Z	inbound	2		delivered	Thank ya much
+2026-04-15T18:07:13.286Z	outbound	2	Ld7VSI4H0fiG5OXJ2rn4	delivered	Yes sir
+2026-04-15T17:59:28.026Z	inbound	2		delivered	Yes please
+2026-04-15T17:53:13.392Z	outbound	2	Ld7VSI4H0fiG5OXJ2rn4	delivered	Yes sir, sorry I missed your call. We can definitely provide that service. We normally charge 150, but we can do it for 
+2026-04-15T17:38:51.607Z	inbound	2		delivered	James mentioned that I needed to be set up for some kinda of cleaning and he was gonna have someone call me. I think it 
+2026-04-15T17:35:32.673Z	outbound	2	Ld7VSI4H0fiG5OXJ2rn4	delivered	Hey  Kevin, this is Jim with North Texas Pool Pros, sorry I  missed your call. I'm likely helping another customer or on
+2026-04-15T17:32:55.787Z	inbound	24		completed	
+2026-03-13T17:46:36.033Z	inbound	2		delivered	Thank you sir, I appreciate the explanation!  I will delete the email.
+2026-03-13T17:44:16.126Z	outbound	2	4BxJGBVJs2POtHAP1IlK	delivered	Good afternoon, this is Kevin (Jim's brother) and I handle most of the billing questions.  I got your vm and looked at y
+2026-03-13T17:38:02.297Z	inbound	2		delivered	Just a billing question, I'll talk to you soon. Thank you sir
+2026-03-13T17:31:36.871Z	outbound	2	Ld7VSI4H0fiG5OXJ2rn4	delivered	Hey  Kevin, this is Jim with North Texas Pool Pros, sorry I  missed your call. I'm likely helping another customer or on
+2026-03-13T17:29:09.423Z	inbound	24		completed	
+2026-03-03T19:47:50.507Z	outbound	2		delivered	Hi there! This is North Texas Pool Pros — sorry we missed your call. We’re likely helping another customer or on-site at
+2026-03-03T19:46:36.414Z	outbound	2	DIzIXKqPQIHwRrjIq7Vd	delivered	No problem
+2026-03-03T19:46:20.995Z	inbound	2		delivered	Sorry. I was trying to be there
+2026-03-03T19:45:58.435Z	inbound	2		delivered	Other side of the property
+2026-03-03T19:45:32.836Z	outbound	2	DIzIXKqPQIHwRrjIq7Vd	delivered	Hey Kevin this is Jarrett with North Texas Pool Pros, your gate by the garage is locked. Is there another way to get in?
+2026-03-03T19:45:25.096Z	inbound	24		completed	
+2026-03-03T19:44:41.430Z	inbound	2		delivered	Can I call you later?
+2026-03-03T19:44:16.567Z	outbound	1	DIzIXKqPQIHwRrjIq7Vd	completed	
+2026-02-25T21:29:18.237Z	inbound	24		completed	
+2026-02-25T17:01:49.736Z	outbound	1	Ld7VSI4H0fiG5OXJ2rn4	completed	
+2026-02-23T21:03:21.963Z	outbound	1	Ld7VSI4H0fiG5OXJ2rn4	completed	
+2026-02-23T21:02:30.040Z	outbound	1	Ld7VSI4H0fiG5OXJ2rn4	completed	
