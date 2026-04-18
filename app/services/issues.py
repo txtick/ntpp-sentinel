@@ -63,6 +63,23 @@ def get_issue_by_id(issue_id: int) -> Optional[sqlite3.Row]:
     return row
 
 
+def get_open_issue_by_display_id(display_id: int) -> Optional[sqlite3.Row]:
+    conn = db()
+    row = conn.execute(
+        """
+        SELECT *
+        FROM issues
+        WHERE status IN ('OPEN','PENDING')
+          AND display_id=?
+        ORDER BY due_ts ASC, id DESC
+        LIMIT 1
+        """,
+        (display_id,),
+    ).fetchone()
+    conn.close()
+    return row
+
+
 def add_note(issue_id: int, note: str, now_local: Callable[[], dt.datetime]) -> bool:
     conn = db()
     row = conn.execute("SELECT meta FROM issues WHERE id=?", (issue_id,)).fetchone()
@@ -131,7 +148,7 @@ def list_open_issues(limit: int = 20, offset: int = 0) -> Tuple[List[dict], int]
 
     rows = conn.execute(
         """
-        SELECT id, issue_type, phone, contact_id, contact_name, created_ts, due_ts, inbound_count, last_inbound_ts
+        SELECT id, display_id, issue_type, phone, contact_id, contact_name, created_ts, due_ts, inbound_count, last_inbound_ts
         FROM issues
         WHERE status='OPEN'
         ORDER BY due_ts ASC
@@ -146,6 +163,7 @@ def list_open_issues(limit: int = 20, offset: int = 0) -> Tuple[List[dict], int]
         out.append(
             {
                 "id": row["id"],
+                "display_id": row["display_id"],
                 "issue_type": row["issue_type"],
                 "phone": row["phone"],
                 "contact_id": row["contact_id"],
@@ -164,7 +182,7 @@ def render_list_like_summary(rows: List[dict], total_open: int, offset: int, lim
     texts: List[str] = []
 
     for row in rows:
-        issue_id = row["id"]
+        issue_id = row.get("display_id") or row["id"]
         issue_type = (row.get("issue_type") or "").upper()
         phone = row.get("phone") or ""
         name = (row.get("contact_name") or "").strip()

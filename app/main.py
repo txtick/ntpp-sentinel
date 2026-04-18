@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional, List, Tuple
 import re
 import httpx # type: ignore
 from zoneinfo import ZoneInfo
-from db import db, init_db, ensure_schema, purge_raw_events
+from db import db, init_db, ensure_schema, purge_raw_events, allocate_issue_display_id
 from pg import DATABASE_URL, ensure_pg_schema, pg_healthcheck, pg
 from handlers.sms import (
     normalize_phone as _normalize_phone,
@@ -54,6 +54,7 @@ from services.business_time import (
 from services.issues import (
     add_note as issue_add_note,
     get_issue_by_id as issue_get_issue_by_id,
+    get_open_issue_by_display_id as issue_get_open_issue_by_display_id,
     kv_get,
     kv_set,
     list_open_issues as issue_list_open_issues,
@@ -1136,16 +1137,23 @@ def _flow_log(event: str, **fields: Any) -> None:
 
 
 def get_issue_by_id(issue_id: int) -> Optional[sqlite3.Row]:
+    row = issue_get_open_issue_by_display_id(issue_id)
+    if row is not None:
+        return row
     return issue_get_issue_by_id(issue_id)
 
 def resolve_by_id(issue_id: int, status: str = "RESOLVED") -> int:
-    changed = issue_resolve_by_id(issue_id, status, _now_local)
+    target_row = issue_get_open_issue_by_display_id(issue_id)
+    target_issue_id = target_row["id"] if target_row is not None else issue_id
+    changed = issue_resolve_by_id(target_issue_id, status, _now_local)
     if changed > 0 and status == "RESOLVED":
-        _set_resolved_metadata(issue_id, "MANUAL_COMMAND_ID")
+        _set_resolved_metadata(target_issue_id, "MANUAL_COMMAND_ID")
     return changed
 
 def add_note(issue_id: int, note: str) -> bool:
-    return issue_add_note(issue_id, note, _now_local)
+    target_row = issue_get_open_issue_by_display_id(issue_id)
+    target_issue_id = target_row["id"] if target_row is not None else issue_id
+    return issue_add_note(target_issue_id, note, _now_local)
 
 
 # ---- Manager LIST paging state (in-memory) ----
@@ -1269,9 +1277,9 @@ def _webhook_create_call_issue(
         """
         INSERT INTO issues (
             issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
-            conversation_id, first_inbound_ts, last_inbound_ts, inbound_count, outbound_count
+            conversation_id, first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, display_id
         )
-        VALUES ('CALL', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, 1, 0)
+        VALUES ('CALL', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, 1, 0, ?)
         """,
         (
             contact_id,
@@ -1283,6 +1291,7 @@ def _webhook_create_call_issue(
             conversation_id,
             created_ts,
             created_ts,
+            allocate_issue_display_id(conn),
         ),
     )
     conn.commit()
@@ -2585,13 +2594,15 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
     if calls:
         lines.append(f"Calls ({len(calls)}):")
         for r in calls[:SUMMARY_MAX_ITEMS_PER_SECTION]:
-            lines.append(f"#{r['id']} {_display_name(r)} — due {_fmt_dt_local(r['due_ts'])}")
+            display_issue_id = r["display_id"] if r["display_id"] is not None else r["id"]
+            lines.append(f"#{display_issue_id} {_display_name(r)} — due {_fmt_dt_local(r['due_ts'])}")
 
     if texts:
         lines.append(f"Texts ({len(texts)}):")
         for r in texts[:SUMMARY_MAX_ITEMS_PER_SECTION]:
             inc = r["inbound_count"] if r["inbound_count"] is not None else 0
-            lines.append(f"#{r['id']} {_display_name(r)} — due {_fmt_dt_local(r['due_ts'])} in={inc}")
+            display_issue_id = r["display_id"] if r["display_id"] is not None else r["id"]
+            lines.append(f"#{display_issue_id} {_display_name(r)} — due {_fmt_dt_local(r['due_ts'])} in={inc}")
 
     shown = min(len(calls), SUMMARY_MAX_ITEMS_PER_SECTION) + min(len(texts), SUMMARY_MAX_ITEMS_PER_SECTION)
     if len(rows) > shown:

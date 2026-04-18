@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request
 
+from db import allocate_issue_display_id
 from handlers.rollover_handler import handle_rollover
 from handlers.sms import (
     extract_contact_id,
@@ -404,9 +405,9 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                 """
                 INSERT INTO issues
                   (issue_type, contact_id, phone, contact_name, created_ts, due_ts, status, meta,
-                   first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id)
+                   first_inbound_ts, last_inbound_ts, inbound_count, outbound_count, conversation_id, display_id)
                 VALUES
-                  ('SMS', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?)
+                  ('SMS', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, 1, 0, ?, ?)
             """,
                 (
                     contact_id,
@@ -418,6 +419,7 @@ def register_sms_routes(app: FastAPI, deps: SMSRouteDeps) -> None:
                     created_ts,
                     created_ts,
                     conversation_id,
+                    allocate_issue_display_id(conn),
                 ),
             )
             deps.flow_log(

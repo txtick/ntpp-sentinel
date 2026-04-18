@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Tuple
 DB_PATH = os.getenv("DB_PATH", "/data/sentinel.db")
 SQLITE_TIMEOUT_SECONDS = float(os.getenv("SQLITE_TIMEOUT_SECONDS", "30"))
 SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000"))
+ISSUE_DISPLAY_ID_MAX = max(9, int(os.getenv("ISSUE_DISPLAY_ID_MAX", "99")))
 
 
 def db() -> sqlite3.Connection:
@@ -49,6 +50,9 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_issues_status_resolved_ts ON issues(status, resolved_ts)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_issues_status_display_id ON issues(status, display_id)"
+    )
     # Event retention / diagnostics scans
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_raw_events_source_received ON raw_events(source, received_ts)"
@@ -76,6 +80,7 @@ def ensure_schema() -> None:
         ("outbound_count", "ALTER TABLE issues ADD COLUMN outbound_count INTEGER DEFAULT 0"),
         ("conversation_id", "ALTER TABLE issues ADD COLUMN conversation_id TEXT"),
         ("breach_notified_ts", "ALTER TABLE issues ADD COLUMN breach_notified_ts TEXT"),
+        ("display_id", "ALTER TABLE issues ADD COLUMN display_id INTEGER"),
     ]:
         if col not in cols:
             conn.execute(ddl)
@@ -124,8 +129,47 @@ def ensure_schema() -> None:
     )
 
     _ensure_indexes(conn)
+    _backfill_issue_display_ids(conn)
     conn.commit()
     conn.close()
+
+
+def allocate_issue_display_id(conn: sqlite3.Connection, max_display_id: int = ISSUE_DISPLAY_ID_MAX) -> int:
+    rows = conn.execute(
+        """
+        SELECT display_id
+        FROM issues
+        WHERE status IN ('OPEN','PENDING')
+          AND display_id IS NOT NULL
+        """
+    ).fetchall()
+    used = {int(r["display_id"]) for r in rows if r["display_id"] is not None}
+
+    for candidate in range(1, max_display_id + 1):
+        if candidate not in used:
+            return candidate
+
+    candidate = max_display_id + 1
+    while candidate in used:
+        candidate += 1
+    return candidate
+
+
+def _backfill_issue_display_ids(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id
+        FROM issues
+        WHERE status IN ('OPEN','PENDING')
+          AND display_id IS NULL
+        ORDER BY due_ts ASC, id ASC
+        """
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            "UPDATE issues SET display_id=? WHERE id=?",
+            (allocate_issue_display_id(conn), row["id"]),
+        )
 
 
 def init_db() -> None:
