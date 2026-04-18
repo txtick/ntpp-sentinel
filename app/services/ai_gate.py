@@ -137,6 +137,23 @@ def _build_ai_transcript(
     return "\n".join(lines)
 
 
+def _latest_role_text(
+    window: List[Dict[str, Any]],
+    *,
+    want_staff: bool,
+    msg_is_staff_outbound: Callable[[Dict[str, Any]], bool],
+    msg_text: Callable[[Dict[str, Any]], str],
+) -> str:
+    for m in reversed(window or []):
+        is_staff = msg_is_staff_outbound(m)
+        if is_staff != want_staff:
+            continue
+        txt = (msg_text(m) or "").replace("\n", " ").strip()
+        if txt:
+            return txt[:500]
+    return ""
+
+
 def _ai_gate_db_get(conversation_id: str) -> Optional[sqlite3.Row]:
     conn = db()
     row = conn.execute(
@@ -239,9 +256,26 @@ async def ai_gate_classify(
     if not (transcript or "").strip():
         return {"needs_follow_up": "YES", "confidence": 0.0, "evidence": ["empty transcript"]}
 
+    latest_customer_text = _latest_role_text(
+        window,
+        want_staff=False,
+        msg_is_staff_outbound=cfg.msg_is_staff_outbound,
+        msg_text=cfg.msg_text,
+    )
+    latest_staff_text = _latest_role_text(
+        window,
+        want_staff=True,
+        msg_is_staff_outbound=cfg.msg_is_staff_outbound,
+        msg_text=cfg.msg_text,
+    )
+
     sys = (
         "You are a classifier for a pool service business SMS thread. "
         "Decide if the business owes a follow-up to the customer. "
+        "Focus primarily on the latest customer message and the latest staff reply before it. "
+        "Do not mark FOLLOW-UP NEEDED just because an older request exists if a later message shows the customer is simply acknowledging, approving, confirming timing, or thanking us after staff already answered or committed. "
+        "Messages like 'thanks', 'thank you', 'great thank you', 'asap is fine', 'that is fine', 'sounds good', 'perfect', 'my pleasure', or similar confirmations after a staff commitment usually mean FOLLOW-UP NOT NEEDED unless the customer is clearly asking a new question or waiting on a new action. "
+        "If the latest customer message is merely a confirmation or acknowledgment of an existing plan, answer NO. "
         "Bias toward YES if uncertain (missing a waiting customer is worse than a false alarm). "
         "Return only valid JSON matching the schema."
     )
@@ -249,6 +283,12 @@ async def ai_gate_classify(
         "Definitions:\n"
         "- FOLLOW-UP NEEDED means the customer is waiting on us for an answer, action, or scheduling.\n"
         "- FOLLOW-UP NOT NEEDED means the thread is resolved or the customer is only acknowledging (thanks/ok/fixed it).\n\n"
+        "Decision instructions:\n"
+        "- Weight the latest customer message more than older messages.\n"
+        "- If staff already gave the answer, price, timing, or plan, and the customer later says a confirmation such as 'yes please', 'great thank you', or 'ASAP is fine. Thank you', classify as FOLLOW-UP NOT NEEDED unless the customer is asking us to do something further that has not been acknowledged.\n"
+        "- Do not cite only stale evidence from earlier in the thread when the latest customer message changes the state.\n\n"
+        f"Latest customer message:\n{latest_customer_text or '(none)'}\n\n"
+        f"Latest staff message before that:\n{latest_staff_text or '(none)'}\n\n"
         "Messages (most recent last):\n"
         f"{transcript}"
     )
