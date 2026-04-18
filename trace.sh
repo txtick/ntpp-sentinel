@@ -15,10 +15,52 @@ fi
 # Usage:
 #   ./trace.sh +12146323629
 #   PHONE=+12146323629 ./trace.sh
+#   ./trace.sh +12146323629 --save
+#   ./trace.sh +12146323629 --summary --save
+#   ./trace.sh +12146323629 --output /tmp/jason-trace.txt
 
-PHONE="${1:-${PHONE:-}}"
+PHONE="${PHONE:-}"
+SUMMARY_MODE=0
+SAVE_MODE=0
+OUTPUT_PATH=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --summary)
+      SUMMARY_MODE=1
+      shift
+      ;;
+    --save)
+      SAVE_MODE=1
+      shift
+      ;;
+    --output)
+      OUTPUT_PATH="${2:-}"
+      if [[ -z "$OUTPUT_PATH" ]]; then
+        echo "Usage: $0 +1XXXXXXXXXX [--summary] [--save] [--output /path/to/report.txt]"
+        exit 1
+      fi
+      shift 2
+      ;;
+    -h|--help)
+      echo "Usage: $0 +1XXXXXXXXXX [--summary] [--save] [--output /path/to/report.txt]"
+      exit 0
+      ;;
+    *)
+      if [[ -z "$PHONE" ]]; then
+        PHONE="$1"
+        shift
+      else
+        echo "Unknown argument: $1"
+        echo "Usage: $0 +1XXXXXXXXXX [--summary] [--save] [--output /path/to/report.txt]"
+        exit 1
+      fi
+      ;;
+  esac
+done
+
 if [[ -z "${PHONE}" ]]; then
-  echo "Usage: $0 +1XXXXXXXXXX"
+  echo "Usage: $0 +1XXXXXXXXXX [--summary] [--save] [--output /path/to/report.txt]"
   exit 1
 fi
 
@@ -28,9 +70,26 @@ LIMIT_EVENTS="${LIMIT_EVENTS:-50}"
 LIMIT_ISSUES="${LIMIT_ISSUES:-30}"
 LOG_TAIL="${LOG_TAIL:-1200}"
 
+REPORT_TS="$(date +%Y%m%d-%H%M%S)"
+SAFE_PHONE="$(printf '%s' "$PHONE" | tr -cd '0-9+')"
+if [[ "$SAVE_MODE" == "1" && -z "$OUTPUT_PATH" ]]; then
+  OUTPUT_PATH="/tmp/trace-${SAFE_PHONE}-${REPORT_TS}.txt"
+fi
+
+if [[ -n "$OUTPUT_PATH" ]]; then
+  mkdir -p "$(dirname "$OUTPUT_PATH")"
+  exec > >(tee "$OUTPUT_PATH") 2>&1
+fi
+
 if [[ -z "${WEBHOOK_SECRET:-}" ]]; then
   echo "Warning: WEBHOOK_SECRET is empty (set it in .env or export it)."
 fi
+
+echo "trace.sh mode: phone=${PHONE} summary=${SUMMARY_MODE} save=$([[ -n "$OUTPUT_PATH" ]] && echo 1 || echo 0)"
+if [[ -n "$OUTPUT_PATH" ]]; then
+  echo "trace.sh output: ${OUTPUT_PATH}"
+fi
+echo
 
 echo "=== 1) Recent cron activity ==="
 tail -n 120 /opt/ntpp-sentinel/logs/cron.log
@@ -50,10 +109,18 @@ echo
 
 echo
 echo "=== 4) App logs (system-level verify/escalation errors) ==="
-if command -v rg >/dev/null 2>&1; then
-  docker compose logs --tail="$LOG_TAIL" sentinel | rg "verify_pending|poll_resolver|escalations|Traceback|ERROR|FLOW"
+if [[ "$SUMMARY_MODE" == "1" ]]; then
+  if command -v rg >/dev/null 2>&1; then
+    docker compose logs --tail="$LOG_TAIL" sentinel | rg "verify_pending|poll_resolver|escalations|Traceback|ERROR"
+  else
+    docker compose logs --tail="$LOG_TAIL" sentinel | grep -E "verify_pending|poll_resolver|escalations|Traceback|ERROR" || true
+  fi
 else
-  docker compose logs --tail="$LOG_TAIL" sentinel | grep -E "verify_pending|poll_resolver|escalations|Traceback|ERROR|FLOW" || true
+  if command -v rg >/dev/null 2>&1; then
+    docker compose logs --tail="$LOG_TAIL" sentinel | rg "verify_pending|poll_resolver|escalations|Traceback|ERROR|FLOW"
+  else
+    docker compose logs --tail="$LOG_TAIL" sentinel | grep -E "verify_pending|poll_resolver|escalations|Traceback|ERROR|FLOW" || true
+  fi
 fi
 
 LATEST_EVENT_RAW="$(sqlite3 -noheader -separator '|' "$DB" "
@@ -215,7 +282,11 @@ if command -v rg >/dev/null 2>&1; then
 
   echo
   echo "--- decision events (FLOW + SMS/CALL decisions) ---"
-  eval "$LOG_CMD" | rg "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
+  if [[ "$SUMMARY_MODE" == "1" ]]; then
+    eval "$LOG_CMD" | rg "sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call|ai_gate\\.inbound_sms" || true
+  else
+    eval "$LOG_CMD" | rg "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call|ai_gate\\.inbound_sms" || true
+  fi
 
   if [[ -n "${EVENT_CONTACT_ID}" ]]; then
     echo
@@ -233,7 +304,11 @@ else
 
   echo
   echo "--- decision events (FLOW + SMS/CALL decisions) ---"
-  eval "$LOG_CMD" | grep -E "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call" || true
+  if [[ "$SUMMARY_MODE" == "1" ]]; then
+    eval "$LOG_CMD" | grep -E "sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call|ai_gate\\.inbound_sms" || true
+  else
+    eval "$LOG_CMD" | grep -E "FLOW|sms\\.ignored_ack_closeout|sms\\.issue_created|sms\\.issue_updated|sms\\.auto_resolved|call\\.issue_created|call\\.ignored|call\\.auto_resolved|ai_gate\\.inbound_call|ai_gate\\.inbound_sms" || true
+  fi
 
   if [[ -n "${EVENT_CONTACT_ID}" ]]; then
     echo
@@ -246,6 +321,17 @@ else
     echo "--- filtered by conversation_id ${LATEST_CONVERSATION_ID} ---"
     eval "$LOG_CMD" | grep -F "${LATEST_CONVERSATION_ID}" || true
   fi
+fi
+
+echo
+echo "=== 9) Share hint ==="
+if [[ -n "$OUTPUT_PATH" ]]; then
+  echo "Saved trace report to: ${OUTPUT_PATH}"
+  echo "Smallest useful command to share it later:"
+  echo "  sed -n '1,220p' ${OUTPUT_PATH}"
+else
+  echo "Tip: run with --save to write the report to /tmp instead of copy/pasting terminal output."
+  echo "Tip: run with --summary --save for a much smaller report."
 fi
 
 echo
