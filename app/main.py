@@ -1309,6 +1309,68 @@ def _msg_direction(m: Dict[str, Any]) -> str:
         return v.lower()
     return ""
 
+def _first_nested_text(
+    obj: Any,
+    preferred_keys: Tuple[str, ...],
+    *,
+    fallback_keys: Tuple[str, ...] = (),
+    max_depth: int = 4,
+) -> str:
+    if max_depth < 0:
+        return ""
+
+    if isinstance(obj, str):
+        s = obj.strip()
+        return s if s else ""
+
+    if isinstance(obj, dict):
+        lowered = {str(k).lower(): v for k, v in obj.items()}
+
+        for key in preferred_keys:
+            if key in lowered:
+                found = _first_nested_text(
+                    lowered[key],
+                    preferred_keys,
+                    fallback_keys=fallback_keys,
+                    max_depth=max_depth - 1,
+                )
+                if found:
+                    return found
+
+        for key in fallback_keys:
+            if key in lowered:
+                found = _first_nested_text(
+                    lowered[key],
+                    preferred_keys,
+                    fallback_keys=fallback_keys,
+                    max_depth=max_depth - 1,
+                )
+                if found:
+                    return found
+
+        for value in obj.values():
+            found = _first_nested_text(
+                value,
+                preferred_keys,
+                fallback_keys=fallback_keys,
+                max_depth=max_depth - 1,
+            )
+            if found:
+                return found
+
+    if isinstance(obj, list):
+        for item in obj:
+            found = _first_nested_text(
+                item,
+                preferred_keys,
+                fallback_keys=fallback_keys,
+                max_depth=max_depth - 1,
+            )
+            if found:
+                return found
+
+    return ""
+
 def _msg_text(m: Dict[str, Any]) -> str:
     if not isinstance(m, dict):
         return ""
@@ -1316,6 +1378,31 @@ def _msg_text(m: Dict[str, Any]) -> str:
         v = m.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
+
+    transcript_text = _first_nested_text(
+        m,
+        (
+            "transcript",
+            "transcripttext",
+            "transcription",
+            "transcriptiontext",
+            "calltranscript",
+            "voicemailtranscript",
+            "recordingtranscript",
+        ),
+        fallback_keys=(
+            "snippet",
+            "preview",
+            "summary",
+            "description",
+            "title",
+            "subject",
+            "name",
+            "label",
+        ),
+    )
+    if transcript_text:
+        return transcript_text
     return ""
 
 def _internal_user_ids() -> set:
