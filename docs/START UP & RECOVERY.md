@@ -95,6 +95,8 @@ Authenticated job helper:
 cd /opt/ntpp-sentinel
 ./curl_job.sh /jobs/verify_pending
 ./curl_job.sh /jobs/poll_resolver
+./curl_job.sh "/jobs/recheck_issue?id=444"
+./curl_job.sh "/jobs/recheck_issue?conversation_id=UHOpErKZ9wDHBlbH3PX2"
 ./curl_job.sh "/jobs/cleanup_raw_events?dry_run=1"
 ```
 
@@ -102,6 +104,8 @@ Notes:
 - `verify_pending` is currently a compatibility wrapper around `poll_resolver`
 - `verify_pending` remains available for manual compatibility checks, but cron should run `poll_resolver` directly
 - manager notifications only include overdue `OPEN` issues
+- `recheck_issue` forces a fresh AI gate classification for an existing issue/conversation and immediately resolves matching `OPEN` / `PENDING` issues on that conversation when the refreshed result is a confident `NO`
+- use `recheck_issue?id=<issue>` when you have a Sentinel issue id, or `recheck_issue?conversation_id=<ghl_conversation_id>` when you want to re-evaluate the whole thread directly
 
 ---
 

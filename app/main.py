@@ -1905,8 +1905,18 @@ def _ai_gate_config() -> AIGateConfig:
         redact_pii=AI_GATE_REDACT_PII,
     )
 
-async def ai_gate_classify(conversation_id: str, msgs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    return await _ai_gate_classify(conversation_id, msgs, _ai_gate_config())
+async def ai_gate_classify(
+    conversation_id: str,
+    msgs: List[Dict[str, Any]],
+    *,
+    force_refresh: bool = False,
+) -> Dict[str, Any]:
+    return await _ai_gate_classify(
+        conversation_id,
+        msgs,
+        _ai_gate_config(),
+        force_refresh=force_refresh,
+    )
 
 async def _ai_inbound_should_suppress(
     conversation_id: Optional[str],
@@ -1916,6 +1926,142 @@ async def _ai_inbound_should_suppress(
         _ai_gate_config(),
         ghl_list_messages,
     )
+
+
+@app.post("/jobs/recheck_issue")
+async def recheck_issue(
+    request: Request,
+    id: int = 0,
+    conversation_id: str = "",
+    limit: int = 50,
+):
+    _auth_or_401(request)
+
+    issue_row: Optional[sqlite3.Row] = None
+    target_conversation_id = (conversation_id or "").strip()
+    requested_id = int(id or 0)
+
+    if requested_id > 0:
+        issue_row = get_issue_by_id(requested_id)
+        if not issue_row:
+            return {
+                "job": "recheck_issue",
+                "applied": False,
+                "error": f"issue not found for id {requested_id}",
+            }
+        if not target_conversation_id:
+            target_conversation_id = str(issue_row["conversation_id"] or "").strip()
+
+    if not target_conversation_id:
+        return {
+            "job": "recheck_issue",
+            "applied": False,
+            "error": "conversation_id required (directly or via issue id)",
+        }
+
+    fetch_limit = max(10, min(int(limit or 50), 200))
+
+    msgs = await ghl_list_messages(target_conversation_id, limit=fetch_limit)
+    gate = await ai_gate_classify(
+        target_conversation_id,
+        msgs,
+        force_refresh=True,
+    )
+
+    cfg = _ai_gate_config()
+    threshold = (
+        cfg.primary_suppress_no_confidence
+        if cfg.decision_mode == "ai_primary"
+        else cfg.on_every_inbound_no_confidence
+    )
+    suppress = (
+        str(gate.get("needs_follow_up") or "").upper() == "NO"
+        and float(gate.get("confidence") or 0.0) >= threshold
+    )
+
+    conn = db()
+    try:
+        open_rows = conn.execute(
+            """
+            SELECT id, display_id, issue_type, status
+            FROM issues
+            WHERE status IN ('OPEN','PENDING')
+              AND conversation_id=?
+            ORDER BY due_ts ASC, id ASC
+            """,
+            (target_conversation_id,),
+        ).fetchall()
+
+        resolved_ids: List[int] = []
+        resolved_display_ids: List[int] = []
+        if suppress and open_rows:
+            now_iso = _now_local().isoformat()
+            for row in open_rows:
+                cur = conn.execute(
+                    """
+                    UPDATE issues
+                    SET status='RESOLVED', resolved_ts=?
+                    WHERE id=? AND status IN ('OPEN','PENDING')
+                    """,
+                    (now_iso, row["id"]),
+                )
+                if cur.rowcount and cur.rowcount > 0:
+                    resolved_ids.append(int(row["id"]))
+                    if row["display_id"] is not None:
+                        resolved_display_ids.append(int(row["display_id"]))
+                    _set_resolved_metadata_conn(
+                        conn,
+                        int(row["id"]),
+                        "AI_RECHECK_NO_FOLLOW_UP",
+                        {
+                            "ai_recheck_confidence": float(gate.get("confidence") or 0.0),
+                            "ai_recheck_evidence": gate.get("evidence") or [],
+                            "ai_recheck_threshold": float(threshold),
+                        },
+                    )
+                    _flow_log(
+                        "issue.rechecked_resolved",
+                        issue_id=int(row["id"]),
+                        conversation_id=target_conversation_id,
+                        issue_type=str(row["issue_type"] or ""),
+                        via="recheck_issue",
+                    )
+            conn.commit()
+        else:
+            conn.rollback()
+    finally:
+        conn.close()
+
+    _flow_log(
+        "ai_gate.recheck",
+        requested_id=requested_id if requested_id > 0 else None,
+        conversation_id=target_conversation_id,
+        messages_fetched=len(msgs),
+        needs_follow_up=str(gate.get("needs_follow_up") or ""),
+        confidence=float(gate.get("confidence") or 0.0),
+        threshold=float(threshold),
+        suppress=bool(suppress),
+        resolved_ids=resolved_ids if suppress and resolved_ids else None,
+    )
+
+    return {
+        "job": "recheck_issue",
+        "applied": True,
+        "requested_id": requested_id if requested_id > 0 else None,
+        "conversation_id": target_conversation_id,
+        "messages_fetched": len(msgs),
+        "decision_mode": cfg.decision_mode,
+        "threshold": float(threshold),
+        "suppress": bool(suppress),
+        "resolved_ids": resolved_ids if suppress else [],
+        "resolved_display_ids": resolved_display_ids if suppress else [],
+        "gate": {
+            "needs_follow_up": str(gate.get("needs_follow_up") or ""),
+            "confidence": float(gate.get("confidence") or 0.0),
+            "evidence": gate.get("evidence") or [],
+            "model": cfg.model,
+        },
+    }
 
 @app.post("/jobs/verify_pending")
 async def verify_pending(request: Request, limit: int = 200):

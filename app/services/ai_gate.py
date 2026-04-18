@@ -204,6 +204,8 @@ async def ai_gate_classify(
     conversation_id: str,
     msgs: List[Dict[str, Any]],
     cfg: AIGateConfig,
+    *,
+    force_refresh: bool = False,
 ) -> Dict[str, Any]:
     """
     Returns {"needs_follow_up":"YES|NO","confidence":float,"evidence":[...]}.
@@ -236,7 +238,7 @@ async def ai_gate_classify(
     )
 
     cached = _ai_gate_db_get(conversation_id)
-    if cached and str(cached["last_msg_ts"]) == last_msg_ts:
+    if (not force_refresh) and cached and str(cached["last_msg_ts"]) == last_msg_ts:
         try:
             return {
                 "needs_follow_up": str(cached["needs_follow_up"]),

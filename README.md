@@ -151,6 +151,22 @@ curl -X POST \
   -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
 ```
 
+AI Recheck:
+
+```bash
+curl -X POST \
+  "https://sentinel.northtexaspoolpros.com/jobs/recheck_issue?id=444" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
+
+Or by GHL conversation id:
+
+```bash
+curl -X POST \
+  "https://sentinel.northtexaspoolpros.com/jobs/recheck_issue?conversation_id=UHOpErKZ9wDHBlbH3PX2" \
+  -H "X-NTPP-Secret: <WEBHOOK_SECRET>"
+```
+
 Summary dry run:
 
 ```bash
