@@ -50,9 +50,10 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_issues_status_resolved_ts ON issues(status, resolved_ts)"
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_issues_status_display_id ON issues(status, display_id)"
-    )
+    if _col_exists(conn, "issues", "display_id"):
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_issues_status_display_id ON issues(status, display_id)"
+        )
     # Event retention / diagnostics scans
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_raw_events_source_received ON raw_events(source, received_ts)"
