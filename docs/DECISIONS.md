@@ -45,6 +45,8 @@ Keep entries short, but do not skip them.
   - Reason: gives operators a durable business-controlled opt-out.
 - Filter-clean alerts suppress when the clean is already scheduled/upcoming.
   - Reason: do not alert for work already planned.
+- Recent completed filter cleans suppress `filter_clean_missing_psi`, but not `filter_clean_trend`.
+  - Reason: missing-PSI should stay conservative, while repeated high PSI after a recent clean can still indicate real filter-clean need.
 - `freedom` customers can generate a separate missing-scheduled-filter-clean alert.
   - Reason: those customers are expected to have cleans pre-scheduled.
 - Filter-clean alerts use `Notify Customer` plus a dashboard reminder instead of trying to create Skimmer quotes directly.

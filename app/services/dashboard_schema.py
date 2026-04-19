@@ -871,7 +871,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                         AND r.service_date >= NOW() - make_interval(days => COALESCE(cfg.window_days, 90))
                   )
             ),
-            recent_or_upcoming_filter_cleans AS (
+            recent_completed_filter_cleans AS (
                 SELECT DISTINCT
                     p.customer_id,
                     p.id AS pool_id
@@ -887,17 +887,28 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                       lower(COALESCE(wt.description, '')) = 'filter clean'
                       OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
                   )
+                  AND w.service_date >= NOW() - make_interval(days => 90)
+                  AND w.complete_time IS NOT NULL
+                  AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+            ),
+            upcoming_filter_cleans AS (
+                SELECT DISTINCT
+                    p.customer_id,
+                    p.id AS pool_id
+                FROM sk_work_order w
+                JOIN pools p
+                  ON p.source_system = w.source_system
+                 AND p.source_service_location_id = w.source_service_location_id
+                LEFT JOIN sk_work_order_type wt
+                  ON wt.source_system = w.source_system
+                 AND wt.source_work_order_type_id = w.source_work_order_type_id
+                WHERE COALESCE(w.is_deleted, FALSE) = FALSE
                   AND (
-                      (
-                          w.service_date >= NOW() - make_interval(days => 90)
-                          AND w.complete_time IS NOT NULL
-                          AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
-                      )
-                      OR (
-                          (w.complete_time IS NULL OR w.complete_time < TIMESTAMPTZ '2011-01-01 00:00:00+00')
-                          AND w.service_date >= CURRENT_DATE
-                      )
+                      lower(COALESCE(wt.description, '')) = 'filter clean'
+                      OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
                   )
+                  AND (w.complete_time IS NULL OR w.complete_time < TIMESTAMPTZ '2011-01-01 00:00:00+00')
+                  AND w.service_date >= CURRENT_DATE
             ),
             freedom_missing_scheduled_filter_clean AS (
                 SELECT
@@ -915,7 +926,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 JOIN customers c ON c.id = p.customer_id
                 LEFT JOIN customer_service_history csh ON csh.customer_id = c.id
                 LEFT JOIN filter_clean_eligible_pools fcep ON fcep.pool_id = p.id
-                LEFT JOIN recent_or_upcoming_filter_cleans fc ON fc.pool_id = p.id
+                LEFT JOIN upcoming_filter_cleans fc ON fc.pool_id = p.id
                 WHERE c.is_operationally_active = TRUE
                   AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND cfg.opportunity_type = 'filter_clean'
@@ -977,7 +988,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             FROM unioned u
             JOIN customers c ON c.id = u.customer_id
             LEFT JOIN pools p ON p.id = u.pool_id
-            LEFT JOIN recent_or_upcoming_filter_cleans fc ON fc.pool_id = u.pool_id
+            LEFT JOIN recent_completed_filter_cleans recent_fc ON recent_fc.pool_id = u.pool_id
+            LEFT JOIN upcoming_filter_cleans upcoming_fc ON upcoming_fc.pool_id = u.pool_id
             WHERE c.is_operationally_active = TRUE
               AND customer_alert_eligible(
                   c.id,
@@ -986,7 +998,13 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
               )
               AND NOT (
                   u.opportunity_type = 'filter_clean'
-                  AND fc.pool_id IS NOT NULL
+                  AND (
+                      upcoming_fc.pool_id IS NOT NULL
+                      OR (
+                          u.rule_code = 'filter_clean_missing_psi'
+                          AND recent_fc.pool_id IS NOT NULL
+                      )
+                  )
               )
             """
         )

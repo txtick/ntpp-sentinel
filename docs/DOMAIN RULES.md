@@ -40,8 +40,9 @@ This document captures business behavior that should remain stable unless intent
 
 - Filter-clean opportunities are PSI/work-order based, not just raw time-since-last-clean.
 - Existing filter-clean opportunities should be suppressed when:
-  - a recent completed filter clean exists
-  - or a matching filter clean is already scheduled/upcoming
+  - a matching filter clean is already scheduled/upcoming
+- `filter_clean_missing_psi` is also suppressed when a recent completed filter clean exists in the last `90` days.
+- `filter_clean_trend` is not suppressed by a recent completed filter clean alone; if PSI is still repeatedly high after a clean, the alert should still appear.
 - Freedom-package customers are expected to have filter cleans pre-scheduled.
 - A separate alert exists for `freedom` customers when a filter clean should be scheduled but is missing.
 - Filter-clean alerts support a dashboard `Notify Customer` action.
