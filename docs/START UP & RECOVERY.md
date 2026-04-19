@@ -450,6 +450,7 @@ Note:
 
 - Some scheduled Skimmer work orders carry a placeholder `complete_time` around `2010-01-01` instead of `NULL`.
 - Treat those as not completed yet when debugging upcoming-work suppression logic.
+- Dashboard alerts intentionally suppress customers whose route assignment end date is within the next 30 days.
 
 ## 9. Operator Backend Paths
 

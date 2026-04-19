@@ -122,6 +122,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
         cur.execute(
             """
             CREATE OR REPLACE FUNCTION customer_alert_eligible(
+                customer_id BIGINT,
                 first_service_date TIMESTAMPTZ,
                 customer_raw_json JSONB
             ) RETURNS BOOLEAN
@@ -132,6 +133,15 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     first_service_date IS NOT NULL
                     AND first_service_date <= NOW() - INTERVAL '14 days'
                     AND COALESCE(customer_raw_json::text, '') NOT ILIKE '%service-only%'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM service_location_technician_assignments a
+                        WHERE a.customer_id = customer_alert_eligible.customer_id
+                          AND a.is_deleted = FALSE
+                          AND a.end_date IS NOT NULL
+                          AND a.end_date::date >= CURRENT_DATE
+                          AND a.end_date::date <= CURRENT_DATE + 30
+                    )
             $$;
             """
         )
@@ -372,7 +382,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 JOIN customers c ON c.id = r.customer_id
                 LEFT JOIN customer_service_history csh ON csh.customer_id = c.id
                 WHERE c.is_operationally_active = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
             ),
             matched AS (
                 SELECT
@@ -466,7 +476,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     JOIN customers c ON c.id = r.customer_id
                     LEFT JOIN customer_service_history csh ON csh.customer_id = c.id
                     WHERE c.is_operationally_active = TRUE
-                      AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                      AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                 ) r
                 JOIN trend_rule_config tr
                   ON tr.enabled = TRUE
@@ -504,7 +514,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 JOIN customers c ON c.id = r.customer_id
                 LEFT JOIN customer_service_history csh ON csh.customer_id = c.id
                 WHERE c.is_operationally_active = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND r.reading_key IN ('free_chlorine', 'cya')
                 GROUP BY r.customer_id, r.pool_id, r.service_date
                 HAVING MAX(CASE WHEN r.reading_key = 'free_chlorine' THEN r.value END) IS NOT NULL
@@ -587,7 +597,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     LIMIT 1
                 ) earliest ON TRUE
                 WHERE tr.enabled = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND rule_applies_in_month(tr.season_start_month, tr.season_end_month, latest.service_date::date)
                   AND latest.value IS NOT NULL
                   AND earliest.value IS NOT NULL
@@ -637,7 +647,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     LIMIT 1
                 ) earliest ON TRUE
                 WHERE tr.enabled = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND rule_applies_in_month(tr.season_start_month, tr.season_end_month, latest.service_date::date)
                   AND (
                       COALESCE(latest.value - earliest.value, 0) >= COALESCE(tr.delta_threshold, 999999)
@@ -700,6 +710,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 JOIN customers c ON c.id = r.customer_id
                 WHERE c.is_operationally_active = TRUE
                   AND customer_alert_eligible(
+                      c.id,
                       (SELECT csh.first_service_date FROM customer_service_history csh WHERE csh.customer_id = c.id),
                       c.raw_json
                   )
@@ -742,7 +753,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                       AND r.value > 20
                 ) psi ON TRUE
                 WHERE c.is_operationally_active = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND (
                       assignment.has_current_assignment IS NOT NULL
                       OR recent_stop.has_recent_route_stop IS NOT NULL
@@ -772,6 +783,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 JOIN customers c ON c.id = r.customer_id
                 WHERE c.is_operationally_active = TRUE
                   AND customer_alert_eligible(
+                      c.id,
                       (SELECT csh.first_service_date FROM customer_service_history csh WHERE csh.customer_id = c.id),
                       c.raw_json
                   )
@@ -848,7 +860,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 LEFT JOIN customer_service_history csh ON csh.customer_id = c.id
                 LEFT JOIN filter_clean_eligible_pools fcep ON fcep.pool_id = p.id
                 WHERE c.is_operationally_active = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND (cfg.opportunity_type <> 'filter_clean' OR fcep.pool_id IS NOT NULL)
                   AND NOT EXISTS (
                       SELECT 1
@@ -904,7 +916,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 LEFT JOIN filter_clean_eligible_pools fcep ON fcep.pool_id = p.id
                 LEFT JOIN recent_or_upcoming_filter_cleans fc ON fc.pool_id = p.id
                 WHERE c.is_operationally_active = TRUE
-                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
                   AND cfg.opportunity_type = 'filter_clean'
                   AND fcep.pool_id IS NOT NULL
                   AND fc.pool_id IS NULL
@@ -929,6 +941,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 JOIN customers c ON c.id = d.customer_id
                 WHERE c.is_operationally_active = TRUE
                   AND customer_alert_eligible(
+                      c.id,
                       (SELECT csh.first_service_date FROM customer_service_history csh WHERE csh.customer_id = c.id),
                       c.raw_json
                   )
@@ -966,6 +979,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             LEFT JOIN recent_or_upcoming_filter_cleans fc ON fc.pool_id = u.pool_id
             WHERE c.is_operationally_active = TRUE
               AND customer_alert_eligible(
+                  c.id,
                   (SELECT csh.first_service_date FROM customer_service_history csh WHERE csh.customer_id = c.id),
                   c.raw_json
               )
