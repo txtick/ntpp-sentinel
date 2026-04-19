@@ -2623,7 +2623,7 @@ def get_labor_payroll(
                       AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
                       AND (
                           lower(COALESCE(wt.description, '')) = 'filter clean'
-                          OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
+                          OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
                       )
                     GROUP BY s.technician_id
                 ),
