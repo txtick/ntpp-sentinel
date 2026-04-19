@@ -2772,6 +2772,7 @@ def get_labor_payroll(
         regular_pool_pay = 0.0 if is_salary else regular_pool_count * LABOR_POOL_RATE
         commission_pool_pay = 0.0 if is_salary else commission_pool_count * LABOR_POOL_RATE
         filter_clean_pay = 0.0 if is_salary else filter_clean_count * LABOR_FILTER_CLEAN_RATE
+        gusto_commission_amount = commission_pool_pay + filter_clean_pay
         total_pay = regular_pool_pay + commission_pool_pay + filter_clean_pay
 
         item = {
@@ -2793,7 +2794,7 @@ def get_labor_payroll(
             "filter_clean_pay": filter_clean_pay,
             "total_pay": total_pay,
             "gusto_regular_hours": 0 if is_salary else regular_pool_count,
-            "gusto_commission_amount": 0.0 if is_salary else commission_pool_pay,
+            "gusto_commission_amount": 0.0 if is_salary else gusto_commission_amount,
             "notes": "Salary tech" if is_salary else "",
         }
         items.append(item)
