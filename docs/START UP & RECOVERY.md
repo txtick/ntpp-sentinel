@@ -35,15 +35,23 @@ ssh kevin@sentinel '
   cd /opt/ntpp-sentinel &&
   docker compose ps &&
   docker compose logs -n 50 sentinel &&
-  docker compose logs -n 50 ingest-worker
+  docker compose logs -n 50 ingest-worker &&
+  docker compose logs -n 50 web-backend
 '
 curl -s https://sentinel.northtexaspoolpros.com/health
+curl -s https://dashboard.northtexaspoolpros.com/health
 ```
 
 Expected public health:
 
 ```json
 {"ok": true}
+```
+
+Expected dashboard health:
+
+```json
+{"ok": true, "service": "web-backend"}
 ```
 
 ---
@@ -54,15 +62,28 @@ Current compose services:
 
 - `sentinel`
 - `ingest-worker`
+- `web-backend`
+- `web-frontend`
 - `caddy`
 
 Current roles:
 
 - `sentinel`: webhooks, jobs, customer sync, Skimmer DB download, worker trigger
 - `ingest-worker`: validation, import, normalization, derived view refresh
+- `web-backend`: dashboard/query API surface, alert refresh, reminders, labor view
+- `web-frontend`: dashboard UI
 - `caddy`: public reverse proxy to `sentinel`
 
-`ingest-worker` is internal-only and is not exposed publicly through Caddy.
+Internal-only services:
+
+- `ingest-worker`
+- `web-backend`
+- `web-frontend`
+
+Public entrypoints:
+
+- `https://sentinel.northtexaspoolpros.com` -> `sentinel`
+- `https://dashboard.northtexaspoolpros.com` -> `web-frontend`
 
 ---
 
@@ -80,6 +101,7 @@ Check recent logs:
 ```bash
 docker compose logs --tail=200 sentinel
 docker compose logs --tail=200 ingest-worker
+docker compose logs --tail=200 web-backend
 ```
 
 Saved trace script for issue-flow debugging:
@@ -98,6 +120,7 @@ cd /opt/ntpp-sentinel
 ./curl_job.sh "/jobs/recheck_issue?id=444"
 ./curl_job.sh "/jobs/recheck_issue?conversation_id=UHOpErKZ9wDHBlbH3PX2"
 ./curl_job.sh "/jobs/cleanup_raw_events?dry_run=1"
+./curl_job.sh "/jobs/dashboard/refresh?trigger_reason=manual"
 ```
 
 Notes:
@@ -106,6 +129,15 @@ Notes:
 - manager notifications only include overdue `OPEN` issues
 - `recheck_issue` forces a fresh AI gate classification for an existing issue/conversation and immediately resolves matching `OPEN` / `PENDING` issues on that conversation when the refreshed result is a confident `NO`
 - use `recheck_issue?id=<issue>` when you have a Sentinel issue id, or `recheck_issue?conversation_id=<ghl_conversation_id>` when you want to re-evaluate the whole thread directly
+- `dashboard/refresh` re-runs backend-owned dashboard alert detection and clears alert instances that no longer qualify
+
+Manual dashboard alert refresh:
+
+```bash
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/dashboard/refresh?trigger_reason=manual" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
 
 ---
 
@@ -188,6 +220,24 @@ with pg() as conn:
 PY
 ```
 
+Check current revenue opportunities directly:
+
+```bash
+docker compose exec -T sentinel python - <<'PY'
+from pg import pg
+with pg() as conn:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT rule_code, customer_name, pool_name, observed_count, service_date
+            FROM revenue_opportunities_v
+            ORDER BY customer_name, pool_name, rule_code
+            LIMIT 100
+        """)
+        for row in cur.fetchall():
+            print(row)
+PY
+```
+
 ---
 
 ## 5. Sentinel Queue Verification
@@ -259,6 +309,8 @@ docker compose exec -T sentinel sh -lc 'echo "$INTERNAL_CONTACT_IDS"'
 docker compose exec -T sentinel sh -lc 'echo "$INTERNAL_USER_IDS"'
 docker compose exec -T sentinel sh -lc 'echo "$DECISION_MODE"'
 docker compose exec -T sentinel sh -lc 'echo "$AI_GATE_MODEL"'
+docker compose exec -T sentinel sh -lc 'echo "$SKIMMER_API_BASE_URL"'
+docker compose exec -T sentinel sh -lc 'echo "$SKIMMER_API_KEY" | wc -c'
 ```
 
 Check ingest-worker env:
@@ -270,6 +322,15 @@ docker compose exec -T ingest-worker sh -lc 'echo "$INACTIVE_PRUNE_DAYS"'
 docker compose exec -T ingest-worker sh -lc 'echo "$INGEST_SKIP_DUPLICATE_SOURCE_SUCCESS"'
 ```
 
+Check web-backend env:
+
+```bash
+docker compose exec -T web-backend sh -lc 'echo "$DATABASE_URL" | wc -c'
+docker compose exec -T web-backend sh -lc 'echo "$SKIMMER_API_BASE_URL"'
+docker compose exec -T web-backend sh -lc 'echo "$SKIMMER_API_KEY" | wc -c'
+docker compose exec -T web-backend sh -lc 'echo "$TIMEZONE"'
+```
+
 Important Skimmer/worker env values:
 
 - `SKIMMER_GDRIVE_FOLDER_ID`
@@ -279,6 +340,8 @@ Important Skimmer/worker env values:
 - `GOOGLE_OAUTH_REFRESH_TOKEN`
 - `SKIMMER_DOWNLOAD_DIR`
 - `SKIMMER_DB_PATH`
+- `SKIMMER_API_BASE_URL`
+- `SKIMMER_API_KEY`
 - `INGEST_WORKER_BASE_URL`
 - `INGEST_TRIGGER_ENABLED`
 - `INACTIVE_PRUNE_DAYS`
@@ -306,6 +369,7 @@ Cron logs:
 ```bash
 tail -f /opt/ntpp-sentinel/logs/cron.log
 tail -f /opt/ntpp-sentinel/logs/ingest-worker.log
+docker compose logs -f web-backend
 ```
 
 Key sentinel cron env:
@@ -351,3 +415,86 @@ If the whole stack needs a clean restart:
 cd /opt/ntpp-sentinel
 docker compose up -d --build --remove-orphans
 ```
+
+If dashboard alerts look stale, or a newly scheduled work order should suppress an alert:
+
+1. verify the latest Skimmer import completed
+2. verify the relevant row exists in normalized tables / views
+3. run a dashboard alert refresh:
+
+```bash
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/dashboard/refresh?trigger_reason=manual" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
+4. inspect recent dashboard refresh runs:
+
+```bash
+docker compose exec -T sentinel python - <<'PY'
+from pg import pg
+with pg() as conn:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, started_at, completed_at, trigger_reason, success, error_message, metrics_json
+            FROM alert_refresh_runs
+            ORDER BY id DESC
+            LIMIT 10
+        """)
+        for row in cur.fetchall():
+            print(row)
+PY
+```
+
+Note:
+
+- Some scheduled Skimmer work orders carry a placeholder `complete_time` around `2010-01-01` instead of `NULL`.
+- Treat those as not completed yet when debugging upcoming-work suppression logic.
+
+## 9. Operator Backend Paths
+
+Operator-relevant backend paths:
+
+- Sentinel:
+  - `GET /health`
+  - `GET /health/postgres`
+  - `POST /jobs/poll_resolver`
+  - `POST /jobs/verify_pending`
+  - `POST /jobs/recheck_issue`
+  - `POST /jobs/cleanup_raw_events`
+  - `POST /jobs/skimmer_link`
+  - `POST /jobs/skimmer_import`
+  - `POST /jobs/skimmer_customer_sync`
+  - `POST /jobs/skimmer_drive_sync`
+  - `POST /jobs/send_summary`
+  - `POST /jobs/escalations`
+- Web backend:
+  - `GET /health`
+  - `GET /health/postgres`
+  - `GET /api/home/summary`
+  - `GET /api/customers`
+  - `GET /api/customers/{customer_id}`
+  - `GET /api/technicians`
+  - `GET /api/technicians/{tech_id}`
+  - `GET /api/labor/payroll`
+  - `GET /api/alerts`
+  - `GET /api/alerts/{alert_id}`
+  - `GET /api/alerts/{alert_id}/events`
+  - `POST /api/alerts/{alert_id}/reminder`
+  - `POST /api/alerts/{alert_id}/ack`
+  - `POST /api/alerts/{alert_id}/resolve`
+  - `POST /api/alerts/{alert_id}/snooze`
+  - `POST /jobs/dashboard/refresh`
+  - `GET /api/refresh-runs`
+  - `GET /api/refresh-runs/{refresh_run_id}`
+  - `GET /api/config/alerts`
+  - `GET /api/reminders`
+  - `GET /api/reminders/{reminder_id}`
+  - `POST /api/reminders/{reminder_id}/ack`
+  - `POST /api/reminders/{reminder_id}/update`
+  - `POST /api/reminders/{reminder_id}/snooze`
+  - `POST /api/reminders/{reminder_id}/complete`
+  - `POST /api/reminders/{reminder_id}/cancel`
+- Ingest worker:
+  - `GET /health`
+  - `POST /jobs/run`

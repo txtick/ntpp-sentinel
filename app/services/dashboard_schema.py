@@ -881,7 +881,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                           AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
                       )
                       OR (
-                          w.complete_time IS NULL
+                          (w.complete_time IS NULL OR w.complete_time < TIMESTAMPTZ '2011-01-01 00:00:00+00')
                           AND w.service_date >= CURRENT_DATE
                       )
                   )
