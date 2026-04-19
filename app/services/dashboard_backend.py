@@ -2581,17 +2581,18 @@ def get_labor_payroll(
                 WITH route_pool_visits AS (
                     SELECT DISTINCT
                         s.technician_id,
-                        r.service_date::date AS service_day,
+                        s.service_date::date AS service_day,
                         r.pool_id
-                    FROM chemistry_readings r
-                    JOIN technician_route_stops s
-                      ON s.source_system = r.source_system
-                     AND s.source_route_stop_id = r.source_service_stop_id
+                    FROM technician_route_stops s
                     JOIN technicians t ON t.id = s.technician_id
+                    JOIN pools r
+                      ON r.source_system = s.source_system
+                     AND r.source_service_location_id = s.source_service_location_id
                     WHERE t.source_system = 'skimmer'
                       AND s.technician_id IS NOT NULL
                       AND s.is_skipped = FALSE
-                      AND r.service_date::date BETWEEN %s AND %s
+                      AND s.source_route_assignment_id IS NOT NULL
+                      AND s.service_date::date BETWEEN %s AND %s
                 ),
                 pool_rollup AS (
                     SELECT
