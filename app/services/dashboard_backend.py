@@ -1,5 +1,8 @@
 import json
 import os
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -15,6 +18,8 @@ MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
     os.getenv("MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD", "75")
 )
 DASHBOARD_TIMEZONE = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
+SKIMMER_API_BASE_URL = os.getenv("SKIMMER_API_BASE_URL", "https://publicapi.getskimmer.com").rstrip("/")
+SKIMMER_API_KEY = os.getenv("SKIMMER_API_KEY", "").strip()
 LABOR_POOL_RATE = float(os.getenv("LABOR_POOL_RATE", "16"))
 LABOR_FILTER_CLEAN_RATE = float(os.getenv("LABOR_FILTER_CLEAN_RATE", "25"))
 LABOR_REGULAR_POOL_CAP = max(0, int(os.getenv("LABOR_REGULAR_POOL_CAP", "40")))
@@ -321,6 +326,97 @@ def _is_salary_tech(item: Dict[str, Any]) -> bool:
     if split_name:
         candidates.add(split_name[0])
     return any(candidate in LABOR_SALARY_TECH_NAMES for candidate in candidates if candidate)
+
+
+def _fetch_skimmer_routes_for_day(service_date: date) -> List[Dict[str, Any]]:
+    if not SKIMMER_API_KEY:
+        raise HTTPException(status_code=503, detail="SKIMMER_API_KEY is not configured")
+
+    query = urllib.parse.urlencode({"ServiceDate": service_date.isoformat()})
+    url = f"{SKIMMER_API_BASE_URL}/Routes/GetAllRoutesForDay?{query}"
+    req = urllib.request.Request(
+        url,
+        headers={"skimmer-api-key": SKIMMER_API_KEY, "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"Skimmer API error {exc.code}: {detail[:300]}")
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Skimmer API request failed: {exc}")
+
+    try:
+        data = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Skimmer API returned invalid JSON")
+    if not isinstance(data, list):
+        raise HTTPException(status_code=502, detail="Unexpected response shape from Skimmer routes API")
+    return data
+
+
+def _coerce_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"true", "1", "yes"}:
+            return True
+        if token in {"false", "0", "no"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
+
+
+def _route_stop_complete(stop: Dict[str, Any]) -> bool:
+    complete_value = None
+    for key in ("isCompleted", "completed", "isComplete"):
+        if key in stop:
+            complete_value = _coerce_bool(stop.get(key))
+            if complete_value is not None:
+                return complete_value
+    return bool(stop.get("completeTime") or stop.get("completedAt") or stop.get("completeDate") or stop.get("endTime"))
+
+
+def _route_stop_skipped(stop: Dict[str, Any]) -> bool:
+    for key in ("isSkipped", "skipped", "isStopSkipped"):
+        if key in stop:
+            skipped = _coerce_bool(stop.get(key))
+            if skipped is not None:
+                return skipped
+    return False
+
+
+def _skimmer_api_cleaning_counts(start_day: date, end_day: date) -> Dict[str, Dict[str, Any]]:
+    counts: Dict[str, Dict[str, Any]] = {}
+    current = start_day
+    while current <= end_day:
+        routes = _fetch_skimmer_routes_for_day(current)
+        for route in routes:
+            tech_id = str(route.get("techId") or "").strip()
+            if not tech_id:
+                continue
+            tech_first = str(route.get("techFirstName") or "").strip()
+            tech_last = str(route.get("techLastName") or "").strip()
+            bucket = counts.setdefault(
+                tech_id,
+                {
+                    "tech_id": tech_id,
+                    "tech_name": f"{tech_first} {tech_last}".strip(),
+                    "pool_count": 0,
+                    "completed_service_days": set(),
+                },
+            )
+            for stop in route.get("stops") or []:
+                if _route_stop_skipped(stop) or not _route_stop_complete(stop):
+                    continue
+                bucket["pool_count"] += 1
+                bucket["completed_service_days"].add(current.isoformat())
+        current += timedelta(days=1)
+    return counts
 
 
 def _detection_evidence_ts(item: Dict[str, Any]) -> Optional[datetime]:
@@ -2574,38 +2670,32 @@ def get_labor_payroll(
     if range_start > range_end:
         raise HTTPException(status_code=400, detail="start_date must be on or before end_date")
 
+    api_counts = _skimmer_api_cleaning_counts(range_start, range_end)
+
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                WITH route_cleanings AS (
-                    SELECT DISTINCT
-                        s.technician_id,
-                        s.service_date::date AS service_day,
-                        s.source_route_stop_id AS cleaning_id
-                    FROM technician_route_stops s
-                    JOIN technicians t ON t.id = s.technician_id
-                    WHERE t.source_system = 'skimmer'
-                      AND s.technician_id IS NOT NULL
-                      AND s.is_skipped = FALSE
-                      AND s.source_route_assignment_id IS NOT NULL
-                      AND s.complete_time IS NOT NULL
-                      AND s.service_date::date BETWEEN %s AND %s
-                ),
-                cleaning_rollup AS (
+                WITH tech_lookup AS (
                     SELECT
-                        technician_id,
-                        COUNT(*) AS pool_count,
-                        COUNT(DISTINCT service_day) AS service_day_count
-                    FROM route_cleanings
-                    GROUP BY technician_id
+                        t.id AS technician_id,
+                        t.source_account_id AS tech_id,
+                        COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
+                        t.first_name,
+                        t.last_name,
+                        t.username,
+                        t.role_type,
+                        t.is_active
+                    FROM technicians t
+                    WHERE t.source_system = 'skimmer'
+                      AND t.source_account_id IS NOT NULL
                 ),
                 filter_clean_rollup AS (
                     SELECT
-                        s.technician_id,
+                        tl.tech_id,
                         COUNT(DISTINCT w.id) AS filter_clean_count
                     FROM technician_route_stops s
-                    JOIN technicians t ON t.id = s.technician_id
+                    JOIN tech_lookup tl ON tl.technician_id = s.technician_id
                     JOIN sk_work_order w
                       ON w.source_system = s.source_system
                      AND w.source_service_location_id = s.source_service_location_id
@@ -2613,8 +2703,7 @@ def get_labor_payroll(
                     LEFT JOIN sk_work_order_type wt
                       ON wt.source_system = w.source_system
                      AND wt.source_work_order_type_id = w.source_work_order_type_id
-                    WHERE t.source_system = 'skimmer'
-                      AND s.technician_id IS NOT NULL
+                    WHERE s.technician_id IS NOT NULL
                       AND s.is_skipped = FALSE
                       AND s.service_date::date BETWEEN %s AND %s
                       AND COALESCE(w.is_deleted, FALSE) = FALSE
@@ -2624,31 +2713,28 @@ def get_labor_payroll(
                           lower(COALESCE(wt.description, '')) = 'filter clean'
                           OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
                       )
-                    GROUP BY s.technician_id
+                    GROUP BY tl.tech_id
                 ),
                 active_techs AS (
-                    SELECT technician_id FROM cleaning_rollup
+                    SELECT tech_id FROM tech_lookup
                     UNION
-                    SELECT technician_id FROM filter_clean_rollup
+                    SELECT tech_id FROM filter_clean_rollup
                 )
                 SELECT
-                    t.source_account_id AS tech_id,
-                    COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
-                    t.first_name,
-                    t.last_name,
-                    t.username,
-                    t.role_type,
-                    t.is_active,
-                    COALESCE(cr.pool_count, 0) AS pool_count,
-                    COALESCE(cr.service_day_count, 0) AS service_day_count,
+                    tl.tech_id,
+                    tl.tech_name,
+                    tl.first_name,
+                    tl.last_name,
+                    tl.username,
+                    tl.role_type,
+                    tl.is_active,
                     COALESCE(fc.filter_clean_count, 0) AS filter_clean_count
                 FROM active_techs a
-                JOIN technicians t ON t.id = a.technician_id
-                LEFT JOIN cleaning_rollup cr ON cr.technician_id = a.technician_id
-                LEFT JOIN filter_clean_rollup fc ON fc.technician_id = a.technician_id
-                ORDER BY tech_name ASC, tech_id ASC
+                JOIN tech_lookup tl ON tl.tech_id = a.tech_id
+                LEFT JOIN filter_clean_rollup fc ON fc.tech_id = a.tech_id
+                ORDER BY tl.tech_name ASC, tl.tech_id ASC
                 """,
-                [range_start, range_end, range_start, range_end],
+                [range_start, range_end],
             )
             rows = [dict(row) for row in cur.fetchall()]
 
@@ -2667,13 +2753,19 @@ def get_labor_payroll(
         "total_pay": 0.0,
     }
 
-    for row in rows:
+    row_map = {str(row.get("tech_id") or ""): row for row in rows}
+    all_tech_ids = sorted(set(row_map.keys()) | set(api_counts.keys()))
+
+    for tech_id in all_tech_ids:
+        row = row_map.get(tech_id, {"tech_id": tech_id, "tech_name": api_counts.get(tech_id, {}).get("tech_name") or tech_id})
+        api_row = api_counts.get(tech_id, {})
         is_salary = _is_salary_tech(row)
+        pool_count = int(api_row.get("pool_count") or 0)
+        filter_clean_count = int(row.get("filter_clean_count") or 0)
+        if pool_count <= 0 and filter_clean_count <= 0:
+            continue
         if is_salary and not include_salary:
             continue
-
-        pool_count = int(row.get("pool_count") or 0)
-        filter_clean_count = int(row.get("filter_clean_count") or 0)
         regular_pool_count = min(pool_count, LABOR_REGULAR_POOL_CAP)
         commission_pool_count = max(0, pool_count - LABOR_REGULAR_POOL_CAP)
 
@@ -2692,7 +2784,7 @@ def get_labor_payroll(
             "is_active": bool(row.get("is_active")),
             "is_salary": is_salary,
             "pool_count": pool_count,
-            "service_day_count": int(row.get("service_day_count") or 0),
+            "service_day_count": len(api_row.get("completed_service_days") or []),
             "regular_pool_count": regular_pool_count,
             "commission_pool_count": commission_pool_count,
             "filter_clean_count": filter_clean_count,
@@ -2741,7 +2833,7 @@ def get_labor_payroll(
         "filters": {
             "include_salary": bool(include_salary),
         },
-        "source": "technician_route_stops + pools + sk_work_order",
+        "source": "skimmer route api + sk_work_order",
     }
 
 
