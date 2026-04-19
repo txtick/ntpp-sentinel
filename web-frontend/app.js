@@ -45,6 +45,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     cya: 60,
   },
   display_precision: {
+    ph: 2,
     lsi: 2,
   },
   metric_labels: {
