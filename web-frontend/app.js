@@ -542,6 +542,26 @@ function formatAxisValue(value, readingKey = "") {
   return number.toFixed(0);
 }
 
+function chartBoundsForReading(readingKey, values, recommendedHigh) {
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const normalizedKey = normalizeMetricKey(readingKey);
+
+  if (normalizedKey === "ph") {
+    const lower = Math.max(6.8, Math.min(rawMin - 0.15, 7.2));
+    const upper = Math.min(8.6, Math.max(rawMax + 0.15, 8.0, Number.isFinite(recommendedHigh) ? recommendedHigh : 0));
+    if (upper - lower >= 0.2) {
+      return { min: lower, max: upper };
+    }
+  }
+
+  const paddedMin = 0;
+  const paddedMax = Number.isFinite(recommendedHigh) && recommendedHigh > 0
+    ? recommendedHigh
+    : Math.max(rawMax * 1.2, 10);
+  return { min: paddedMin, max: paddedMax };
+}
+
 function chemistrySeriesMeta(seriesItem) {
   const readingKey = normalizeMetricKey(seriesItem);
   const policy = customerChartPolicy();
@@ -1607,9 +1627,9 @@ function buildLineChart(seriesItem, options = {}) {
   const rawMax = Math.max(...values);
   const readingKey = normalizeMetricKey(seriesItem);
   const recommendedHigh = Number(customerChartPolicy().recommended_highs?.[readingKey]);
-  const hasRecommendedHigh = Number.isFinite(recommendedHigh) && recommendedHigh > 0;
-  const paddedMin = 0;
-  const paddedMax = hasRecommendedHigh ? recommendedHigh : Math.max(rawMax * 1.2, 10);
+  const bounds = chartBoundsForReading(readingKey, values, recommendedHigh);
+  const paddedMin = bounds.min;
+  const paddedMax = bounds.max;
   const valueRange = paddedMax - paddedMin || 1;
   const span = paddedMax - paddedMin;
   const stepX = points.length === 1 ? 0 : (xMax - xMin) / (points.length - 1);

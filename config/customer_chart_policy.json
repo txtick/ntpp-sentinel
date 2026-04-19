@@ -45,6 +45,7 @@
     "cya": 400
   },
   "display_precision": {
+    "ph": 2,
     "lsi": 2
   },
   "metric_labels": {

@@ -75,6 +75,7 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
         "cya": 60,
     },
     "display_precision": {
+        "ph": 2,
         "lsi": 2,
     },
     "metric_labels": {
