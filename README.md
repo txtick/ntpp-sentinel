@@ -23,7 +23,7 @@ Roles:
 - `sentinel`: public API, webhooks, job endpoints, customer sync, Skimmer download trigger
 - `ingest-worker`: validation, `sk_*` source-ingest import, normalized upserts, derived views
 - `web-backend`: dashboard/query API surface and backend-owned alert tracking schema
-- `web-frontend`: thin operator UI for home, alerts, customers, technicians, and reminders
+- `web-frontend`: thin operator UI for home, alerts, customers, technicians, labor payroll prep, and reminders
 - `caddy`: public reverse proxy to `sentinel:8000`
 
 Persistence:
@@ -132,6 +132,11 @@ Frontend locally on the host:
 ```text
 http://localhost:8030
 ```
+
+Labor page:
+- Dashboard `Labor` tab shows weekly pool counts, filter cleans, Gusto regular-hours split, and commission totals by technician
+- Default pay rules are `$16` per pool, `$25` per filter clean, with pools above `40` shifted into commission
+- Salary techs can be hidden by default and shown on demand for context
 
 ## Protected Endpoints
 

@@ -1,7 +1,8 @@
 import json
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -14,6 +15,14 @@ MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
     os.getenv("MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD", "75")
 )
 DASHBOARD_TIMEZONE = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
+LABOR_POOL_RATE = float(os.getenv("LABOR_POOL_RATE", "16"))
+LABOR_FILTER_CLEAN_RATE = float(os.getenv("LABOR_FILTER_CLEAN_RATE", "25"))
+LABOR_REGULAR_POOL_CAP = max(0, int(os.getenv("LABOR_REGULAR_POOL_CAP", "40")))
+LABOR_SALARY_TECH_NAMES = tuple(
+    part.strip().lower()
+    for part in os.getenv("LABOR_SALARY_TECH_NAMES", "jarrett,jim").split(",")
+    if part.strip()
+)
 DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
     "default_days": 90,
     "range_days": [30, 90, 180, 365],
@@ -275,6 +284,43 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return datetime.fromisoformat(normalized)
     except Exception:
         return None
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def _default_labor_week(anchor: Optional[date] = None) -> tuple[date, date]:
+    if anchor is None:
+        anchor = datetime.now(ZoneInfo(DASHBOARD_TIMEZONE)).date()
+    days_since_sunday = (anchor.weekday() + 1) % 7
+    week_start = anchor - timedelta(days=days_since_sunday)
+    week_end = week_start + timedelta(days=6)
+    return week_start, week_end
+
+
+def _is_salary_tech(item: Dict[str, Any]) -> bool:
+    if not LABOR_SALARY_TECH_NAMES:
+        return False
+    candidates = {
+        str(item.get("first_name") or "").strip().lower(),
+        str(item.get("tech_name") or "").strip().lower(),
+        str(item.get("username") or "").strip().lower(),
+    }
+    split_name = str(item.get("tech_name") or "").strip().lower().split()
+    if split_name:
+        candidates.add(split_name[0])
+    return any(candidate in LABOR_SALARY_TECH_NAMES for candidate in candidates if candidate)
 
 
 def _detection_evidence_ts(item: Dict[str, Any]) -> Optional[datetime]:
@@ -2509,6 +2555,194 @@ def list_technicians(
             "role_type": normalized_role_type or None,
         },
         "source": "technicians + service_location_technician_assignments",
+    }
+
+
+def get_labor_payroll(
+    *,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    include_salary: bool = False,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+
+    parsed_start = _parse_date(start_date)
+    parsed_end = _parse_date(end_date)
+    default_start, default_end = _default_labor_week()
+    range_start = parsed_start or default_start
+    range_end = parsed_end or default_end
+    if range_start > range_end:
+        raise HTTPException(status_code=400, detail="start_date must be on or before end_date")
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                WITH route_pool_visits AS (
+                    SELECT DISTINCT
+                        s.technician_id,
+                        s.service_date::date AS service_day,
+                        p.id AS pool_id
+                    FROM technician_route_stops s
+                    JOIN technicians t ON t.id = s.technician_id
+                    JOIN pools p
+                      ON p.source_system = s.source_system
+                     AND p.source_service_location_id = s.source_service_location_id
+                    WHERE t.source_system = 'skimmer'
+                      AND s.technician_id IS NOT NULL
+                      AND s.is_skipped = FALSE
+                      AND s.service_date::date BETWEEN %s AND %s
+                ),
+                pool_rollup AS (
+                    SELECT
+                        technician_id,
+                        COUNT(*) AS pool_count,
+                        COUNT(DISTINCT service_day) AS service_day_count
+                    FROM route_pool_visits
+                    GROUP BY technician_id
+                ),
+                filter_clean_rollup AS (
+                    SELECT
+                        s.technician_id,
+                        COUNT(DISTINCT w.id) AS filter_clean_count
+                    FROM technician_route_stops s
+                    JOIN technicians t ON t.id = s.technician_id
+                    JOIN sk_work_order w
+                      ON w.source_system = s.source_system
+                     AND w.source_service_location_id = s.source_service_location_id
+                     AND w.service_date::date = s.service_date::date
+                    LEFT JOIN sk_work_order_type wt
+                      ON wt.source_system = w.source_system
+                     AND wt.source_work_order_type_id = w.source_work_order_type_id
+                    WHERE t.source_system = 'skimmer'
+                      AND s.technician_id IS NOT NULL
+                      AND s.is_skipped = FALSE
+                      AND s.service_date::date BETWEEN %s AND %s
+                      AND COALESCE(w.is_deleted, FALSE) = FALSE
+                      AND w.complete_time IS NOT NULL
+                      AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+                      AND (
+                          lower(COALESCE(wt.description, '')) = 'filter clean'
+                          OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
+                      )
+                    GROUP BY s.technician_id
+                ),
+                active_techs AS (
+                    SELECT technician_id FROM pool_rollup
+                    UNION
+                    SELECT technician_id FROM filter_clean_rollup
+                )
+                SELECT
+                    t.source_account_id AS tech_id,
+                    COALESCE(NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''), NULLIF(t.username, ''), t.source_account_id) AS tech_name,
+                    t.first_name,
+                    t.last_name,
+                    t.username,
+                    t.role_type,
+                    t.is_active,
+                    COALESCE(pr.pool_count, 0) AS pool_count,
+                    COALESCE(pr.service_day_count, 0) AS service_day_count,
+                    COALESCE(fc.filter_clean_count, 0) AS filter_clean_count
+                FROM active_techs a
+                JOIN technicians t ON t.id = a.technician_id
+                LEFT JOIN pool_rollup pr ON pr.technician_id = a.technician_id
+                LEFT JOIN filter_clean_rollup fc ON fc.technician_id = a.technician_id
+                ORDER BY tech_name ASC, tech_id ASC
+                """,
+                [range_start, range_end, range_start, range_end],
+            )
+            rows = [dict(row) for row in cur.fetchall()]
+
+    items: List[Dict[str, Any]] = []
+    summary = {
+        "tech_count": 0,
+        "payable_tech_count": 0,
+        "salary_tech_count": 0,
+        "total_pools": 0,
+        "total_regular_pools": 0,
+        "total_commission_pools": 0,
+        "total_filter_cleans": 0,
+        "total_regular_pay": 0.0,
+        "total_commission_pay": 0.0,
+        "total_filter_clean_pay": 0.0,
+        "total_pay": 0.0,
+    }
+
+    for row in rows:
+        is_salary = _is_salary_tech(row)
+        if is_salary and not include_salary:
+            continue
+
+        pool_count = int(row.get("pool_count") or 0)
+        filter_clean_count = int(row.get("filter_clean_count") or 0)
+        regular_pool_count = min(pool_count, LABOR_REGULAR_POOL_CAP)
+        commission_pool_count = max(0, pool_count - LABOR_REGULAR_POOL_CAP)
+
+        regular_pool_pay = 0.0 if is_salary else regular_pool_count * LABOR_POOL_RATE
+        commission_pool_pay = 0.0 if is_salary else commission_pool_count * LABOR_POOL_RATE
+        filter_clean_pay = 0.0 if is_salary else filter_clean_count * LABOR_FILTER_CLEAN_RATE
+        total_pay = regular_pool_pay + commission_pool_pay + filter_clean_pay
+
+        item = {
+            "tech_id": row.get("tech_id"),
+            "tech_name": row.get("tech_name"),
+            "first_name": row.get("first_name"),
+            "last_name": row.get("last_name"),
+            "username": row.get("username"),
+            "role_type": row.get("role_type"),
+            "is_active": bool(row.get("is_active")),
+            "is_salary": is_salary,
+            "pool_count": pool_count,
+            "service_day_count": int(row.get("service_day_count") or 0),
+            "regular_pool_count": regular_pool_count,
+            "commission_pool_count": commission_pool_count,
+            "filter_clean_count": filter_clean_count,
+            "regular_pool_pay": regular_pool_pay,
+            "commission_pool_pay": commission_pool_pay,
+            "filter_clean_pay": filter_clean_pay,
+            "total_pay": total_pay,
+            "gusto_regular_hours": 0 if is_salary else regular_pool_count,
+            "gusto_commission_amount": 0.0 if is_salary else commission_pool_pay,
+            "notes": "Salary tech" if is_salary else "",
+        }
+        items.append(item)
+
+        summary["tech_count"] += 1
+        summary["salary_tech_count"] += 1 if is_salary else 0
+        summary["payable_tech_count"] += 0 if is_salary else 1
+        summary["total_pools"] += pool_count
+        summary["total_regular_pools"] += regular_pool_count
+        summary["total_commission_pools"] += commission_pool_count
+        summary["total_filter_cleans"] += filter_clean_count
+        summary["total_regular_pay"] += regular_pool_pay
+        summary["total_commission_pay"] += commission_pool_pay
+        summary["total_filter_clean_pay"] += filter_clean_pay
+        summary["total_pay"] += total_pay
+
+    items.sort(key=lambda item: (item["is_salary"], -(item["total_pay"]), str(item["tech_name"] or "")))
+
+    return {
+        "ok": True,
+        "range": {
+            "start_date": range_start.isoformat(),
+            "end_date": range_end.isoformat(),
+            "label": f"{range_start.isoformat()} to {range_end.isoformat()}",
+            "timezone": DASHBOARD_TIMEZONE,
+        },
+        "pay_rules": {
+            "pool_rate": LABOR_POOL_RATE,
+            "filter_clean_rate": LABOR_FILTER_CLEAN_RATE,
+            "regular_pool_cap": LABOR_REGULAR_POOL_CAP,
+            "salary_tech_names": list(LABOR_SALARY_TECH_NAMES),
+            "gusto_regular_unit_label": "hours",
+            "gusto_commission_label": "commission",
+        },
+        "summary": summary,
+        "items": items,
+        "filters": {
+            "include_salary": bool(include_salary),
+        },
+        "source": "technician_route_stops + pools + sk_work_order",
     }
 
 

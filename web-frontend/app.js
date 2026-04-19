@@ -64,6 +64,29 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
   },
 };
 
+function isoDate(value) {
+  return value.toISOString().slice(0, 10);
+}
+
+function defaultLaborWeek() {
+  const now = new Date();
+  const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sundayOffset = localMidnight.getDay();
+  const start = new Date(localMidnight);
+  start.setDate(localMidnight.getDate() - sundayOffset);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return {
+    start_date: isoDate(start),
+    end_date: isoDate(end),
+  };
+}
+
+const DEFAULT_LABOR_FILTERS = {
+  ...defaultLaborWeek(),
+  include_salary: 0,
+};
+
 const state = {
   view: "home",
   actor: "",
@@ -89,6 +112,7 @@ const state = {
     alerts: null,
     customers: null,
     technicians: null,
+    labor: null,
     reminders: null,
   },
 };
@@ -116,6 +140,7 @@ const viewMeta = {
   "customer-profile": { kicker: "Customer", title: "Customer Chemistry Profile" },
   technicians: { kicker: "Technicians", title: "Field Operator Snapshot" },
   "technician-profile": { kicker: "Technician", title: "Technician Profile" },
+  labor: { kicker: "Labor", title: "Weekly Payroll Prep" },
   reminders: { kicker: "Reminders", title: "Follow-Up Queue" },
 };
 
@@ -131,6 +156,7 @@ const filters = {
     role_type: "",
     limit: 40,
   },
+  labor: { ...DEFAULT_LABOR_FILTERS },
   reminders: { status: "", assigned_to: "", source_type: "", overdue_only: 0, search: "", limit: 40 },
 };
 
@@ -971,6 +997,34 @@ function renderFilters() {
     return;
   }
 
+  if (state.view === "labor") {
+    setLayout("single");
+    const f = filters.labor;
+    els.filters.innerHTML = `
+      <label class="filter-chip"><span>Week Start</span><input id="filter-labor-start" type="date" value="${escapeHtml(f.start_date)}" /></label>
+      <label class="filter-chip"><span>Week End</span><input id="filter-labor-end" type="date" value="${escapeHtml(f.end_date)}" /></label>
+      <label class="filter-chip"><span>Salary Techs</span>
+        <select id="filter-labor-salary">
+          <option value="0" ${!f.include_salary ? "selected" : ""}>Hide</option>
+          <option value="1" ${f.include_salary ? "selected" : ""}>Show</option>
+        </select>
+      </label>
+    `;
+    document.getElementById("filter-labor-start").onchange = (e) => {
+      filters.labor.start_date = e.target.value;
+      loadLabor(true);
+    };
+    document.getElementById("filter-labor-end").onchange = (e) => {
+      filters.labor.end_date = e.target.value;
+      loadLabor(true);
+    };
+    document.getElementById("filter-labor-salary").onchange = (e) => {
+      filters.labor.include_salary = Number(e.target.value);
+      loadLabor(true);
+    };
+    return;
+  }
+
   if (state.view === "customer-profile") {
     setLayout("single");
     const customerId = state.selections.customerId;
@@ -1020,6 +1074,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "customer-profile") await loadCustomerProfile(force);
     if (state.view === "technicians") await loadTechnicians(force);
     if (state.view === "technician-profile") await loadTechnicianProfile(force);
+    if (state.view === "labor") await loadLabor(force);
     if (state.view === "reminders") await loadReminders(force);
     setStatus("Live", "info");
   } catch (error) {
@@ -1832,6 +1887,84 @@ function renderTechnicians() {
     </section>
   `;
   wireNavigationTargets(els.mainPanel);
+}
+
+async function loadLabor() {
+  const result = await api(`/api/labor/payroll${qs(filters.labor)}`);
+  state.data.labor = result;
+  renderLabor();
+}
+
+function renderLabor() {
+  const result = state.data.labor || {};
+  const summary = result.summary || {};
+  const rules = result.pay_rules || {};
+  const items = result.items || [];
+  const range = result.range || {};
+
+  els.mainPanel.innerHTML = `
+    <section class="section-card">
+      <div class="item-card-header">
+        <div>
+          <h3>Payroll Snapshot</h3>
+          <p class="panel-subtitle">${escapeHtml(range.label || "")} · Up to ${escapeHtml(rules.regular_pool_cap ?? 40)} pools count as regular Gusto hours, then the rest roll into commission.</p>
+        </div>
+        <div class="meta-stack">
+          <div class="meta-row"><span>Pool Rate</span><strong>${escapeHtml(currency(rules.pool_rate) || "$0.00")}</strong></div>
+          <div class="meta-row"><span>Filter Clean Rate</span><strong>${escapeHtml(currency(rules.filter_clean_rate) || "$0.00")}</strong></div>
+        </div>
+      </div>
+      <div class="stat-grid">
+        <article class="stat-card"><span class="muted">Payable Techs</span><strong>${escapeHtml(summary.payable_tech_count ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Pools</span><strong>${escapeHtml(summary.total_pools ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Regular Pools</span><strong>${escapeHtml(summary.total_regular_pools ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Commission Pools</span><strong>${escapeHtml(summary.total_commission_pools ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Filter Cleans</span><strong>${escapeHtml(summary.total_filter_cleans ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Weekly Total</span><strong>${escapeHtml(currency(summary.total_pay) || "$0.00")}</strong></article>
+      </div>
+    </section>
+    <section class="section-card">
+      <div class="item-card-header">
+        <div>
+          <h3>Gusto Entry Sheet</h3>
+          <p class="panel-subtitle">Regular hours = first ${escapeHtml(rules.regular_pool_cap ?? 40)} pools. Commission = remaining pools at the same per-pool rate. Filter cleans stay separate.</p>
+        </div>
+      </div>
+      <div class="payroll-table-wrap">
+        <div class="payroll-table">
+          <div class="payroll-table-row payroll-table-head">
+            <div>Tech</div>
+            <div>Pools</div>
+            <div>Reg Hours</div>
+            <div>Comm Pools</div>
+            <div>Filter Cleans</div>
+            <div>Regular</div>
+            <div>Commission</div>
+            <div>Filter Pay</div>
+            <div>Total</div>
+            <div>Notes</div>
+          </div>
+          ${items.map((item) => `
+            <div class="payroll-table-row${item.is_salary ? " is-muted" : ""}">
+              <div>
+                <strong>${escapeHtml(item.tech_name || item.tech_id || "Unknown Tech")}</strong>
+                <div class="muted">${escapeHtml(item.tech_id || "")}${item.service_day_count ? ` · ${escapeHtml(item.service_day_count)} service days` : ""}</div>
+              </div>
+              <div>${escapeHtml(item.pool_count ?? 0)}</div>
+              <div>${escapeHtml(item.gusto_regular_hours ?? item.regular_pool_count ?? 0)}</div>
+              <div>${escapeHtml(item.commission_pool_count ?? 0)}</div>
+              <div>${escapeHtml(item.filter_clean_count ?? 0)}</div>
+              <div>${escapeHtml(currency(item.regular_pool_pay) || "$0.00")}</div>
+              <div>${escapeHtml(currency(item.gusto_commission_amount ?? item.commission_pool_pay) || "$0.00")}</div>
+              <div>${escapeHtml(currency(item.filter_clean_pay) || "$0.00")}</div>
+              <div><strong>${escapeHtml(currency(item.total_pay) || "$0.00")}</strong></div>
+              <div>${escapeHtml(item.notes || "")}</div>
+            </div>
+          `).join("") || `<div class="empty-state">No labor activity found in this date range.</div>`}
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 async function loadTechnicianDetail(techId) {

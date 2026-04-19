@@ -10,6 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from services.dashboard_backend import (
     create_alert_reminder,
     get_dashboard_summary,
+    get_labor_payroll,
     get_alert_instance,
     get_customer_detail,
     get_refresh_run,
@@ -274,6 +275,21 @@ def api_technicians(
 def api_technician_detail(request: Request, tech_id: str):
     _dashboard_read_auth_or_401(request)
     return get_technician_detail(tech_id)
+
+
+@app.get("/api/labor/payroll")
+def api_labor_payroll(
+    request: Request,
+    start_date: str = "",
+    end_date: str = "",
+    include_salary: int = 0,
+):
+    _dashboard_read_auth_or_401(request)
+    return get_labor_payroll(
+        start_date=start_date or None,
+        end_date=end_date or None,
+        include_salary=bool(include_salary),
+    )
 
 
 @app.get("/api/alerts")

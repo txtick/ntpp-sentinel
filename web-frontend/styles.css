@@ -342,6 +342,41 @@ textarea {
   gap: 14px;
 }
 
+.payroll-table-wrap {
+  overflow-x: auto;
+}
+
+.payroll-table {
+  display: grid;
+  gap: 10px;
+  min-width: 980px;
+}
+
+.payroll-table-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.8fr) repeat(8, minmax(88px, 0.8fr)) minmax(120px, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.payroll-table-head {
+  background: rgba(47, 150, 229, 0.1);
+  border-color: rgba(47, 150, 229, 0.18);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.payroll-table-row.is-muted {
+  opacity: 0.78;
+}
+
 .chart-grid-wide {
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
 }

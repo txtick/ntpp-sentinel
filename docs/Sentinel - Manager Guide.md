@@ -45,6 +45,25 @@ What managers should know:
 
 In practice, this means Route Rollover is meant to reduce manual follow-up during technician handoffs without creating extra customer confusion.
 
+## Labor Page
+The dashboard also includes a `Labor` tab for weekly payroll prep.
+
+What it shows:
+
+- weekly pool counts by technician
+- weekly filter clean counts by technician
+- first `40` pools as regular Gusto hours
+- pools over `40` as commission dollars
+- separate filter-clean pay
+
+Default pay logic:
+
+- `$16` per pool
+- `$25` per filter clean
+- salary technicians can be hidden from the list
+
+This page is meant to give you the numbers you need for Gusto without manually counting route work and filter-clean work orders.
+
 ## When Sentinel auto-resolves an issue
 Sentinel can auto-resolve only when it sees a real employee response.
 
