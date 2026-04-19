@@ -341,6 +341,21 @@ function safeName(...values) {
   return values.find((value) => value && String(value).trim()) || "Untitled";
 }
 
+function isFilterCleanAlert(item = {}) {
+  return [
+    "filter_clean_trend",
+    "filter_clean_missing_psi",
+    "freedom_filter_clean_not_scheduled",
+  ].includes(String(item.rule_code || "").trim());
+}
+
+function filterCleanNotifyToast(payload = {}) {
+  if (payload.quote_detected) return "Customer notified. Matching filter clean quote found and reminder completed.";
+  if (payload.notification_sent) return "Customer notified and quote reminder saved.";
+  if (payload.notification_error) return `Reminder saved, but SMS was not sent: ${payload.notification_error}`;
+  return "Quote reminder saved.";
+}
+
 function renderPaginationControls(result, filterKey) {
   const limit = Number(filters[filterKey]?.limit || 20);
   const offset = Number(filters[filterKey]?.offset || 0);
@@ -1198,6 +1213,7 @@ function renderAlerts() {
               <div class="meta-stack">
                 ${alertReasonBadge(item)} ${badge(item.severity)} ${badge(item.status)}
                 <div class="row-actions">
+                  ${isFilterCleanAlert(item) ? `<button class="button button-secondary button-inline" data-alert-row-action="notify" data-alert-id="${item.id}">Notify</button>` : ""}
                   <button class="button button-secondary button-inline" data-alert-row-action="ack" data-alert-id="${item.id}">Ack</button>
                   <button class="button button-danger button-inline" data-alert-row-action="resolve" data-alert-id="${item.id}">Resolve</button>
                 </div>
@@ -1226,6 +1242,21 @@ function wireAlertRowActions(root = document) {
       const alertId = Number(button.dataset.alertId);
       const action = button.dataset.alertRowAction;
       if (!alertId || !action) return;
+      if (action === "notify") {
+        await mutate(async () => {
+          const params = new URLSearchParams({
+            actor: state.actor || "ui",
+            assigned_to: state.actor || "ui",
+          });
+          const payload = await api(`/api/alerts/${alertId}/notify-customer?${params.toString()}`, { method: "POST", auth: true });
+          await loadAlerts();
+          if (state.selections.alertId === alertId) {
+            await loadAlertDetail(alertId);
+          }
+          showToast(filterCleanNotifyToast(payload), 4200);
+        });
+        return;
+      }
       const endpoint = action === "resolve" ? "resolve" : "ack";
       const successMessage = action === "resolve" ? "Alert resolved." : "Alert acknowledged.";
       await mutate(async () => {
@@ -1334,6 +1365,7 @@ function renderAlertDetail(detail) {
           <label><span>Assigned To</span><input id="alert-reminder-assigned" value="${escapeHtml(state.actor)}" placeholder="jarrett" /></label>
           <label><span>Due At</span><input id="alert-reminder-due" type="datetime-local" /></label>
           <label><span>Reminder Note</span><textarea id="alert-reminder-note" placeholder="Follow up with customer"></textarea></label>
+          ${isFilterCleanAlert(item) ? `<button class="button button-secondary" id="alert-notify-customer-button">Notify Customer</button>` : ""}
           <button class="button button-primary" id="alert-reminder-button">Create Reminder</button>
         </div>
       </section>
@@ -1396,6 +1428,23 @@ function renderAlertDetail(detail) {
     await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
     showToast("Reminder created from alert.");
   }, "Reminder created.");
+  const notifyButton = document.getElementById("alert-notify-customer-button");
+  if (notifyButton) {
+    notifyButton.onclick = () => mutate(async () => {
+      const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
+      const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
+      const note = document.getElementById("alert-reminder-note").value.trim();
+      const params = new URLSearchParams({
+        actor: state.actor || "ui",
+        assigned_to: assignedTo,
+        due_at: dueAt,
+        note,
+      });
+      const payload = await api(`/api/alerts/${item.id}/notify-customer?${params.toString()}`, { method: "POST", auth: true });
+      await loadAlertDetail(item.id);
+      showToast(filterCleanNotifyToast(payload), 4200);
+    });
+  }
   wireNavigationTargets(els.detailPanel);
 }
 
@@ -1457,6 +1506,7 @@ function renderAlertProfile(detail) {
         <label><span>Assigned To</span><input id="alert-reminder-assigned" value="${escapeHtml(state.actor)}" placeholder="jarrett" /></label>
         <label><span>Due At</span><input id="alert-reminder-due" type="datetime-local" /></label>
         <label><span>Reminder Note</span><textarea id="alert-reminder-note" placeholder="Follow up with customer"></textarea></label>
+        ${isFilterCleanAlert(item) ? `<button class="button button-secondary" id="alert-notify-customer-button">Notify Customer</button>` : ""}
         <button class="button button-primary" id="alert-reminder-button">Create Reminder</button>
       </div>
     </section>
@@ -1518,6 +1568,23 @@ function renderAlertProfile(detail) {
     await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
     showToast("Reminder created from alert.");
   }, "Reminder created.");
+  const notifyButton = document.getElementById("alert-notify-customer-button");
+  if (notifyButton) {
+    notifyButton.onclick = () => mutate(async () => {
+      const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
+      const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
+      const note = document.getElementById("alert-reminder-note").value.trim();
+      const params = new URLSearchParams({
+        actor: state.actor || "ui",
+        assigned_to: assignedTo,
+        due_at: dueAt,
+        note,
+      });
+      const payload = await api(`/api/alerts/${item.id}/notify-customer?${params.toString()}`, { method: "POST", auth: true });
+      await loadAlertProfile();
+      showToast(filterCleanNotifyToast(payload), 4200);
+    });
+  }
   wireNavigationTargets(els.mainPanel);
 }
 

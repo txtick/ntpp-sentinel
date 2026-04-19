@@ -113,6 +113,8 @@ INGEST_WORKER_BASE_URL = os.getenv("INGEST_WORKER_BASE_URL", "http://ingest-work
 INGEST_WORKER_SECRET = os.getenv("INGEST_WORKER_SECRET", "").strip() or WEBHOOK_SECRET
 INGEST_TRIGGER_ENABLED = os.getenv("INGEST_TRIGGER_ENABLED", "1").lower() in ("1", "true", "yes", "on")
 INGEST_TRIGGER_TIMEOUT_SECONDS = float(os.getenv("INGEST_TRIGGER_TIMEOUT_SECONDS", "600"))
+WEB_BACKEND_BASE_URL = os.getenv("WEB_BACKEND_BASE_URL", "http://web-backend:8020").rstrip("/")
+WEB_BACKEND_SECRET = os.getenv("WEB_BACKEND_SECRET", "").strip() or WEBHOOK_SECRET
 
 _bh_start_h, _bh_start_m = parse_hhmm(os.getenv("BUSINESS_HOURS_START", "08:00"), 8, 0)
 _bh_end_h, _bh_end_m = parse_hhmm(os.getenv("BUSINESS_HOURS_END", "17:00"), 17, 0)
@@ -761,6 +763,48 @@ async def ghl_send_message(conversation_id: str, contact_id: str, message_text: 
         "contactId": contact_id,
     }
     return await ghl_post("/conversations/messages", payload)
+
+
+async def web_backend_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not WEB_BACKEND_BASE_URL:
+        raise HTTPException(status_code=500, detail="Server missing WEB_BACKEND_BASE_URL")
+    headers = {"Accept": "application/json"}
+    if WEB_BACKEND_SECRET:
+        headers["X-NTPP-Secret"] = WEB_BACKEND_SECRET
+    response = await _ghl_client.get(f"{WEB_BACKEND_BASE_URL}{path}", params=params or {}, headers=headers)
+    if response.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"web-backend GET {path} failed: {response.status_code}")
+    data = response.json()
+    if isinstance(data, dict):
+        return data
+    raise HTTPException(status_code=502, detail=f"web-backend GET {path} returned unexpected payload")
+
+
+async def fetch_dashboard_reminder_rollup(limit: int = 5) -> Dict[str, Any]:
+    try:
+        payload = await web_backend_get(
+            "/api/reminders",
+            params={
+                "overdue_only": 1,
+                "limit": max(1, min(int(limit), 10)),
+            },
+        )
+    except Exception:
+        return {
+            "ok": False,
+            "summary": {
+                "actionable_count": 0,
+                "overdue_count": 0,
+                "completed_count": 0,
+                "linked_alert_count": 0,
+            },
+            "items": [],
+        }
+    return {
+        "ok": True,
+        "summary": payload.get("summary") or {},
+        "items": payload.get("items") or [],
+    }
 
 
 async def ghl_get_contact_name(contact_id: Optional[str]) -> Optional[str]:
@@ -2598,6 +2642,7 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     overdue_sms = fetch_overdue_issues(now_iso, "SMS")
     overdue_calls = fetch_overdue_issues(now_iso, "CALL")
     resolved_since = fetch_resolved_since(last_ts, now_iso)
+    dashboard_reminders = await fetch_dashboard_reminder_rollup(limit=3)
 
     # Enrich issues with contact names if missing
     await _enrich_issues_with_contact_names(list(overdue_sms) + list(overdue_calls) + list(resolved_since))
@@ -2611,6 +2656,10 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     lines: List[str] = []
     lines.append(f"NTPP Sentinel — {title} ({_fmt_date_local(now_local)}) • as of {_fmt_as_of_local(now_local)}")
     lines.append(f"Overdue: Calls {len(overdue_calls)} | Texts {len(overdue_sms)}")
+    reminder_summary = dashboard_reminders.get("summary") or {}
+    reminder_overdue = int(reminder_summary.get("overdue_count") or 0)
+    reminder_actionable = int(reminder_summary.get("actionable_count") or 0)
+    lines.append(f"Dashboard Reminders: {reminder_overdue} overdue | {reminder_actionable} actionable")
     lines.append("")
 
     # Calls
@@ -2630,6 +2679,22 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
 
     if escalated_lines:
         lines.extend(escalated_lines)
+
+    reminder_items = dashboard_reminders.get("items") or []
+    if reminder_items:
+        lines.append("📋 Dashboard Reminders:")
+        for item in reminder_items[:3]:
+            customer_name = str(item.get("customer_name") or "").strip()
+            pool_name = str(item.get("pool_name") or "").strip()
+            title_text = str(item.get("title") or "Reminder").strip()
+            due_at = item.get("due_at")
+            due_label = _fmt_dt_local(due_at) if due_at else "no due date"
+            subject = customer_name or pool_name or "Unassigned"
+            if pool_name and customer_name and pool_name.lower() != customer_name.lower():
+                subject = f"{customer_name} / {pool_name}"
+            lines.append(f"• {subject} — {title_text} — due {due_label}")
+        if reminder_overdue > len(reminder_items):
+            lines.append(f"• +{reminder_overdue - len(reminder_items)} more overdue reminders")
 
     # Dopamine section: show once then disappears
     if last_ts:
@@ -2657,6 +2722,8 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
         "overdue_sms": len(overdue_sms),
         "overdue_calls": len(overdue_calls),
         "resolved_since": len(resolved_since),
+        "dashboard_reminder_overdue": reminder_overdue,
+        "dashboard_reminder_actionable": reminder_actionable,
         "dry_run": bool(dry_run),
         "body": body,
     }

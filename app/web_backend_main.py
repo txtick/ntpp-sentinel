@@ -25,6 +25,7 @@ from services.dashboard_backend import (
     list_reminders,
     list_technicians,
     list_refresh_runs,
+    notify_filter_clean_customer,
     refresh_alert_instances,
     snooze_reminder,
     update_alert_instance_status,
@@ -345,6 +346,27 @@ def api_alert_create_reminder(
         assigned_to=assigned_to or None,
         title=title or None,
         note=note or None,
+    )
+
+
+@app.post("/api/alerts/{alert_id}/notify-customer")
+def api_alert_notify_customer(
+    request: Request,
+    alert_id: int,
+    actor: str = "api",
+    due_at: str = "",
+    assigned_to: str = "",
+    note: str = "",
+    sms_body: str = "",
+):
+    _dashboard_mutation_auth_or_401(request)
+    return notify_filter_clean_customer(
+        alert_id,
+        actor=actor,
+        due_at=due_at or None,
+        assigned_to=assigned_to or None,
+        note=note or None,
+        sms_body=sms_body or None,
     )
 
 

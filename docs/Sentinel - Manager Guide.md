@@ -22,6 +22,8 @@ You get scheduled summary texts (timing set by admin), typically:
 
 Each summary shows overdue calls/texts and what was resolved since the last summary.
 
+Summaries can also include dashboard reminder pressure, such as overdue follow-up reminders created from dashboard alerts. This is intended to keep operational tasks like quote follow-up visible in the same manager text rhythm as SLA items.
+
 The default repo schedule runs on Monday-Saturday, but exact send times and active days come from admin configuration.
 
 ## Response-time window (SLA)
@@ -74,6 +76,23 @@ Alert opt-out:
 - Add the Skimmer tag `no-sentinel-alerts` to a customer to suppress dashboard alerts for that customer after the next Skimmer import and dashboard refresh.
 
 This page is meant to give you the numbers you need for Gusto without manually counting route work and filter-clean work orders.
+
+## Dashboard Reminders
+
+Dashboard alerts can create tracked reminders in the dashboard backend.
+
+What managers should know:
+
+- reminders are separate from missed-call and missed-text SLA issues
+- reminders can be created from alerts when work still needs human follow-up
+- overdue dashboard reminders are now surfaced in the scheduled Sentinel manager summaries so they do not get forgotten
+
+Filter-clean alert workflow:
+
+- filter-clean alerts now support a `Notify Customer` button in the dashboard
+- this sends an SMS telling the customer they are due for a filter clean and that a quote will follow
+- it also creates or updates a dashboard reminder so someone still remembers to send the quote manually
+- once the quote is detected in Skimmer, that reminder should auto-complete
 
 ## When Sentinel auto-resolves an issue
 Sentinel can auto-resolve only when it sees a real employee response.

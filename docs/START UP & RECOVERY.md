@@ -120,7 +120,6 @@ cd /opt/ntpp-sentinel
 ./curl_job.sh "/jobs/recheck_issue?id=444"
 ./curl_job.sh "/jobs/recheck_issue?conversation_id=UHOpErKZ9wDHBlbH3PX2"
 ./curl_job.sh "/jobs/cleanup_raw_events?dry_run=1"
-./curl_job.sh "/jobs/dashboard/refresh?trigger_reason=manual"
 ```
 
 Notes:
@@ -130,6 +129,8 @@ Notes:
 - `recheck_issue` forces a fresh AI gate classification for an existing issue/conversation and immediately resolves matching `OPEN` / `PENDING` issues on that conversation when the refreshed result is a confident `NO`
 - use `recheck_issue?id=<issue>` when you have a Sentinel issue id, or `recheck_issue?conversation_id=<ghl_conversation_id>` when you want to re-evaluate the whole thread directly
 - `dashboard/refresh` re-runs backend-owned dashboard alert detection and clears alert instances that no longer qualify
+- `dashboard/refresh` also runs reminder-side filter-clean quote detection, so quote reminders can auto-complete when a matching Skimmer quote exists
+- manager summaries also include dashboard reminder counts and a short overdue-reminders section when reminders need attention
 
 Manual dashboard alert refresh:
 
@@ -138,6 +139,12 @@ docker compose exec -T web-backend curl -s -X POST \
   "http://localhost:8020/jobs/dashboard/refresh?trigger_reason=manual" \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
+
+Filter-clean notify/reminder workflow:
+
+- use the dashboard `Notify Customer` action on filter-clean alerts when you want Sentinel to text the customer and create the quote-follow-up reminder
+- Sentinel does not create the Skimmer quote directly through the public API today
+- once a matching filter-clean quote exists in Skimmer, the reminder should auto-complete on the next dashboard refresh or reminders/dashboard-summary read
 
 ---
 
@@ -483,6 +490,7 @@ Operator-relevant backend paths:
   - `GET /api/alerts/{alert_id}`
   - `GET /api/alerts/{alert_id}/events`
   - `POST /api/alerts/{alert_id}/reminder`
+  - `POST /api/alerts/{alert_id}/notify-customer`
   - `POST /api/alerts/{alert_id}/ack`
   - `POST /api/alerts/{alert_id}/resolve`
   - `POST /api/alerts/{alert_id}/snooze`
@@ -497,6 +505,10 @@ Operator-relevant backend paths:
   - `POST /api/reminders/{reminder_id}/snooze`
   - `POST /api/reminders/{reminder_id}/complete`
   - `POST /api/reminders/{reminder_id}/cancel`
+
+Reminder note:
+
+- Sentinel manager summaries now pull dashboard reminder counts from `web-backend` internally and include a short overdue reminder rollup when present.
 - Ingest worker:
   - `GET /health`
   - `POST /jobs/run`

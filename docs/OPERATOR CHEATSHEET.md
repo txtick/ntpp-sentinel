@@ -1,0 +1,123 @@
+# Operator Cheatsheet
+
+Copy-paste commands only.
+
+## Deploy
+
+```bash
+cd /opt/ntpp-sentinel
+./deploy.sh
+```
+
+## Health
+
+```bash
+curl -s https://sentinel.northtexaspoolpros.com/health
+curl -s https://dashboard.northtexaspoolpros.com/health
+cd /opt/ntpp-sentinel && docker compose ps
+```
+
+## Logs
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose logs --tail=200 sentinel
+docker compose logs --tail=200 ingest-worker
+docker compose logs --tail=200 web-backend
+```
+
+## Issue Debugging
+
+```bash
+cd /opt/ntpp-sentinel
+./trace.sh +12146323629 --summary --save
+```
+
+## Resolver / AI Recheck
+
+```bash
+cd /opt/ntpp-sentinel
+./curl_job.sh /jobs/poll_resolver
+./curl_job.sh "/jobs/recheck_issue?id=444"
+./curl_job.sh "/jobs/recheck_issue?conversation_id=UHOpErKZ9wDHBlbH3PX2"
+```
+
+Filter-clean quote reminder refresh:
+
+```bash
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/dashboard/refresh?trigger_reason=manual" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
+Use this after a filter-clean quote has been created if you want reminder cleanup to happen immediately.
+
+## Dashboard Alert Refresh
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/dashboard/refresh?trigger_reason=manual" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
+## Skimmer Download + Import
+
+```bash
+cd /opt/ntpp-sentinel
+./curl_job.sh "/jobs/skimmer_drive_sync?import_after=1"
+```
+
+## Validate Worker Against Current SQLite
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T ingest-worker python -m ingest.run \
+  --sqlite /data/skimmer/skimmer.db \
+  --validate-only
+```
+
+## Labor Compare
+
+Live Skimmer API:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel sh -lc 'python /app/scripts/labor_compare_skimmer_api.py --start 2026-04-12 --end 2026-04-18 --debug-first-day'
+```
+
+Nightly Skimmer SQLite:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel sh -lc 'python /app/scripts/labor_compare_skimmer_sqlite.py --sqlite /data/skimmer/skimmer.db --start 2026-04-12 --end 2026-04-18'
+```
+
+## Check Recent Pipeline Runs
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python - <<'PY'
+from pg import pg
+with pg() as conn:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, started_at, completed_at, source_filename, success, error_message
+            FROM ingest_pipeline_runs
+            ORDER BY id DESC
+            LIMIT 10
+        """)
+        for row in cur.fetchall():
+            print(row)
+PY
+```
+
+## Tag-Based Dashboard Alert Suppression
+
+Add this Skimmer tag to the customer:
+
+```text
+no-sentinel-alerts
+```
+
+Then wait for import, or refresh after the next DB download.

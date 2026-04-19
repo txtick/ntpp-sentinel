@@ -20,6 +20,10 @@ MONTHLY_CHEMICAL_COST_REVIEW_THRESHOLD = float(
 DASHBOARD_TIMEZONE = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 SKIMMER_API_BASE_URL = os.getenv("SKIMMER_API_BASE_URL", "https://publicapi.getskimmer.com").rstrip("/")
 SKIMMER_API_KEY = os.getenv("SKIMMER_API_KEY", "").strip()
+GHL_BASE_URL = os.getenv("GHL_BASE_URL", "https://services.leadconnectorhq.com").rstrip("/")
+GHL_TOKEN = os.getenv("GHL_TOKEN", "").strip()
+GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28").strip()
+GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "").strip()
 LABOR_POOL_RATE = float(os.getenv("LABOR_POOL_RATE", "16"))
 LABOR_FILTER_CLEAN_RATE = float(os.getenv("LABOR_FILTER_CLEAN_RATE", "25"))
 LABOR_REGULAR_POOL_CAP = max(0, int(os.getenv("LABOR_REGULAR_POOL_CAP", "40")))
@@ -97,10 +101,321 @@ DEFAULT_CUSTOMER_CHART_POLICY: Dict[str, Any] = {
 CUSTOMER_CHART_POLICY_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "config", "customer_chart_policy.json")
 )
+FILTER_CLEAN_QUOTE_REMINDER_SOURCE = "filter_clean_quote_notify"
+FILTER_CLEAN_RULE_CODES = {
+    "filter_clean_trend",
+    "filter_clean_missing_psi",
+    "freedom_filter_clean_not_scheduled",
+}
+DEFAULT_FILTER_CLEAN_NOTIFY_SMS = (
+    "North Texas Pool Pros here. Based on your filter PSI readings and your recent filter-clean history, "
+    "you are due for a filter clean. We will send a quote for your approval shortly. "
+    "If you would like to proceed, simply approve the quote. If not, you can reject it."
+)
 
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, default=str)
+
+
+def _now_tz() -> datetime:
+    return datetime.now(ZoneInfo(DASHBOARD_TIMEZONE))
+
+
+def _skimmer_json_get(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    if not SKIMMER_API_KEY:
+        raise HTTPException(status_code=503, detail="SKIMMER_API_KEY is not configured")
+    url = f"{SKIMMER_API_BASE_URL}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        url,
+        headers={"skimmer-api-key": SKIMMER_API_KEY, "Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"Skimmer API error {exc.code}: {detail[:300]}")
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Skimmer API request failed: {exc}")
+    try:
+        return json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Skimmer API returned invalid JSON")
+
+
+def _ghl_headers() -> Dict[str, str]:
+    if not GHL_TOKEN:
+        raise HTTPException(status_code=503, detail="GHL_TOKEN is not configured")
+    if not GHL_LOCATION_ID:
+        raise HTTPException(status_code=503, detail="GHL_LOCATION_ID is not configured")
+    return {
+        "Authorization": f"Bearer {GHL_TOKEN}",
+        "Version": GHL_VERSION,
+        "LocationId": GHL_LOCATION_ID,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+
+def _ghl_json_request(method: str, path: str, payload: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Any:
+    url = f"{GHL_BASE_URL}{path}"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=_ghl_headers(), method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"GHL {method.upper()} {path} failed: {exc.code} {detail[:300]}")
+    except urllib.error.URLError as exc:
+        raise HTTPException(status_code=502, detail=f"GHL {method.upper()} {path} request failed: {exc}")
+    try:
+        return json.loads(raw) if raw else {}
+    except Exception:
+        raise HTTPException(status_code=502, detail=f"GHL {method.upper()} {path} returned invalid JSON")
+
+
+def _extract_list_items(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in ("items", "data", "results", "quotes", "value"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+            if isinstance(value, dict):
+                nested = value.get("items") or value.get("data") or value.get("results")
+                if isinstance(nested, list):
+                    return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _recursive_values(value: Any) -> List[Any]:
+    if isinstance(value, dict):
+        collected: List[Any] = []
+        for key, item in value.items():
+            collected.append(key)
+            collected.extend(_recursive_values(item))
+        return collected
+    if isinstance(value, list):
+        collected = []
+        for item in value:
+            collected.extend(_recursive_values(item))
+        return collected
+    return [value]
+
+
+def _recursive_key_values(payload: Any, wanted_keys: set[str]) -> List[str]:
+    matches: List[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if str(key).strip().lower() in wanted_keys and value is not None:
+                matches.append(str(value).strip())
+            matches.extend(_recursive_key_values(value, wanted_keys))
+    elif isinstance(payload, list):
+        for item in payload:
+            matches.extend(_recursive_key_values(item, wanted_keys))
+    return matches
+
+
+def _normalize_token(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_filter_clean_text(value: Any) -> bool:
+    text = _normalize_token(value)
+    return "filter clean" in text or "filter-clean" in text
+
+
+def _default_filter_clean_quote_due_at() -> datetime:
+    now_local = _now_tz()
+    due_local = (now_local + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+    return due_local
+
+
+def _filter_clean_reminder_title(alert: Dict[str, Any]) -> str:
+    metadata = alert.get("metadata_json") or {}
+    customer_name = str(metadata.get("customer_name") or "").strip()
+    pool_name = str(metadata.get("pool_name") or "").strip()
+    who = customer_name or "Customer"
+    if pool_name:
+        who = f"{who} ({pool_name})"
+    return f"Send filter clean quote: {who}"[:250]
+
+
+def _filter_clean_reminder_summary(alert: Dict[str, Any], note: Optional[str]) -> str:
+    metadata = alert.get("metadata_json") or {}
+    reason = str(alert.get("summary") or "").strip()
+    suffix = str(note or "").strip()
+    customer_name = str(metadata.get("customer_name") or "").strip()
+    if suffix:
+        return suffix[:2000]
+    if reason and customer_name:
+        return f"Notify {customer_name} and send the promised filter clean quote. {reason}"[:2000]
+    return (reason or "Notify customer and send the promised filter clean quote.")[:2000]
+
+
+def _skimmer_quote_endpoints() -> List[str]:
+    return [
+        "/Quotes",
+        "/Quotes/GetAllQuotes",
+    ]
+
+
+def _fetch_skimmer_quotes() -> tuple[List[Dict[str, Any]], Optional[str]]:
+    last_error: Optional[str] = None
+    for path in _skimmer_quote_endpoints():
+        try:
+            payload = _skimmer_json_get(path)
+        except HTTPException as exc:
+            last_error = str(exc.detail)
+            continue
+        items = _extract_list_items(payload)
+        if items:
+            return items, path
+        if isinstance(payload, dict):
+            return [], path
+    return [], last_error
+
+
+def _quote_matches_filter_clean(
+    quote: Dict[str, Any],
+    *,
+    source_customer_id: Optional[str],
+    source_service_location_id: Optional[str],
+) -> bool:
+    customer_ids = {
+        _normalize_token(value)
+        for value in _recursive_key_values(
+            quote,
+            {
+                "customerid",
+                "sourcecustomerid",
+                "customer_id",
+                "source_customer_id",
+                "clientid",
+            },
+        )
+        if _normalize_token(value)
+    }
+    service_location_ids = {
+        _normalize_token(value)
+        for value in _recursive_key_values(
+            quote,
+            {
+                "servicelocationid",
+                "sourceservicelocationid",
+                "service_location_id",
+                "source_service_location_id",
+                "poolid",
+                "sourcepoolid",
+            },
+        )
+        if _normalize_token(value)
+    }
+
+    customer_match = bool(source_customer_id) and _normalize_token(source_customer_id) in customer_ids
+    location_match = bool(source_service_location_id) and _normalize_token(source_service_location_id) in service_location_ids
+    if not customer_match and not location_match:
+        return False
+
+    top_level_text = []
+    for key in (
+        "name",
+        "title",
+        "description",
+        "quoteName",
+        "quoteTitle",
+        "subject",
+        "templateName",
+        "type",
+    ):
+        value = quote.get(key)
+        if value is not None:
+            top_level_text.append(str(value))
+
+    nested_text = [str(value) for value in _recursive_values(quote) if isinstance(value, str)]
+    return any(_is_filter_clean_text(value) for value in top_level_text + nested_text)
+
+
+def _find_matching_filter_clean_quote(
+    quotes: List[Dict[str, Any]],
+    *,
+    source_customer_id: Optional[str],
+    source_service_location_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    for quote in quotes:
+        if _quote_matches_filter_clean(
+            quote,
+            source_customer_id=source_customer_id,
+            source_service_location_id=source_service_location_id,
+        ):
+            return quote
+    return None
+
+
+def _extract_quote_identifier(quote: Dict[str, Any]) -> Optional[str]:
+    for key in ("id", "quoteId", "sourceQuoteId", "quoteNumber", "number"):
+        value = quote.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _extract_conversation_id(payload: Any) -> Optional[str]:
+    if isinstance(payload, dict):
+        for key in ("conversations", "data", "items"):
+            value = payload.get(key)
+            if isinstance(value, list) and value:
+                first = value[0]
+                if isinstance(first, dict):
+                    for id_key in ("id", "conversationId"):
+                        raw = first.get(id_key)
+                        if raw is not None and str(raw).strip():
+                            return str(raw).strip()
+        for id_key in ("id", "conversationId"):
+            raw = payload.get(id_key)
+            if raw is not None and str(raw).strip():
+                return str(raw).strip()
+    return None
+
+
+def _ghl_find_conversation_id(contact_id: Optional[str], phone: Optional[str]) -> Optional[str]:
+    params: Dict[str, Any] = {}
+    if contact_id:
+        params["contactId"] = contact_id
+    elif phone:
+        params["phone"] = phone
+    else:
+        return None
+
+    payload = _ghl_json_request("GET", "/conversations/search", params=params)
+    conversation_id = _extract_conversation_id(payload)
+    if conversation_id:
+        return conversation_id
+    if contact_id and phone:
+        payload = _ghl_json_request("GET", "/conversations/search", params={"phone": phone})
+        return _extract_conversation_id(payload)
+    return None
+
+
+def _ghl_send_sms(conversation_id: str, contact_id: str, message_text: str) -> Any:
+    return _ghl_json_request(
+        "POST",
+        "/conversations/messages",
+        payload={
+            "type": "SMS",
+            "message": message_text,
+            "conversationId": conversation_id,
+            "contactId": contact_id,
+        },
+    )
 
 
 def _merge_customer_chart_policy(override: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1004,6 +1319,10 @@ def get_postgres_health() -> Dict[str, Any]:
 
 def get_dashboard_summary() -> Optional[Dict[str, Any]]:
     require_postgres_configured()
+    try:
+        sync_filter_clean_quote_reminders()
+    except Exception:
+        pass
     with pg() as conn:
         with conn.cursor() as cur:
             if not _view_exists(cur, "dashboard_summary_v"):
@@ -1058,6 +1377,10 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
 
 def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
     require_postgres_configured()
+    try:
+        sync_filter_clean_quote_reminders()
+    except Exception:
+        pass
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1965,6 +2288,10 @@ def list_reminders(
     offset: int = 0,
 ) -> Dict[str, Any]:
     require_postgres_configured()
+    try:
+        sync_filter_clean_quote_reminders()
+    except Exception:
+        pass
     safe_limit = max(1, min(int(limit), 500))
     safe_offset = max(0, int(offset))
     params: List[Any] = []
@@ -2122,6 +2449,10 @@ def list_reminders(
 
 def get_reminder_detail(reminder_id: int) -> Dict[str, Any]:
     require_postgres_configured()
+    try:
+        sync_filter_clean_quote_reminders(reminder_ids=[int(reminder_id)])
+    except Exception:
+        pass
     with pg() as conn:
         with conn.cursor() as cur:
             item = _fetch_reminder_instance(cur, int(reminder_id))
@@ -2263,6 +2594,502 @@ def create_alert_reminder(
             item = _fetch_reminder_instance(cur, reminder_id)
 
     return {"ok": True, "created": True, "item": item}
+
+
+def _fetch_filter_clean_alert_context(cur, alert: Dict[str, Any]) -> Dict[str, Any]:
+    cur.execute(
+        """
+        SELECT
+            a.id AS alert_id,
+            a.rule_code,
+            a.status AS alert_status,
+            a.customer_id,
+            a.pool_id,
+            c.source_customer_id,
+            c.phone,
+            c.mobile_phone,
+            c.email,
+            COALESCE(NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''), NULLIF(c.company_name, ''), NULL) AS customer_name,
+            p.name AS pool_name,
+            p.source_service_location_id,
+            sc.ghl_contact_id
+        FROM alert_instances a
+        LEFT JOIN customers c ON c.id = a.customer_id
+        LEFT JOIN pools p ON p.id = a.pool_id
+        LEFT JOIN sk_customer sc
+          ON sc.source_system = c.source_system
+         AND sc.source_customer_id = c.source_customer_id
+        WHERE a.id = %s
+        """,
+        (int(alert["id"]),),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Alert context not found")
+    return dict(row)
+
+
+def _upsert_filter_clean_quote_reminder(
+    cur,
+    *,
+    alert: Dict[str, Any],
+    context: Dict[str, Any],
+    actor: str,
+    assigned_to: Optional[str],
+    due_at: Optional[datetime],
+    note: Optional[str],
+) -> Dict[str, Any]:
+    reminder_title = _filter_clean_reminder_title(alert)
+    reminder_summary = _filter_clean_reminder_summary(alert, note)
+    assigned_to_value = (assigned_to or "").strip() or None
+    metadata = {
+        "workflow": FILTER_CLEAN_QUOTE_REMINDER_SOURCE,
+        "created_from_alert_id": int(alert["id"]),
+        "source_alert_category": alert.get("category"),
+        "source_alert_rule_code": alert.get("rule_code"),
+        "source_alert_status": alert.get("status"),
+        "source_customer_id": context.get("source_customer_id"),
+        "source_service_location_id": context.get("source_service_location_id"),
+        "ghl_contact_id": context.get("ghl_contact_id"),
+        "customer_name": context.get("customer_name"),
+        "pool_name": context.get("pool_name"),
+    }
+    if note:
+        metadata["note"] = str(note).strip()[:2000]
+
+    cur.execute(
+        """
+        SELECT id
+        FROM reminder_instances
+        WHERE source_alert_instance_id = %s
+        """,
+        (int(alert["id"]),),
+    )
+    existing = cur.fetchone()
+    if existing:
+        current = _fetch_reminder_instance(cur, int(existing["id"])) or {}
+        merged_metadata = dict(current.get("metadata_json") or {})
+        merged_metadata.update(metadata)
+        cur.execute(
+            """
+            UPDATE reminder_instances
+            SET
+                source_type = %s,
+                customer_id = %s,
+                pool_id = %s,
+                status = 'open',
+                priority = 'normal',
+                title = %s,
+                summary = %s,
+                due_at = %s,
+                snoozed_until = NULL,
+                completed_at = NULL,
+                canceled_at = NULL,
+                assigned_to = %s,
+                metadata_json = %s::jsonb,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (
+                FILTER_CLEAN_QUOTE_REMINDER_SOURCE,
+                alert.get("customer_id"),
+                alert.get("pool_id"),
+                reminder_title,
+                reminder_summary,
+                due_at,
+                assigned_to_value if assigned_to is not None else current.get("assigned_to"),
+                _json_dumps(merged_metadata),
+                int(existing["id"]),
+            ),
+        )
+        reminder_id = int(existing["id"])
+        cur.execute(
+            """
+            INSERT INTO reminder_events (
+                reminder_instance_id,
+                event_type,
+                actor,
+                payload_json
+            ) VALUES (%s, %s, %s, %s::jsonb)
+            """,
+            (
+                reminder_id,
+                "quote_notify_upserted",
+                actor,
+                _json_dumps(
+                    {
+                        "assigned_to": assigned_to_value,
+                        "due_at": due_at,
+                        "note": note,
+                    }
+                ),
+            ),
+        )
+        return _fetch_reminder_instance(cur, reminder_id) or {}
+
+    cur.execute(
+        """
+        INSERT INTO reminder_instances (
+            source_type,
+            source_alert_instance_id,
+            customer_id,
+            pool_id,
+            status,
+            priority,
+            title,
+            summary,
+            due_at,
+            snoozed_until,
+            assigned_to,
+            created_by,
+            metadata_json
+        ) VALUES (%s, %s, %s, %s, 'open', 'normal', %s, %s, %s, NULL, %s, %s, %s::jsonb)
+        RETURNING id
+        """,
+        (
+            FILTER_CLEAN_QUOTE_REMINDER_SOURCE,
+            int(alert["id"]),
+            alert.get("customer_id"),
+            alert.get("pool_id"),
+            reminder_title,
+            reminder_summary,
+            due_at,
+            assigned_to_value,
+            actor,
+            _json_dumps(metadata),
+        ),
+    )
+    reminder_id = int(cur.fetchone()["id"])
+    cur.execute(
+        """
+        INSERT INTO reminder_events (
+            reminder_instance_id,
+            event_type,
+            actor,
+            payload_json
+        ) VALUES (%s, %s, %s, %s::jsonb)
+        """,
+        (
+            reminder_id,
+            "quote_notify_created",
+            actor,
+            _json_dumps(
+                {
+                    "assigned_to": assigned_to_value,
+                    "due_at": due_at,
+                    "note": note,
+                }
+            ),
+        ),
+    )
+    return _fetch_reminder_instance(cur, reminder_id) or {}
+
+
+def _record_filter_clean_notification_result(
+    *,
+    alert_id: int,
+    reminder_id: int,
+    actor: str,
+    sms_body: str,
+    notification_sent: bool,
+    notification_error: Optional[str],
+    conversation_id: Optional[str],
+    quote_match: Optional[Dict[str, Any]],
+    quote_source: Optional[str],
+) -> None:
+    with pg() as conn:
+        with conn.cursor() as cur:
+            reminder = _fetch_reminder_instance(cur, int(reminder_id))
+            merged_metadata = dict((reminder or {}).get("metadata_json") or {})
+            merged_metadata["last_notification_sms"] = sms_body
+            merged_metadata["last_notification_sent_at"] = _now_tz()
+            merged_metadata["last_notification_sent"] = bool(notification_sent)
+            if conversation_id:
+                merged_metadata["last_notification_conversation_id"] = conversation_id
+            if notification_error:
+                merged_metadata["last_notification_error"] = notification_error
+            else:
+                merged_metadata.pop("last_notification_error", None)
+            if quote_match:
+                merged_metadata["quote_detected"] = {
+                    "quote_id": _extract_quote_identifier(quote_match),
+                    "source": quote_source,
+                    "detected_at": _now_tz(),
+                }
+
+            cur.execute(
+                """
+                UPDATE reminder_instances
+                SET metadata_json = %s::jsonb,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (_json_dumps(merged_metadata), int(reminder_id)),
+            )
+            cur.execute(
+                """
+                INSERT INTO reminder_events (
+                    reminder_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (
+                    int(reminder_id),
+                    "customer_notified" if notification_sent else "customer_notify_failed",
+                    actor,
+                    _json_dumps(
+                        {
+                            "conversation_id": conversation_id,
+                            "notification_error": notification_error,
+                        }
+                    ),
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO alert_instance_events (
+                    alert_instance_id,
+                    event_type,
+                    actor,
+                    payload_json
+                ) VALUES (%s, %s, %s, %s::jsonb)
+                """,
+                (
+                    int(alert_id),
+                    "customer_notified" if notification_sent else "customer_notify_failed",
+                    actor,
+                    _json_dumps(
+                        {
+                            "reminder_id": int(reminder_id),
+                            "conversation_id": conversation_id,
+                            "notification_error": notification_error,
+                        }
+                    ),
+                ),
+            )
+            conn.commit()
+
+
+def sync_filter_clean_quote_reminders(
+    *,
+    reminder_ids: Optional[List[int]] = None,
+    actor: str = "quote_sync",
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    reminder_filters = ""
+    params: List[Any] = [FILTER_CLEAN_QUOTE_REMINDER_SOURCE]
+    if reminder_ids:
+        reminder_filters = "AND r.id = ANY(%s)"
+        params.append([int(reminder_id) for reminder_id in reminder_ids])
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    r.id,
+                    r.status,
+                    r.source_alert_instance_id,
+                    r.metadata_json,
+                    c.source_customer_id,
+                    p.source_service_location_id
+                FROM reminder_instances r
+                LEFT JOIN customers c ON c.id = r.customer_id
+                LEFT JOIN pools p ON p.id = r.pool_id
+                WHERE r.source_type = %s
+                  AND r.status IN ('open', 'acknowledged', 'snoozed')
+                  {reminder_filters}
+                ORDER BY r.id ASC
+                """,
+                params,
+            )
+            reminder_rows = [dict(row) for row in cur.fetchall()]
+
+    if not reminder_rows:
+        return {"ok": True, "checked": 0, "completed": 0}
+
+    quotes, quote_source = _fetch_skimmer_quotes()
+    completed = 0
+    checked = 0
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            for row in reminder_rows:
+                metadata = row.get("metadata_json") or {}
+                source_customer_id = str(
+                    metadata.get("source_customer_id") or row.get("source_customer_id") or ""
+                ).strip() or None
+                source_service_location_id = str(
+                    metadata.get("source_service_location_id") or row.get("source_service_location_id") or ""
+                ).strip() or None
+                if not source_customer_id and not source_service_location_id:
+                    continue
+                checked += 1
+                quote_match = _find_matching_filter_clean_quote(
+                    quotes,
+                    source_customer_id=source_customer_id,
+                    source_service_location_id=source_service_location_id,
+                )
+                if not quote_match:
+                    continue
+
+                merged_metadata = dict(metadata)
+                merged_metadata["quote_detected"] = {
+                    "quote_id": _extract_quote_identifier(quote_match),
+                    "source": quote_source,
+                    "detected_at": _now_tz(),
+                }
+                cur.execute(
+                    """
+                    UPDATE reminder_instances
+                    SET
+                        status = 'completed',
+                        completed_at = NOW(),
+                        snoozed_until = NULL,
+                        updated_at = NOW(),
+                        metadata_json = %s::jsonb
+                    WHERE id = %s
+                    """,
+                    (_json_dumps(merged_metadata), int(row["id"])),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO reminder_events (
+                        reminder_instance_id,
+                        event_type,
+                        actor,
+                        payload_json
+                    ) VALUES (%s, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        int(row["id"]),
+                        "completed_quote_detected",
+                        actor,
+                        _json_dumps(
+                            {
+                                "quote_id": _extract_quote_identifier(quote_match),
+                                "quote_source": quote_source,
+                            }
+                        ),
+                    ),
+                )
+                if row.get("source_alert_instance_id") is not None:
+                    cur.execute(
+                        """
+                        INSERT INTO alert_instance_events (
+                            alert_instance_id,
+                            event_type,
+                            actor,
+                            payload_json
+                        ) VALUES (%s, %s, %s, %s::jsonb)
+                        """,
+                        (
+                            int(row["source_alert_instance_id"]),
+                            "quote_detected",
+                            actor,
+                            _json_dumps(
+                                {
+                                    "reminder_id": int(row["id"]),
+                                    "quote_id": _extract_quote_identifier(quote_match),
+                                    "quote_source": quote_source,
+                                }
+                            ),
+                        ),
+                    )
+                completed += 1
+            conn.commit()
+
+    return {"ok": True, "checked": checked, "completed": completed, "quote_source": quote_source}
+
+
+def notify_filter_clean_customer(
+    alert_id: int,
+    *,
+    actor: str,
+    due_at: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    note: Optional[str] = None,
+    sms_body: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    due_at_dt = _parse_dt(due_at) or _default_filter_clean_quote_due_at()
+    sms_body_value = (sms_body or "").strip() or DEFAULT_FILTER_CLEAN_NOTIFY_SMS
+    note_value = (note or "").strip() or None
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            alert = _fetch_alert_instance(cur, int(alert_id))
+            if not alert:
+                raise HTTPException(status_code=404, detail="Alert not found")
+            if str(alert.get("rule_code") or "").strip() not in FILTER_CLEAN_RULE_CODES:
+                raise HTTPException(status_code=400, detail="Notify customer is only supported for filter-clean alerts")
+
+            context = _fetch_filter_clean_alert_context(cur, alert)
+            reminder = _upsert_filter_clean_quote_reminder(
+                cur,
+                alert=alert,
+                context=context,
+                actor=actor,
+                assigned_to=assigned_to,
+                due_at=due_at_dt,
+                note=note_value,
+            )
+            conn.commit()
+
+    notification_sent = False
+    notification_error: Optional[str] = None
+    conversation_id: Optional[str] = None
+    try:
+        ghl_contact_id = str(context.get("ghl_contact_id") or "").strip()
+        phone = str(context.get("mobile_phone") or context.get("phone") or "").strip()
+        if not ghl_contact_id:
+            notification_error = "Customer has no linked GHL contact id."
+        else:
+            conversation_id = _ghl_find_conversation_id(ghl_contact_id, phone)
+            if not conversation_id:
+                notification_error = "No GHL conversation found for customer."
+            else:
+                _ghl_send_sms(conversation_id, ghl_contact_id, sms_body_value)
+                notification_sent = True
+    except Exception as exc:
+        notification_error = str(getattr(exc, "detail", exc))[:300]
+
+    quotes, quote_source = _fetch_skimmer_quotes()
+    quote_match = _find_matching_filter_clean_quote(
+        quotes,
+        source_customer_id=context.get("source_customer_id"),
+        source_service_location_id=context.get("source_service_location_id"),
+    )
+    _record_filter_clean_notification_result(
+        alert_id=int(alert_id),
+        reminder_id=int(reminder["id"]),
+        actor=actor,
+        sms_body=sms_body_value,
+        notification_sent=notification_sent,
+        notification_error=notification_error,
+        conversation_id=conversation_id,
+        quote_match=quote_match,
+        quote_source=quote_source,
+    )
+
+    sync_filter_clean_quote_reminders(reminder_ids=[int(reminder["id"])])
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            updated = _fetch_reminder_instance(cur, int(reminder["id"]))
+
+    return {
+        "ok": True,
+        "item": updated,
+        "notification_sent": notification_sent,
+        "notification_error": notification_error,
+        "conversation_id": conversation_id,
+        "quote_detected": bool(quote_match),
+        "quote_id": _extract_quote_identifier(quote_match) if quote_match else None,
+        "quote_source": quote_source,
+    }
 
 
 def update_reminder_status(

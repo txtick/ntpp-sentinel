@@ -2,6 +2,16 @@
 
 Sentinel is the internal orchestration platform for North Texas Pool Pros.
 
+Start here for repo context recovery:
+
+- [AGENTS.md](AGENTS.md)
+- [docs/Current State - Source of Truth.md](docs/Current%20State%20-%20Source%20of%20Truth.md)
+- [docs/DOMAIN RULES.md](docs/DOMAIN%20RULES.md)
+- [docs/DECISIONS.md](docs/DECISIONS.md)
+- [docs/KNOWN QUIRKS.md](docs/KNOWN%20QUIRKS.md)
+- [docs/START UP & RECOVERY.md](docs/START%20UP%20%26%20RECOVERY.md)
+- [docs/OPERATOR CHEATSHEET.md](docs/OPERATOR%20CHEATSHEET.md)
+
 Today it handles:
 - GHL webhook intake and SLA issue tracking
 - manager summaries and escalation jobs
