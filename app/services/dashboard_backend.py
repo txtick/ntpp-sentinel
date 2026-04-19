@@ -2582,7 +2582,7 @@ def get_labor_payroll(
                     SELECT DISTINCT
                         s.technician_id,
                         s.service_date::date AS service_day,
-                        r.pool_id
+                        r.sk_pool_id AS pool_id
                     FROM technician_route_stops s
                     JOIN technicians t ON t.id = s.technician_id
                     JOIN pools r
