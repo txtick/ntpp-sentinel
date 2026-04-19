@@ -166,6 +166,7 @@ def _rule_label(rule_code: str) -> str:
     labels = {
         "filter_clean_missing_psi": "No PSI in 90 Days",
         "filter_clean_trend": "Filter Pressure Stays High",
+        "freedom_filter_clean_not_scheduled": "Freedom Filter Clean Not Scheduled",
         "chemical_cost_review_high": "Chemical Cost Review",
         "drain_refill_cya_repeat": "Drain / Refill Review",
         "fc_cya_ratio_bad_2wk": "FC:CYA Ratio Out Of Balance",
@@ -480,6 +481,8 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
             return f"No filter pressure reading in the last {window_days} days."
         if rule_code == "filter_clean_trend":
             return "Filter pressure has been 20 PSI or higher on the last 2 readings."
+        if rule_code == "freedom_filter_clean_not_scheduled":
+            return "Freedom customer has no upcoming filter clean work order scheduled."
         if rule_code == "chemical_cost_review_high":
             observed = row.get("observed_count")
             threshold = row.get("threshold_value")

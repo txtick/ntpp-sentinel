@@ -54,13 +54,20 @@ What it shows:
 - weekly filter clean counts by technician
 - first `40` pools as regular Gusto hours
 - pools over `40` as commission dollars
-- separate filter-clean pay
+- one final commission dollar amount that already includes filter-clean pay
 
 Default pay logic:
 
 - `$16` per pool
 - `$25` per filter clean
 - salary technicians can be hidden from the list
+
+Important details:
+
+- The payroll week is `Sunday -> Saturday`.
+- For `Cleanings` / pool stops, Sentinel follows the live Skimmer route API so the current week matches Skimmer's Labor report.
+- The nightly Skimmer DB refresh happens around `11:00pm`, so the SQLite copy may be behind for same-day reporting.
+- Filter cleans come from completed Skimmer work orders and are rolled into the final `Commission` dollar amount shown for Gusto entry.
 
 This page is meant to give you the numbers you need for Gusto without manually counting route work and filter-clean work orders.
 

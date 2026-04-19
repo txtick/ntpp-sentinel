@@ -98,6 +98,13 @@ SKIMMER_TECH_ID_MAP={}
 ROLLOVER_ENABLED=1
 ```
 
+Required for the Labor dashboard live cleaning counts:
+
+- `SKIMMER_API_BASE_URL`
+- `SKIMMER_API_KEY`
+
+The Labor page uses the live Skimmer route API for weekly cleaning/stop counts so the current week matches Skimmer even before the nightly `11:00pm` DB refresh. Filter-clean counts still come from Sentinel's imported Skimmer work-order tables.
+
 Required for the ingest worker flow:
 
 ```env

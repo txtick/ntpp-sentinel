@@ -136,6 +136,39 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             """
         )
 
+        cur.execute(
+            """
+            CREATE OR REPLACE FUNCTION customer_has_tag(
+                customer_raw_json JSONB,
+                target_tag TEXT
+            ) RETURNS BOOLEAN
+            LANGUAGE SQL
+            STABLE
+            AS $$
+                SELECT CASE
+                    WHEN customer_raw_json IS NULL OR target_tag IS NULL OR btrim(target_tag) = '' THEN FALSE
+                    ELSE EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements(
+                            CASE
+                                WHEN jsonb_typeof(customer_raw_json->'tags') = 'array' THEN customer_raw_json->'tags'
+                                ELSE '[]'::jsonb
+                            END
+                        ) AS tag
+                        WHERE lower(
+                            COALESCE(
+                                NULLIF(tag->>'name', ''),
+                                NULLIF(tag->>'Name', ''),
+                                NULLIF(trim(BOTH '"' FROM tag::text), '')
+                            )
+                        ) = lower(btrim(target_tag))
+                    )
+                    OR lower(COALESCE(customer_raw_json::text, '')) LIKE ('%' || lower(btrim(target_tag)) || '%')
+                END
+            $$;
+            """
+        )
+
         cur.executemany(
             """
             INSERT INTO alert_rule_config (
@@ -293,6 +326,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ("drain_refill_cya_repeat", "drain_refill", "reading_repeat", "cya", None, "gt", "warning", 10, 100, 2, 60, True, None, None, "Repeated high CYA suggests drain/refill"),
                 ("filter_clean_trend", "filter_clean", "reading_repeat", "filter_pressure", None, "gte", "warning", 10, 20, 2, 21, True, None, None, "2 recent PSI readings at or above 20 suggest filter clean"),
                 ("filter_clean_missing_psi", "filter_clean", "missing_recent_reading", "filter_pressure", None, None, "warning", 10, None, None, 90, True, None, None, "Missing recent PSI reading"),
+                ("freedom_filter_clean_not_scheduled", "filter_clean", "scheduled_work_missing", None, None, None, "warning", 10, None, None, 30, True, None, None, "Freedom customer has no upcoming filter clean scheduled"),
                 ("chemical_cost_review_high", "chemical_cost_review", "monthly_cost", None, None, "gte", "warning", 10, monthly_chemical_cost_review_threshold, None, 30, True, None, None, "High recent chemical cost"),
             ],
         )
@@ -824,7 +858,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                         AND r.service_date >= NOW() - make_interval(days => COALESCE(cfg.window_days, 90))
                   )
             ),
-            recent_completed_filter_cleans AS (
+            recent_or_upcoming_filter_cleans AS (
                 SELECT DISTINCT
                     p.customer_id,
                     p.id AS pool_id
@@ -836,13 +870,45 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                   ON wt.source_system = w.source_system
                  AND wt.source_work_order_type_id = w.source_work_order_type_id
                 WHERE COALESCE(w.is_deleted, FALSE) = FALSE
-                  AND w.service_date >= NOW() - make_interval(days => 90)
-                  AND w.complete_time IS NOT NULL
-                  AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
                   AND (
                       lower(COALESCE(wt.description, '')) = 'filter clean'
                       OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
                   )
+                  AND (
+                      (
+                          w.service_date >= NOW() - make_interval(days => 90)
+                          AND w.complete_time IS NOT NULL
+                          AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+                      )
+                      OR (
+                          w.complete_time IS NULL
+                          AND w.service_date >= CURRENT_DATE
+                      )
+                  )
+            ),
+            freedom_missing_scheduled_filter_clean AS (
+                SELECT
+                    cfg.rule_code,
+                    cfg.opportunity_type,
+                    p.customer_id,
+                    p.id AS pool_id,
+                    NULL::TEXT AS reading_key,
+                    0 AS observed_count,
+                    NULL::NUMERIC AS observed_value,
+                    cfg.threshold_value AS threshold_value,
+                    NULL::TIMESTAMPTZ AS service_date
+                FROM revenue_rule_config cfg
+                JOIN pools p ON cfg.enabled = TRUE AND cfg.source_type = 'scheduled_work_missing'
+                JOIN customers c ON c.id = p.customer_id
+                LEFT JOIN customer_service_history csh ON csh.customer_id = c.id
+                LEFT JOIN filter_clean_eligible_pools fcep ON fcep.pool_id = p.id
+                LEFT JOIN recent_or_upcoming_filter_cleans fc ON fc.pool_id = p.id
+                WHERE c.is_operationally_active = TRUE
+                  AND customer_alert_eligible(csh.first_service_date, c.raw_json)
+                  AND cfg.opportunity_type = 'filter_clean'
+                  AND fcep.pool_id IS NOT NULL
+                  AND fc.pool_id IS NULL
+                  AND customer_has_tag(c.raw_json, 'freedom')
             ),
             monthly_cost AS (
                 SELECT
@@ -878,6 +944,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 UNION ALL
                 SELECT * FROM missing_recent_reading
                 UNION ALL
+                SELECT * FROM freedom_missing_scheduled_filter_clean
+                UNION ALL
                 SELECT * FROM monthly_cost
             )
             SELECT
@@ -895,7 +963,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             FROM unioned u
             JOIN customers c ON c.id = u.customer_id
             LEFT JOIN pools p ON p.id = u.pool_id
-            LEFT JOIN recent_completed_filter_cleans fc ON fc.pool_id = u.pool_id
+            LEFT JOIN recent_or_upcoming_filter_cleans fc ON fc.pool_id = u.pool_id
             WHERE c.is_operationally_active = TRUE
               AND customer_alert_eligible(
                   (SELECT csh.first_service_date FROM customer_service_history csh WHERE csh.customer_id = c.id),
