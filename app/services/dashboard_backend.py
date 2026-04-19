@@ -2627,7 +2627,7 @@ def get_labor_payroll(
                     GROUP BY s.technician_id
                 ),
                 active_techs AS (
-                    SELECT technician_id FROM pool_rollup
+                    SELECT technician_id FROM cleaning_rollup
                     UNION
                     SELECT technician_id FROM filter_clean_rollup
                 )
