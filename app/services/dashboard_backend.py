@@ -2578,28 +2578,26 @@ def get_labor_payroll(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                WITH route_pool_visits AS (
+                WITH route_cleanings AS (
                     SELECT DISTINCT
                         s.technician_id,
                         s.service_date::date AS service_day,
-                        r.sk_pool_id AS pool_id
+                        s.source_route_stop_id AS cleaning_id
                     FROM technician_route_stops s
                     JOIN technicians t ON t.id = s.technician_id
-                    JOIN pools r
-                      ON r.source_system = s.source_system
-                     AND r.source_service_location_id = s.source_service_location_id
                     WHERE t.source_system = 'skimmer'
                       AND s.technician_id IS NOT NULL
                       AND s.is_skipped = FALSE
                       AND s.source_route_assignment_id IS NOT NULL
+                      AND s.complete_time IS NOT NULL
                       AND s.service_date::date BETWEEN %s AND %s
                 ),
-                pool_rollup AS (
+                cleaning_rollup AS (
                     SELECT
                         technician_id,
                         COUNT(*) AS pool_count,
                         COUNT(DISTINCT service_day) AS service_day_count
-                    FROM route_pool_visits
+                    FROM route_cleanings
                     GROUP BY technician_id
                 ),
                 filter_clean_rollup AS (
@@ -2641,12 +2639,12 @@ def get_labor_payroll(
                     t.username,
                     t.role_type,
                     t.is_active,
-                    COALESCE(pr.pool_count, 0) AS pool_count,
-                    COALESCE(pr.service_day_count, 0) AS service_day_count,
+                    COALESCE(cr.pool_count, 0) AS pool_count,
+                    COALESCE(cr.service_day_count, 0) AS service_day_count,
                     COALESCE(fc.filter_clean_count, 0) AS filter_clean_count
                 FROM active_techs a
                 JOIN technicians t ON t.id = a.technician_id
-                LEFT JOIN pool_rollup pr ON pr.technician_id = a.technician_id
+                LEFT JOIN cleaning_rollup cr ON cr.technician_id = a.technician_id
                 LEFT JOIN filter_clean_rollup fc ON fc.technician_id = a.technician_id
                 ORDER BY tech_name ASC, tech_id ASC
                 """,
