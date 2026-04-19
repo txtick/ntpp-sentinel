@@ -25,3 +25,9 @@ docker compose logs --tail=50 ingest-worker
 
 echo "sentinel logs"
 docker compose logs --tail=50 sentinel
+
+echo "web-frontend logs"
+docker compose logs --tail=50 web-frontend
+
+echo "web-backend logs"
+docker compose logs --tail=50 web-backend

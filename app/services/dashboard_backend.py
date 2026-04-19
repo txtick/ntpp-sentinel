@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import urllib.error
 import urllib.parse
@@ -112,6 +113,7 @@ DEFAULT_FILTER_CLEAN_NOTIFY_SMS = (
     "you are due for a filter clean. We will send a quote for your approval shortly. "
     "If you would like to proceed, simply approve the quote. If not, you can reject it."
 )
+FILTER_CLEAN_LOGGER = logging.getLogger("dashboard.filter_clean_quote_sync")
 
 
 def _json_dumps(value: Any) -> str:
@@ -134,7 +136,7 @@ def _skimmer_json_get(path: str, params: Optional[Dict[str, Any]] = None) -> Any
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             body = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -275,12 +277,29 @@ def _fetch_skimmer_quotes() -> tuple[List[Dict[str, Any]], Optional[str]]:
             payload = _skimmer_json_get(path)
         except HTTPException as exc:
             last_error = str(exc.detail)
+            FILTER_CLEAN_LOGGER.warning(
+                "filter_clean_quote_sync_api_error",
+                extra={"path": path, "detail": last_error},
+            )
             continue
         items = _extract_list_items(payload)
         if items:
+            FILTER_CLEAN_LOGGER.info(
+                "filter_clean_quote_sync_api_success",
+                extra={"path": path, "quote_count": len(items)},
+            )
             return items, path
         if isinstance(payload, dict):
+            FILTER_CLEAN_LOGGER.info(
+                "filter_clean_quote_sync_api_empty",
+                extra={"path": path, "quote_count": 0},
+            )
             return [], path
+    if last_error:
+        FILTER_CLEAN_LOGGER.warning(
+            "filter_clean_quote_sync_api_unavailable",
+            extra={"detail": last_error},
+        )
     return [], last_error
 
 
@@ -1319,10 +1338,6 @@ def get_postgres_health() -> Dict[str, Any]:
 
 def get_dashboard_summary() -> Optional[Dict[str, Any]]:
     require_postgres_configured()
-    try:
-        sync_filter_clean_quote_reminders()
-    except Exception:
-        pass
     with pg() as conn:
         with conn.cursor() as cur:
             if not _view_exists(cur, "dashboard_summary_v"):
@@ -2908,6 +2923,10 @@ def sync_filter_clean_quote_reminders(
             reminder_rows = [dict(row) for row in cur.fetchall()]
 
     if not reminder_rows:
+        FILTER_CLEAN_LOGGER.info(
+            "filter_clean_quote_sync",
+            extra={"checked": 0, "completed": 0, "quote_source": None},
+        )
         return {"ok": True, "checked": 0, "completed": 0}
 
     quotes, quote_source = _fetch_skimmer_quotes()
@@ -3001,6 +3020,17 @@ def sync_filter_clean_quote_reminders(
                 completed += 1
             conn.commit()
 
+    FILTER_CLEAN_LOGGER.info(
+        "filter_clean_quote_sync",
+        extra={
+            "checked": checked,
+            "completed": completed,
+            "quote_source": quote_source,
+            "candidate_reminders": len(reminder_rows),
+            "quote_count": len(quotes),
+            "actor": actor,
+        },
+    )
     return {"ok": True, "checked": checked, "completed": completed, "quote_source": quote_source}
 
 
@@ -3079,6 +3109,25 @@ def notify_filter_clean_customer(
     with pg() as conn:
         with conn.cursor() as cur:
             updated = _fetch_reminder_instance(cur, int(reminder["id"]))
+
+    FILTER_CLEAN_LOGGER.info(
+        "filter_clean_notify",
+        extra={
+            "alert_id": int(alert_id),
+            "reminder_id": int(reminder["id"]),
+            "customer_id": alert.get("customer_id"),
+            "pool_id": alert.get("pool_id"),
+            "source_customer_id": context.get("source_customer_id"),
+            "source_service_location_id": context.get("source_service_location_id"),
+            "conversation_id": conversation_id,
+            "notification_sent": notification_sent,
+            "notification_error": notification_error,
+            "quote_detected": bool(quote_match),
+            "quote_id": _extract_quote_identifier(quote_match) if quote_match else None,
+            "quote_source": quote_source,
+            "actor": actor,
+        },
+    )
 
     return {
         "ok": True,
