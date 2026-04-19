@@ -133,6 +133,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     first_service_date IS NOT NULL
                     AND first_service_date <= NOW() - INTERVAL '14 days'
                     AND COALESCE(customer_raw_json::text, '') NOT ILIKE '%service-only%'
+                    AND NOT customer_has_tag(customer_raw_json, 'no-sentinel-alerts')
                     AND NOT EXISTS (
                         SELECT 1
                         FROM service_location_technician_assignments a

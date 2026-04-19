@@ -69,6 +69,10 @@ Important details:
 - The nightly Skimmer DB refresh happens around `11:00pm`, so the SQLite copy may be behind for same-day reporting.
 - Filter cleans come from completed Skimmer work orders and are rolled into the final `Commission` dollar amount shown for Gusto entry.
 
+Alert opt-out:
+
+- Add the Skimmer tag `no-sentinel-alerts` to a customer to suppress dashboard alerts for that customer after the next Skimmer import and dashboard refresh.
+
 This page is meant to give you the numbers you need for Gusto without manually counting route work and filter-clean work orders.
 
 ## When Sentinel auto-resolves an issue
