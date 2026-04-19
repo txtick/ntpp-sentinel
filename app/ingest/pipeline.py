@@ -5,11 +5,15 @@ import sqlite3
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from pg import ensure_pg_schema, pg
 from services.dashboard_schema import ensure_dashboard_schema_definitions
 from scripts.import_skimmer_customers import import_skimmer_data
+
+TIMEZONE_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
 REQUIRED_TABLE_COLUMNS: Dict[str, List[str]] = {
     "Customer": [
@@ -207,7 +211,8 @@ class PipelineBusyError(RuntimeError):
 
 
 def _log(msg: str) -> None:
-    print(f"[ingest-worker] {msg}")
+    stamp = datetime.now(ZoneInfo(TIMEZONE_NAME)).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{stamp}] [ingest-worker] {msg}")
 
 
 def _trigger_web_backend_refresh(

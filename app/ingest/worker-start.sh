@@ -7,4 +7,4 @@ touch /logs/ingest-worker.log
 
 /etc/init.d/cron start
 
-exec uvicorn ingest.worker_api:app --host 0.0.0.0 --port 8010
+exec uvicorn ingest.worker_api:app --host 0.0.0.0 --port 8010 --log-config /app/config/uvicorn_log_config.json

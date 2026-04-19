@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 WORKER_SECRET = os.getenv("INGEST_WORKER_SECRET", "").strip() or os.getenv("WEBHOOK_SECRET", "")
 DEFAULT_SOURCE_SYSTEM = os.getenv("INGEST_SOURCE_SYSTEM", "skimmer")
 WORKER_LOG_PATH = os.getenv("INGEST_WORKER_LOG_PATH", "/logs/ingest-worker.log")
+log = logging.getLogger("ingest.worker_api")
 
 app = FastAPI(title="NTPP Ingest Worker", version="1.0.0", redoc_url=None)
 
@@ -70,6 +72,15 @@ async def run_job(request: Request) -> Dict[str, Any]:
                 close_fds=True,
                 cwd="/app",
             )
+        log.info(
+            "ingest_worker_spawned",
+            extra={
+                "pid": proc.pid,
+                "sqlite_path": sqlite_path,
+                "source_system": source_system,
+                "trigger_reason": trigger_reason,
+            },
+        )
         return {
             "status": "accepted",
             "pid": proc.pid,
@@ -78,6 +89,8 @@ async def run_job(request: Request) -> Dict[str, Any]:
             "trigger_reason": trigger_reason,
         }
     except FileNotFoundError as exc:
+        log.exception("ingest_worker_spawn_failed_missing_file")
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
+        log.exception("ingest_worker_spawn_failed")
         raise HTTPException(status_code=500, detail=f"failed to spawn worker pipeline: {exc}")
