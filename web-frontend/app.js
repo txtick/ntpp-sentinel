@@ -1927,7 +1927,7 @@ function renderLabor() {
       <div class="item-card-header">
         <div>
           <h3>Gusto Entry Sheet</h3>
-          <p class="panel-subtitle">Regular hours = first ${escapeHtml(rules.regular_pool_cap ?? 40)} pools. Commission = remaining pools at the same per-pool rate. Filter cleans stay separate.</p>
+          <p class="panel-subtitle">Regular hours = first ${escapeHtml(rules.regular_pool_cap ?? 40)} pools. Commission = over-40 pools plus filter-clean pay, combined into one Gusto commission amount.</p>
         </div>
       </div>
       <div class="payroll-table-wrap">
@@ -1936,11 +1936,10 @@ function renderLabor() {
             <div>Tech</div>
             <div>Pools</div>
             <div>Reg Hours</div>
-            <div>Comm Pools</div>
             <div>Filter Cleans</div>
+            <div>Comm Pools</div>
             <div>Regular</div>
             <div>Commission</div>
-            <div>Filter Pay</div>
             <div>Total</div>
             <div>Notes</div>
           </div>
@@ -1952,11 +1951,10 @@ function renderLabor() {
               </div>
               <div>${escapeHtml(item.pool_count ?? 0)}</div>
               <div>${escapeHtml(item.gusto_regular_hours ?? item.regular_pool_count ?? 0)}</div>
-              <div>${escapeHtml(item.commission_pool_count ?? 0)}</div>
               <div>${escapeHtml(item.filter_clean_count ?? 0)}</div>
+              <div>${escapeHtml(item.commission_pool_count ?? 0)}</div>
               <div>${escapeHtml(currency(item.regular_pool_pay) || "$0.00")}</div>
               <div>${escapeHtml(currency(item.gusto_commission_amount ?? item.commission_pool_pay) || "$0.00")}</div>
-              <div>${escapeHtml(currency(item.filter_clean_pay) || "$0.00")}</div>
               <div><strong>${escapeHtml(currency(item.total_pay) || "$0.00")}</strong></div>
               <div>${escapeHtml(item.notes || "")}</div>
             </div>
