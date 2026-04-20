@@ -1344,6 +1344,21 @@ def ensure_web_backend_schema() -> None:
                 ON reminder_events(reminder_instance_id, event_ts DESC)
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pollen_daily_log (
+                    log_date DATE PRIMARY KEY,
+                    tree_risk TEXT,
+                    grass_risk TEXT,
+                    weed_risk TEXT,
+                    tree_count NUMERIC,
+                    grass_count NUMERIC,
+                    weed_count NUMERIC,
+                    tree_detail TEXT,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
         conn.commit()
 
 
@@ -4243,6 +4258,81 @@ def update_alert_instance_status(
                 raise HTTPException(status_code=404, detail="Alert not found after update")
 
     return {"ok": True, "item": updated}
+
+
+def upsert_pollen_daily_log(pollen: dict) -> None:
+    """Store today's Ambee pollen reading. Called after each successful Ambee fetch."""
+    if not DATABASE_URL or not pollen:
+        return
+    try:
+        with pg() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO pollen_daily_log
+                        (log_date, tree_risk, grass_risk, weed_risk,
+                         tree_count, grass_count, weed_count, tree_detail, updated_at)
+                    VALUES
+                        (CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (log_date) DO UPDATE SET
+                        tree_risk   = EXCLUDED.tree_risk,
+                        grass_risk  = EXCLUDED.grass_risk,
+                        weed_risk   = EXCLUDED.weed_risk,
+                        tree_count  = EXCLUDED.tree_count,
+                        grass_count = EXCLUDED.grass_count,
+                        weed_count  = EXCLUDED.weed_count,
+                        tree_detail = EXCLUDED.tree_detail,
+                        updated_at  = EXCLUDED.updated_at
+                    """,
+                    (
+                        pollen.get("tree_risk"),
+                        pollen.get("grass_risk"),
+                        pollen.get("weed_risk"),
+                        pollen.get("tree_count"),
+                        pollen.get("grass_count"),
+                        pollen.get("weed_count"),
+                        pollen.get("tree_detail"),
+                    ),
+                )
+            conn.commit()
+    except Exception as exc:
+        _logger.warning(f"pollen_daily_log upsert failed: {exc}")
+
+
+def get_pollen_daily_log(days: int = 7) -> dict:
+    """Return a {date_str: pollen_dict} map for the last N days."""
+    if not DATABASE_URL:
+        return {}
+    try:
+        with pg() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT log_date::text, tree_risk, grass_risk, weed_risk,
+                           tree_count, grass_count, weed_count, tree_detail
+                    FROM pollen_daily_log
+                    WHERE log_date >= CURRENT_DATE - make_interval(days => %s)
+                    ORDER BY log_date
+                    """,
+                    (int(days),),
+                )
+                rows = cur.fetchall()
+        result = {}
+        for row in rows:
+            if isinstance(row, dict):
+                d = row["log_date"]
+                result[d] = {k: row[k] for k in row if k != "log_date"}
+            else:
+                d = row[0]
+                result[d] = {
+                    "tree_risk": row[1], "grass_risk": row[2], "weed_risk": row[3],
+                    "tree_count": row[4], "grass_count": row[5], "weed_count": row[6],
+                    "tree_detail": row[7],
+                }
+        return result
+    except Exception as exc:
+        _logger.warning(f"get_pollen_daily_log failed: {exc}")
+        return {}
 
 
 def get_avg_water_temp(days: int = 7) -> Optional[float]:

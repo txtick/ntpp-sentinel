@@ -28,6 +28,8 @@ from services.dashboard_backend import (
     list_technicians,
     list_refresh_runs,
     get_avg_water_temp,
+    upsert_pollen_daily_log,
+    get_pollen_daily_log,
     notify_filter_clean_customer,
     refresh_alert_instances,
     snooze_reminder,
@@ -675,10 +677,15 @@ def api_weather(request: Request):
                 "ragweed_count": (species.get("Weed") or {}).get("Ragweed"),
                 "updated_at": entry.get("updatedAt"),
             }
+            # Persist today's reading so we can show pollen history
+            upsert_pollen_daily_log(current_pollen)
         except Exception as exc:
             _logger.warning(f"Ambee pollen fetch failed: {exc}")
 
     daily = data.get("daily", {})
+
+    # Load stored pollen history (builds up one day at a time as the widget is loaded)
+    pollen_log = get_pollen_daily_log(days=7)
 
     # Build past-7-days environmental summary (oldest → today)
     daily_times = daily.get("time", [])
@@ -686,11 +693,15 @@ def api_weather(request: Request):
     daily_precip = daily.get("precipitation_sum", [])
     environmental = []
     for i, date in enumerate(daily_times[:8]):   # first 8 entries cover past 7 days + today
+        p = pollen_log.get(date, {})
         environmental.append({
             "date": date,
             "max_wind": daily_wind_max[i] if i < len(daily_wind_max) else None,
             "precip": daily_precip[i] if i < len(daily_precip) else None,
             "max_dust": dust_daily.get(date),
+            "tree_risk": p.get("tree_risk"),
+            "grass_risk": p.get("grass_risk"),
+            "weed_risk": p.get("weed_risk"),
         })
 
     # Use actual fleet water temp from chemistry readings (7-day avg across active pools).

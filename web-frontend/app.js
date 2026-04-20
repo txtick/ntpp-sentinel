@@ -1229,17 +1229,28 @@ function renderWeatherWidget() {
   const envGridHtml = envDays.length ? `
     <div style="margin-top:14px">
       <div class="muted" style="font-size:0.75em;margin-bottom:6px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase">Past 7 Days · Pool Environment</div>
-      <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:3px 10px;align-items:center;font-size:0.78em">
-        <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:3px 10px;align-items:center;font-size:0.78em">
+        <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div><div class="muted">Pollen</div>
         ${envDays.map((d) => {
           const isToday = d.date === todayLocal2;
           const label = isToday ? "Today" : new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
           const w2 = windLevel(d.max_wind);
           const du = dustLevel(d.max_dust);
+          const treeRisk = d.tree_risk || d.grass_risk || d.weed_risk
+            ? [d.tree_risk, d.grass_risk, d.weed_risk].filter(Boolean)
+            : null;
+          const dominantRisk = treeRisk
+            ? treeRisk.reduce((best, r) => {
+                const order = ["Low", "Moderate", "High", "Very High"];
+                return order.indexOf(r) > order.indexOf(best) ? r : best;
+              }, treeRisk[0])
+            : null;
+          const po = dominantRisk ? pollenRisk(dominantRisk) : { label: "—", color: "var(--muted)" };
           const rowStyle = isToday ? "font-weight:600" : "";
           return `<div style="${rowStyle};color:var(--ink)">${label}</div>
                   <div style="color:${w2.color}">${w2.label}</div>
-                  <div style="color:${du.color}">${du.label}</div>`;
+                  <div style="color:${du.color}">${du.label}</div>
+                  <div style="color:${po.color}">${po.label}</div>`;
         }).join("")}
       </div>
     </div>` : "";
