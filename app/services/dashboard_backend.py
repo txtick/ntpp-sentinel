@@ -851,7 +851,7 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
     threshold_value = row.get("threshold_value")
     reading_key = row.get("reading_key") or "metric"
     if rule_code == "ph_bad_2_of_2_14d":
-        return f"pH was above {threshold_value} on the last 2 readings."
+        return f"pH was above {threshold_value} for 2 visits in a row."
     if rule_code == "cya_above_100":
         return "CYA is above 100."
     if reading_key == "fc_cya_ratio" and observed_value is not None and threshold_value is not None:
