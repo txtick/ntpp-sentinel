@@ -664,9 +664,24 @@ def _is_salary_tech(item: Dict[str, Any]) -> bool:
     return any(candidate in LABOR_SALARY_TECH_NAMES for candidate in candidates if candidate)
 
 
+# Cache for Skimmer daily route responses. Past days are immutable; today refreshes every 10 min.
+_routes_cache: Dict[str, Any] = {}  # key -> {"data": [...], "fetched_at": datetime}
+_ROUTES_CACHE_TTL_TODAY = 86400      # 24 hours — labor is only checked once per day for payroll
+_ROUTES_CACHE_TTL_PAST = 86400       # 24 hours — past days are immutable
+
+
 def _fetch_skimmer_routes_for_day(service_date: date) -> List[Dict[str, Any]]:
     if not SKIMMER_API_KEY:
         raise HTTPException(status_code=503, detail="SKIMMER_API_KEY is not configured")
+
+    cache_key = service_date.isoformat()
+    now = datetime.utcnow()
+    cached = _routes_cache.get(cache_key)
+    if cached:
+        ttl = _ROUTES_CACHE_TTL_TODAY if service_date >= date.today() else _ROUTES_CACHE_TTL_PAST
+        age = (now - cached["fetched_at"]).total_seconds()
+        if age < ttl:
+            return cached["data"]
 
     query = urllib.parse.urlencode({"ServiceDate": service_date.isoformat()})
     url = f"{SKIMMER_API_BASE_URL}/Routes/GetAllRoutesForDay?{query}"
@@ -690,6 +705,8 @@ def _fetch_skimmer_routes_for_day(service_date: date) -> List[Dict[str, Any]]:
         raise HTTPException(status_code=502, detail="Skimmer API returned invalid JSON")
     if not isinstance(data, list):
         raise HTTPException(status_code=502, detail="Unexpected response shape from Skimmer routes API")
+
+    _routes_cache[cache_key] = {"data": data, "fetched_at": now}
     return data
 
 
@@ -1303,6 +1320,12 @@ def ensure_web_backend_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_reminder_instances_source_type
+                ON reminder_instances(source_type, status)
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS reminder_events (
                     id BIGSERIAL PRIMARY KEY,
                     reminder_instance_id BIGINT NOT NULL REFERENCES reminder_instances(id) ON DELETE CASCADE,
@@ -1392,10 +1415,6 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
 
 def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
     require_postgres_configured()
-    try:
-        sync_filter_clean_quote_reminders()
-    except Exception:
-        pass
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1424,7 +1443,7 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
 
                     cur.execute(
                         """
-                        SELECT id, status, resolved_at
+                        SELECT id, status, resolved_at, severity, metadata_json
                         FROM alert_instances
                         WHERE category = %s
                           AND rule_code = %s
@@ -1465,9 +1484,9 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                         else:
                             new_status = existing_status
 
-                        existing_item = _fetch_alert_instance(cur, int(existing["id"])) or {}
-                        previous_evidence_ts = _parse_dt((existing_item.get("metadata_json") or {}).get("service_date"))
-                        severity_changed = str(existing_item.get("severity") or "") != str(item["severity"])
+                        existing_metadata = existing.get("metadata_json") or {}
+                        previous_evidence_ts = _parse_dt(existing_metadata.get("service_date"))
+                        severity_changed = str(existing.get("severity") or "") != str(item["severity"])
                         evidence_changed = evidence_ts != previous_evidence_ts
                         status_reopened = existing_status == "cleared" or reopen_resolved
 
@@ -1657,7 +1676,7 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                     (_json_dumps(metrics), refresh_run_id),
                 )
                 conn.commit()
-                return {
+                refresh_result = {
                     "ok": True,
                     "refresh_run_id": refresh_run_id,
                     "metrics": metrics,
@@ -1675,6 +1694,13 @@ def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:
                 )
                 conn.commit()
                 raise
+
+    # Run quote sync after the alert refresh commits so it doesn't block the main work.
+    try:
+        sync_filter_clean_quote_reminders()
+    except Exception:
+        pass
+    return refresh_result
 
 
 def list_alert_instances(
@@ -2303,10 +2329,6 @@ def list_reminders(
     offset: int = 0,
 ) -> Dict[str, Any]:
     require_postgres_configured()
-    try:
-        sync_filter_clean_quote_reminders()
-    except Exception:
-        pass
     safe_limit = max(1, min(int(limit), 500))
     safe_offset = max(0, int(offset))
     params: List[Any] = []
