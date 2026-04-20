@@ -1213,7 +1213,7 @@ function renderWeatherWidget() {
         <div class="meta-row"><span>Feels Like</span><strong>${Math.round(cur.apparent_temperature ?? 0)}°F</strong></div>
         <div class="meta-row"><span>UV Index</span><strong>${cur.uv_index ?? "—"}</strong></div>
         <div class="meta-row"><span>Wind</span><strong>${Math.round(cur.wind_speed_10m ?? 0)} mph</strong></div>
-        <div class="meta-row"><span>Est. Water Temp</span><strong>${waterTemp != null ? `${waterTemp}°F` : "—"}</strong></div>
+        <div class="meta-row"><span>${w.water_temp_source === "measured" ? "Avg Water Temp (7d)" : "Est. Water Temp"}</span><strong>${waterTemp != null ? `${waterTemp}°F` : "—"}</strong></div>
         <div class="meta-row"><span>Algae Risk</span><strong>${algaeRisk(waterTemp)}</strong></div>
         <div class="meta-row"><span>Pollen Season</span><strong>${pollenNote()}</strong></div>
       </div>

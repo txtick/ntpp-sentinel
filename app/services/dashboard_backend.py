@@ -4243,3 +4243,32 @@ def update_alert_instance_status(
                 raise HTTPException(status_code=404, detail="Alert not found after update")
 
     return {"ok": True, "item": updated}
+
+
+def get_avg_water_temp(days: int = 7) -> Optional[float]:
+    """Fleet-wide average pool water temperature over the last N days.
+    Returns None if no readings exist or Postgres is not configured."""
+    if not DATABASE_URL:
+        return None
+    try:
+        with pg() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT ROUND(AVG(r.value)::numeric, 1)
+                    FROM chemistry_readings r
+                    JOIN customers c ON c.id = r.customer_id
+                    WHERE r.reading_key = 'temperature'
+                      AND r.value IS NOT NULL
+                      AND r.service_date >= CURRENT_DATE - make_interval(days => %s)
+                      AND c.is_operationally_active = TRUE
+                    """,
+                    (int(days),),
+                )
+                row = cur.fetchone()
+                if row:
+                    val = list(row.values())[0] if isinstance(row, dict) else row[0]
+                    return float(val) if val is not None else None
+    except Exception:
+        pass
+    return None

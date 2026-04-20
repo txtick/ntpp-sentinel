@@ -27,6 +27,7 @@ from services.dashboard_backend import (
     list_reminders,
     list_technicians,
     list_refresh_runs,
+    get_avg_water_temp,
     notify_filter_clean_customer,
     refresh_alert_instances,
     snooze_reminder,
@@ -611,22 +612,30 @@ def api_weather(request: Request):
             return _weather_cache
         raise HTTPException(status_code=503, detail="Weather data temporarily unavailable")
 
-    # Estimate pool water temp as 7-day rolling mean of daily air temps.
-    # Pools heat/cool slowly so the rolling mean is a reasonable proxy.
     daily = data.get("daily", {})
-    past_maxes = (daily.get("temperature_2m_max") or [])[:7]
-    past_mins = (daily.get("temperature_2m_min") or [])[:7]
-    means = [
-        (hi + lo) / 2
-        for hi, lo in zip(past_maxes, past_mins)
-        if hi is not None and lo is not None
-    ]
-    estimated_water_temp_f = round(sum(means) / len(means)) if means else None
+
+    # Use actual fleet water temp from chemistry readings (7-day avg across active pools).
+    # Fall back to air-temp estimate only if no readings are available.
+    actual_water_temp_f = get_avg_water_temp(days=7)
+    if actual_water_temp_f is None:
+        past_maxes = (daily.get("temperature_2m_max") or [])[:7]
+        past_mins = (daily.get("temperature_2m_min") or [])[:7]
+        means = [
+            (hi + lo) / 2
+            for hi, lo in zip(past_maxes, past_mins)
+            if hi is not None and lo is not None
+        ]
+        estimated_water_temp_f = round(sum(means) / len(means)) if means else None
+        water_temp_source = "estimated"
+    else:
+        estimated_water_temp_f = actual_water_temp_f
+        water_temp_source = "measured"
 
     result = {
         "current": data.get("current", {}),
         "daily": daily,
         "estimated_water_temp_f": estimated_water_temp_f,
+        "water_temp_source": water_temp_source,
         "fetched_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
     }
     _weather_cache = result
