@@ -24,6 +24,7 @@ Examples:
 
 - `POST /jobs/dashboard/refresh` lives on `web-backend`, not on public Sentinel routes.
 - Public `sentinel.northtexaspoolpros.com` does not expose every backend/internal job path.
+- If an alert summary looks wrong after a code fix, remember that the dashboard may need both a backend refresh and a schema/view refresh path if the wrong value is coming from a SQL view rather than the frontend text formatter.
 
 ## Psycopg
 

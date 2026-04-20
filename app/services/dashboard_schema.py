@@ -464,6 +464,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                             OR (tr.comparator = 'gte' AND r.value >= tr.threshold_value)
                         )
                     ) AS bad_count,
+                    tr.threshold_value,
                     tr.sample_size,
                     tr.min_bad_count
                 FROM (
@@ -492,6 +493,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     r.customer_id,
                     r.pool_id,
                     r.reading_key,
+                    tr.threshold_value,
                     tr.sample_size,
                     tr.min_bad_count
                 HAVING COUNT(*) >= COALESCE(tr.sample_size, 5)
@@ -657,7 +659,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             ),
             unioned AS (
                 SELECT rule_code, severity, severity_rank, customer_id, pool_id, reading_key, service_date,
-                       bad_count::NUMERIC AS observed_value, min_bad_count::NUMERIC AS threshold_value
+                       bad_count::NUMERIC AS observed_value, threshold_value
                 FROM bad_readings
                 UNION ALL
                 SELECT rule_code, severity, severity_rank, customer_id, pool_id, reading_key, service_date,
@@ -1017,9 +1019,9 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 (SELECT completed_at FROM ingest_pipeline_runs WHERE success = TRUE ORDER BY started_at DESC LIMIT 1) AS last_successful_pipeline_at,
                 (SELECT COUNT(*) FROM customers WHERE is_operationally_active = TRUE) AS active_customer_count,
                 (SELECT COUNT(*) FROM pools p JOIN customers c ON c.id = p.customer_id WHERE c.is_operationally_active = TRUE) AS active_pool_count,
-                (SELECT COUNT(DISTINCT customer_id) FROM current_chemistry_alerts_v) AS customers_with_current_alerts,
-                (SELECT COUNT(*) FROM current_chemistry_alerts_v WHERE severity = 'critical') AS critical_current_alert_count,
-                (SELECT COUNT(*) FROM chemistry_trend_alerts_v) AS chemistry_trend_alert_count,
-                (SELECT COUNT(*) FROM revenue_opportunities_v) AS revenue_opportunity_count
+                (SELECT COUNT(DISTINCT customer_id) FROM alert_instances WHERE status <> 'cleared' AND category = 'pool') AS customers_with_current_alerts,
+                (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND severity = 'critical') AS critical_current_alert_count,
+                (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND category = 'process') AS chemistry_trend_alert_count,
+                (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND category = 'revenue') AS revenue_opportunity_count
             """
         )
