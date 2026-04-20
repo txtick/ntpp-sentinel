@@ -1182,7 +1182,8 @@ function renderWeatherWidget() {
   const daily = w.daily || {};
   const waterTemp = w.estimated_water_temp_f;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const _now = new Date();
+  const todayLocal = [_now.getFullYear(), String(_now.getMonth() + 1).padStart(2, "0"), String(_now.getDate()).padStart(2, "0")].join("-");
   const forecastDays = (daily.time || [])
     .map((d, i) => ({
       date: d,
@@ -1191,8 +1192,8 @@ function renderWeatherWidget() {
       code: daily.weather_code?.[i],
       precip: daily.precipitation_sum?.[i],
     }))
-    .filter((d) => d.date >= today)
-    .slice(0, 5);
+    .filter((d) => d.date >= todayLocal)
+    .slice(0, 6);
 
   const forecastHtml = forecastDays.map((d) => {
     const label = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
@@ -1217,7 +1218,7 @@ function renderWeatherWidget() {
         <div class="meta-row"><span>Algae Risk</span><strong>${algaeRisk(waterTemp)}</strong></div>
         <div class="meta-row"><span>Pollen Season</span><strong>${pollenNote()}</strong></div>
       </div>
-      <div style="margin-top:12px;display:grid;grid-template-columns:repeat(5,1fr);gap:5px;text-align:center;font-size:0.78em">
+      <div style="margin-top:12px;display:grid;grid-template-columns:repeat(6,1fr);gap:5px;text-align:center;font-size:0.78em">
         ${forecastHtml}
       </div>
     </section>

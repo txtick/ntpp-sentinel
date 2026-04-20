@@ -595,7 +595,7 @@ def api_weather(request: Request):
         "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index",
         "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum",
         "past_days": 7,
-        "forecast_days": 5,
+        "forecast_days": 7,
         "temperature_unit": "fahrenheit",
         "wind_speed_unit": "mph",
         "precipitation_unit": "inch",
