@@ -122,12 +122,13 @@ def _check_ghl_token() -> None:
         return
     try:
         import urllib.request, urllib.error
+        import urllib.parse
+        qs = urllib.parse.urlencode({"locationId": ghl_location_id, "limit": "1"})
         req = urllib.request.Request(
-            "https://services.leadconnectorhq.com/conversations/search?limit=1",
+            f"https://services.leadconnectorhq.com/conversations/search?{qs}",
             headers={
                 "Authorization": f"Bearer {ghl_token}",
                 "Version": "2021-07-28",
-                "LocationId": ghl_location_id,
                 "Accept": "application/json",
             },
         )

@@ -407,7 +407,7 @@ def _extract_conversation_id(payload: Any) -> Optional[str]:
 
 
 def _ghl_find_conversation_id(contact_id: Optional[str], phone: Optional[str]) -> Optional[str]:
-    params: Dict[str, Any] = {}
+    params: Dict[str, Any] = {"locationId": GHL_LOCATION_ID}
     if contact_id:
         params["contactId"] = contact_id
     elif phone:
@@ -420,7 +420,7 @@ def _ghl_find_conversation_id(contact_id: Optional[str], phone: Optional[str]) -
     if conversation_id:
         return conversation_id
     if contact_id and phone:
-        payload = _ghl_json_request("GET", "/conversations/search", params={"phone": phone})
+        payload = _ghl_json_request("GET", "/conversations/search", params={"locationId": GHL_LOCATION_ID, "phone": phone})
         return _extract_conversation_id(payload)
     return None
 

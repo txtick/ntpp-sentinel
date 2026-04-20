@@ -48,6 +48,12 @@ Examples:
 - Fix: refresh the GHL token in `.env` on both containers, then `docker compose restart web-backend sentinel`.
 - Use notify-customer periodically (or add a scheduled health check) to prevent the 90-day clock from resetting.
 
+## GHL conversations/search — locationId must be a query param
+
+- `conversations/search` requires `locationId` as a **query parameter**, not just as a header. Passing it only via the `LocationId` header causes a 400 or silent failure.
+- Other endpoints (contacts, messages) accept `LocationId` as a header; this one does not.
+- The startup health check and `_ghl_find_conversation_id` were both missing this param — fixed 2026-04-19.
+
 ## Mounts / Containers
 
 - `web-backend` does not mount `./data:/data`.
