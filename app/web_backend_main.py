@@ -111,7 +111,7 @@ _logger = __import__("logging").getLogger("web_backend")
 
 WEATHER_LAT = float(os.getenv("WEATHER_LAT", "33.15"))
 WEATHER_LON = float(os.getenv("WEATHER_LON", "-96.82"))
-TOMORROW_API_KEY = os.getenv("TOMORROW_API_KEY", "").strip()
+AMBEE_API_KEY = os.getenv("AMBEE_API_KEY", "").strip()
 _weather_cache: dict = {}
 _weather_cache_ts: float = 0.0
 WEATHER_CACHE_TTL = 3600  # 1 hour
@@ -641,44 +641,42 @@ def api_weather(request: Request):
     except Exception as exc:
         _logger.warning(f"Open-Meteo air quality fetch failed: {exc}")
 
-    # Fetch pollen from Tomorrow.io (covers North America; 0-5 index per type)
-    pollen_daily: dict = {}
-    if TOMORROW_API_KEY:
+    # Fetch current pollen from Ambee (free plan: latest only, no historical)
+    current_pollen: dict = {}
+    if AMBEE_API_KEY:
         try:
-            start_iso = (_dt.datetime.utcnow() - _dt.timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
-            end_iso = (_dt.datetime.utcnow() + _dt.timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
-            t_params = _urllib_parse.urlencode({
-                "apikey": TOMORROW_API_KEY,
-                "location": f"{WEATHER_LAT},{WEATHER_LON}",
-                "fields": "treeIndex,grassIndex,weedIndex",
-                "timesteps": "1d",
-                "startTime": start_iso,
-                "endTime": end_iso,
-                "units": "imperial",
-            })
-            t_req = _urllib_req.Request(
-                f"https://api.tomorrow.io/v4/timelines?{t_params}",
-                headers={"User-Agent": "NTPP-Sentinel/1.0", "Accept": "application/json"},
+            a_req = _urllib_req.Request(
+                f"https://api.ambeedata.com/latest/pollen/by-lat-lng?lat={WEATHER_LAT}&lng={WEATHER_LON}",
+                headers={"x-api-key": AMBEE_API_KEY, "Accept": "application/json"},
             )
-            with _urllib_req.urlopen(t_req, timeout=10) as resp:
-                t_data = json.loads(resp.read())
-            _logger.info(f"Tomorrow.io response top-level keys: {list(t_data.keys())}")
-            timelines = t_data.get("data", {}).get("timelines", [])
-            _logger.info(f"Tomorrow.io timelines count: {len(timelines)}, first keys: {list(timelines[0].keys()) if timelines else 'none'}")
-            for timeline in timelines:
-                intervals = timeline.get("intervals", [])
-                _logger.info(f"Tomorrow.io intervals count: {len(intervals)}, sample: {intervals[0] if intervals else 'none'}")
-                for interval in intervals:
-                    ts = interval.get("startTime", "")
-                    dt_utc = _dt.datetime.fromisoformat(ts.replace("Z", ""))
-                    local_date = (dt_utc - _dt.timedelta(hours=5)).strftime("%Y-%m-%d")
-                    vals = interval.get("values", {})
-                    indices = [vals.get(k) for k in ("treeIndex", "grassIndex", "weedIndex") if vals.get(k) is not None]
-                    if indices:
-                        pollen_daily[local_date] = max(pollen_daily.get(local_date) or 0, max(indices))
-            _logger.info(f"Tomorrow.io pollen_daily: {pollen_daily}")
+            with _urllib_req.urlopen(a_req, timeout=10) as resp:
+                a_data = json.loads(resp.read())
+            entry = (a_data.get("data") or [{}])[0]
+            risk = entry.get("Risk", {})
+            counts = entry.get("Count", {})
+            species = entry.get("Species", {})
+
+            # Build top-species string for tree pollen (most relevant for TX)
+            tree_species = species.get("Tree", {})
+            top_trees = sorted(
+                [(k, v) for k, v in tree_species.items() if isinstance(v, (int, float)) and v > 0],
+                key=lambda x: x[1], reverse=True
+            )[:3]
+            tree_detail = ", ".join(f"{k.split('/')[0].strip()} {v}" for k, v in top_trees) if top_trees else ""
+
+            current_pollen = {
+                "tree_risk": risk.get("tree_pollen"),
+                "grass_risk": risk.get("grass_pollen"),
+                "weed_risk": risk.get("weed_pollen"),
+                "tree_count": counts.get("tree_pollen"),
+                "grass_count": counts.get("grass_pollen"),
+                "weed_count": counts.get("weed_pollen"),
+                "tree_detail": tree_detail,
+                "ragweed_count": (species.get("Weed") or {}).get("Ragweed"),
+                "updated_at": entry.get("updatedAt"),
+            }
         except Exception as exc:
-            _logger.warning(f"Tomorrow.io pollen fetch failed: {exc}")
+            _logger.warning(f"Ambee pollen fetch failed: {exc}")
 
     daily = data.get("daily", {})
 
@@ -693,7 +691,6 @@ def api_weather(request: Request):
             "max_wind": daily_wind_max[i] if i < len(daily_wind_max) else None,
             "precip": daily_precip[i] if i < len(daily_precip) else None,
             "max_dust": dust_daily.get(date),
-            "max_pollen": pollen_daily.get(date),
         })
 
     # Use actual fleet water temp from chemistry readings (7-day avg across active pools).
@@ -717,6 +714,7 @@ def api_weather(request: Request):
         "current": data.get("current", {}),
         "daily": daily,
         "environmental": environmental,
+        "current_pollen": current_pollen,
         "estimated_water_temp_f": estimated_water_temp_f,
         "water_temp_source": water_temp_source,
         "fetched_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",

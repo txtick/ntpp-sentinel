@@ -1166,14 +1166,13 @@ function dustLevel(ugm3) {
   return { label: "Saharan ⚠", color: "var(--danger)" };
 }
 
-function pollenLevel(index) {
-  // Tomorrow.io 0–5 index: 0=None, 1=Very Low, 2=Low, 3=Medium, 4=High, 5=Very High
-  if (index == null) return { label: "—", color: "var(--muted)" };
-  if (index === 0)   return { label: "None", color: "var(--muted)" };
-  if (index <= 1)    return { label: "Very Low", color: "var(--ink)" };
-  if (index <= 2)    return { label: "Low", color: "var(--ink)" };
-  if (index <= 3)    return { label: "Moderate", color: "var(--gold)" };
-  if (index <= 4)    return { label: "High", color: "#d97706" };
+function pollenRisk(risk) {
+  // Ambee risk text: Low, Moderate, High, Very High
+  if (!risk) return { label: "—", color: "var(--muted)" };
+  const r = risk.toLowerCase();
+  if (r === "low")       return { label: "Low", color: "var(--ink)" };
+  if (r === "moderate")  return { label: "Moderate", color: "var(--gold)" };
+  if (r === "high")      return { label: "High", color: "#d97706" };
   return { label: "Very High ⚠", color: "var(--danger)" };
 }
 
@@ -1186,20 +1185,20 @@ function algaeRisk(tempF) {
   return "High — Peak Season";
 }
 
-function pollenNote() {
-  const m = new Date().getMonth() + 1;
-  if (m === 1)  return "Mountain cedar — very high";
-  if (m === 2)  return "Cedar ending · elm & oak starting";
-  if (m === 3)  return "Oak, elm, ash — high";
-  if (m === 4)  return "Oak continuing · grass building";
-  if (m === 5)  return "Grass pollen — moderate";
-  if (m === 6)  return "Grass pollen — high";
-  if (m === 7)  return "Grass peak · ragweed starting";
-  if (m === 8)  return "Ragweed building — high";
-  if (m === 9)  return "Ragweed peak — very high";
-  if (m === 10) return "Ragweed ending · mold possible";
-  if (m === 11) return "Low — cedar starting late month";
-  return "Cedar season beginning";
+function renderPollenRows(pollen) {
+  if (!pollen || !pollen.tree_risk) return "";
+  const tree = pollenRisk(pollen.tree_risk);
+  const grass = pollenRisk(pollen.grass_risk);
+  const weed = pollenRisk(pollen.weed_risk);
+  const treeLabel = pollen.tree_detail
+    ? `<strong style="color:${tree.color}">${tree.label}</strong> <span class="muted" style="font-size:0.85em">${escapeHtml(pollen.tree_detail)}</span>`
+    : `<strong style="color:${tree.color}">${tree.label}</strong>`;
+  const ragweed = pollen.ragweed_count > 0 ? ` · ragweed ${pollen.ragweed_count}` : "";
+  return `
+    <div class="meta-row"><span>Tree Pollen</span><div style="text-align:right">${treeLabel}</div></div>
+    <div class="meta-row"><span>Grass Pollen</span><strong style="color:${grass.color}">${grass.label}${pollen.grass_count > 0 ? ` (${pollen.grass_count})` : ""}</strong></div>
+    <div class="meta-row"><span>Weed / Ragweed</span><strong style="color:${weed.color}">${weed.label}${ragweed}</strong></div>
+  `;
 }
 
 function renderWeatherWidget() {
@@ -1230,19 +1229,17 @@ function renderWeatherWidget() {
   const envGridHtml = envDays.length ? `
     <div style="margin-top:14px">
       <div class="muted" style="font-size:0.75em;margin-bottom:6px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase">Past 7 Days · Pool Environment</div>
-      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:3px 10px;align-items:center;font-size:0.78em">
-        <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div><div class="muted">Pollen</div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr;gap:3px 10px;align-items:center;font-size:0.78em">
+        <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div>
         ${envDays.map((d) => {
           const isToday = d.date === todayLocal2;
           const label = isToday ? "Today" : new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
           const w2 = windLevel(d.max_wind);
           const du = dustLevel(d.max_dust);
-          const po = pollenLevel(d.max_pollen);
           const rowStyle = isToday ? "font-weight:600" : "";
           return `<div style="${rowStyle};color:var(--ink)">${label}</div>
                   <div style="color:${w2.color}">${w2.label}</div>
-                  <div style="color:${du.color}">${du.label}</div>
-                  <div style="color:${po.color}">${po.label}</div>`;
+                  <div style="color:${du.color}">${du.label}</div>`;
         }).join("")}
       </div>
     </div>` : "";
@@ -1270,7 +1267,7 @@ function renderWeatherWidget() {
         <div class="meta-row"><span>Wind</span><strong>${Math.round(cur.wind_speed_10m ?? 0)} mph</strong></div>
         <div class="meta-row"><span>${w.water_temp_source === "measured" ? "Avg Water Temp (7d)" : "Est. Water Temp"}</span><strong>${waterTemp != null ? `${waterTemp}°F` : "—"}</strong></div>
         <div class="meta-row"><span>Algae Risk</span><strong>${algaeRisk(waterTemp)}</strong></div>
-        <div class="meta-row"><span>Pollen Season</span><strong>${pollenNote()}</strong></div>
+        ${renderPollenRows(w.current_pollen)}
       </div>
       ${envGridHtml}
       <div style="margin-top:12px;display:grid;grid-template-columns:repeat(6,1fr);gap:5px;text-align:center;font-size:0.78em">
