@@ -1,3 +1,9 @@
+{
+    log {
+        format console
+    }
+}
+
 :8030 {
     encode zstd gzip
 
