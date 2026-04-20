@@ -891,8 +891,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                       OR lower(COALESCE(w.work_needed, '')) LIKE '%filter clean%'
                   )
                   AND w.service_date >= NOW() - make_interval(days => 90)
-                  AND w.complete_time IS NOT NULL
-                  AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+                  AND w.service_date < CURRENT_DATE
             ),
             upcoming_filter_cleans AS (
                 SELECT DISTINCT
@@ -1003,10 +1002,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                   u.opportunity_type = 'filter_clean'
                   AND (
                       upcoming_fc.pool_id IS NOT NULL
-                      OR (
-                          u.rule_code = 'filter_clean_missing_psi'
-                          AND recent_fc.pool_id IS NOT NULL
-                      )
+                      OR recent_fc.pool_id IS NOT NULL
                   )
               )
             """
