@@ -1149,6 +1149,31 @@ function wmoLabel(code) {
   return WMO_LABELS[code] ?? "—";
 }
 
+function windLevel(mph) {
+  if (mph == null) return { label: "—", color: "var(--muted)" };
+  const v = Math.round(mph);
+  if (mph < 15) return { label: `${v} mph`, color: "var(--ink)" };
+  if (mph < 25) return { label: `${v} mph`, color: "var(--gold)" };
+  if (mph < 35) return { label: `${v} mph`, color: "#d97706" };
+  return { label: `${v} mph ⚠`, color: "var(--danger)" };
+}
+
+function dustLevel(ugm3) {
+  if (ugm3 == null) return { label: "—", color: "var(--muted)" };
+  if (ugm3 < 25)  return { label: "Low", color: "var(--ink)" };
+  if (ugm3 < 75)  return { label: "Elevated", color: "var(--gold)" };
+  if (ugm3 < 200) return { label: "High", color: "#d97706" };
+  return { label: "Saharan ⚠", color: "var(--danger)" };
+}
+
+function pollenLevel(grains) {
+  if (grains == null) return { label: "—", color: "var(--muted)" };
+  if (grains < 10)  return { label: "Low", color: "var(--ink)" };
+  if (grains < 50)  return { label: "Moderate", color: "var(--gold)" };
+  if (grains < 200) return { label: "High", color: "#d97706" };
+  return { label: "Very High ⚠", color: "var(--danger)" };
+}
+
 function algaeRisk(tempF) {
   if (tempF == null) return "—";
   if (tempF < 60) return "Low — Algae Dormant";
@@ -1191,18 +1216,44 @@ function renderWeatherWidget() {
       min: daily.temperature_2m_min?.[i],
       code: daily.weather_code?.[i],
       precip: daily.precipitation_sum?.[i],
+      wind: daily.wind_speed_10m_max?.[i],
     }))
     .filter((d) => d.date >= todayLocal)
     .slice(0, 6);
 
+  const _now2 = new Date();
+  const todayLocal2 = [_now2.getFullYear(), String(_now2.getMonth() + 1).padStart(2, "0"), String(_now2.getDate()).padStart(2, "0")].join("-");
+  const envDays = (w.environmental || []).filter((d) => d.date <= todayLocal2).slice(-7);
+  const envGridHtml = envDays.length ? `
+    <div style="margin-top:14px">
+      <div class="muted" style="font-size:0.75em;margin-bottom:6px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase">Past 7 Days · Pool Environment</div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:3px 10px;align-items:center;font-size:0.78em">
+        <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div><div class="muted">Pollen</div>
+        ${envDays.map((d) => {
+          const isToday = d.date === todayLocal2;
+          const label = isToday ? "Today" : new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+          const w2 = windLevel(d.max_wind);
+          const du = dustLevel(d.max_dust);
+          const po = pollenLevel(d.max_pollen);
+          const rowStyle = isToday ? "font-weight:600" : "";
+          return `<div style="${rowStyle};color:var(--ink)">${label}</div>
+                  <div style="color:${w2.color}">${w2.label}</div>
+                  <div style="color:${du.color}">${du.label}</div>
+                  <div style="color:${po.color}">${po.label}</div>`;
+        }).join("")}
+      </div>
+    </div>` : "";
+
   const forecastHtml = forecastDays.map((d) => {
     const label = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
     const precipLine = d.precip > 0.01 ? `<div class="muted">${d.precip.toFixed(2)}"</div>` : "";
+    const wl = windLevel(d.wind);
+    const windLine = d.wind >= 15 ? `<div style="color:${wl.color};font-size:0.85em">${wl.label}</div>` : "";
     return `<div style="background:var(--bg-strong);border-radius:8px;padding:6px 4px;line-height:1.4">
       <div style="font-weight:600">${label}</div>
       <div style="font-size:0.85em">${wmoLabel(d.code)}</div>
       <div>${Math.round(d.max ?? 0)}° / ${Math.round(d.min ?? 0)}°</div>
-      ${precipLine}
+      ${precipLine}${windLine}
     </div>`;
   }).join("");
 
@@ -1218,6 +1269,7 @@ function renderWeatherWidget() {
         <div class="meta-row"><span>Algae Risk</span><strong>${algaeRisk(waterTemp)}</strong></div>
         <div class="meta-row"><span>Pollen Season</span><strong>${pollenNote()}</strong></div>
       </div>
+      ${envGridHtml}
       <div style="margin-top:12px;display:grid;grid-template-columns:repeat(6,1fr);gap:5px;text-align:center;font-size:0.78em">
         ${forecastHtml}
       </div>

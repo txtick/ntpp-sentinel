@@ -593,7 +593,7 @@ def api_weather(request: Request):
         "latitude": WEATHER_LAT,
         "longitude": WEATHER_LON,
         "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index",
-        "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum",
+        "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum,wind_speed_10m_max",
         "past_days": 7,
         "forecast_days": 7,
         "temperature_unit": "fahrenheit",
@@ -612,7 +612,58 @@ def api_weather(request: Request):
             return _weather_cache
         raise HTTPException(status_code=503, detail="Weather data temporarily unavailable")
 
+    # Fetch air quality: dust + pollen (hourly, aggregate to daily max)
+    aq_daily: dict = {}
+    try:
+        aq_params = _urllib_parse.urlencode({
+            "latitude": WEATHER_LAT,
+            "longitude": WEATHER_LON,
+            "hourly": "dust,grass_pollen,ragweed_pollen",
+            "past_days": 7,
+            "forecast_days": 1,
+            "timezone": "America/Chicago",
+        })
+        aq_req = _urllib_req.Request(
+            f"https://air-quality-api.open-meteo.com/v1/air-quality?{aq_params}",
+            headers={"User-Agent": "NTPP-Sentinel/1.0"},
+        )
+        with _urllib_req.urlopen(aq_req, timeout=10) as resp:
+            aq_data = json.loads(resp.read())
+        hourly = aq_data.get("hourly", {})
+        times = hourly.get("time", [])
+        dust_h = hourly.get("dust", [])
+        grass_h = hourly.get("grass_pollen", [])
+        ragweed_h = hourly.get("ragweed_pollen", [])
+        for i, t in enumerate(times):
+            date = t[:10]
+            entry = aq_daily.setdefault(date, {"dust": None, "pollen": None})
+            d = dust_h[i] if i < len(dust_h) else None
+            g = grass_h[i] if i < len(grass_h) else None
+            r = ragweed_h[i] if i < len(ragweed_h) else None
+            p = max(v for v in (g, r) if v is not None) if any(v is not None for v in (g, r)) else None
+            if d is not None:
+                entry["dust"] = max(entry["dust"], d) if entry["dust"] is not None else d
+            if p is not None:
+                entry["pollen"] = max(entry["pollen"], p) if entry["pollen"] is not None else p
+    except Exception as exc:
+        _logger.warning(f"Air quality API fetch failed: {exc}")
+
     daily = data.get("daily", {})
+
+    # Build past-7-days environmental summary (oldest → today)
+    daily_times = daily.get("time", [])
+    daily_wind_max = daily.get("wind_speed_10m_max", [])
+    daily_precip = daily.get("precipitation_sum", [])
+    environmental = []
+    for i, date in enumerate(daily_times[:8]):   # first 8 entries cover past 7 days + today
+        aq = aq_daily.get(date, {})
+        environmental.append({
+            "date": date,
+            "max_wind": daily_wind_max[i] if i < len(daily_wind_max) else None,
+            "precip": daily_precip[i] if i < len(daily_precip) else None,
+            "max_dust": aq.get("dust"),
+            "max_pollen": aq.get("pollen"),
+        })
 
     # Use actual fleet water temp from chemistry readings (7-day avg across active pools).
     # Fall back to air-temp estimate only if no readings are available.
@@ -634,6 +685,7 @@ def api_weather(request: Request):
     result = {
         "current": data.get("current", {}),
         "daily": daily,
+        "environmental": environmental,
         "estimated_water_temp_f": estimated_water_temp_f,
         "water_temp_source": water_temp_source,
         "fetched_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
