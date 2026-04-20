@@ -48,6 +48,15 @@ Examples:
 - Fix: refresh the GHL token in `.env` on both containers, then `docker compose restart web-backend sentinel`.
 - Use notify-customer periodically (or add a scheduled health check) to prevent the 90-day clock from resetting.
 
+## Weather Widget APIs
+
+- **Open-Meteo pollen (CAMS) does not cover North America.** Grass/ragweed pollen fields return null for Texas. Use Tomorrow.io (`TOMORROW_API_KEY`) for pollen data instead.
+- **Open-Meteo dust works globally** — use it for Saharan dust events (dust μg/m³ > 75 = elevated, > 200 = Saharan event).
+- **Tomorrow.io free tier:** 500 calls/day, 25/hour. With the 1-hour in-process cache this stays around 24 calls/day. Pollen index is 0–5 (None → Very High).
+- **Weather cache is in-process and resets on container restart.** First load after restart hits all three APIs (Open-Meteo weather, Open-Meteo AQ, Tomorrow.io). Cached for `WEATHER_CACHE_TTL` seconds (default 3600).
+- **`WEATHER_LAT` / `WEATHER_LON`** env vars control coordinates (default 33.15, -96.82 = Frisco/McKinney area).
+- `/api/weather` is on `web-backend` and requires dashboard auth. Weather data is fetched server-side and cached; the frontend does not call external APIs directly.
+
 ## Python urllib + Cloudflare + GHL
 
 - Python's `urllib` sends `User-Agent: Python-urllib/3.x` by default. Cloudflare (which sits in front of GHL's API) blocks this UA and returns 403 with an HTML error page.

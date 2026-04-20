@@ -45,8 +45,9 @@ Keep entries short, but do not skip them.
   - Reason: gives operators a durable business-controlled opt-out.
 - Filter-clean alerts suppress when the clean is already scheduled/upcoming.
   - Reason: do not alert for work already planned.
-- Recent completed filter cleans suppress `filter_clean_missing_psi`, but not `filter_clean_trend`.
-  - Reason: missing-PSI should stay conservative, while repeated high PSI after a recent clean can still indicate real filter-clean need.
+- Recent completed filter cleans (within 90 days, service_date in the past) suppress ALL `filter_clean` opportunity types including `filter_clean_trend`.
+  - Reason: if a customer just had a filter clean, repeated high PSI readings are expected during the recovery period and are not actionable. Changed 2026-04-19 after Will Saba false-positive.
+  - `recent_completed_filter_cleans` uses `service_date < CURRENT_DATE` instead of `complete_time IS NOT NULL`, because Skimmer stores fake `2010-01-01` completion timestamps that would otherwise exclude valid past filter cleans.
 - `freedom` customers can generate a separate missing-scheduled-filter-clean alert.
   - Reason: those customers are expected to have cleans pre-scheduled.
 - Filter-clean alerts use `Notify Customer` plus a dashboard reminder instead of trying to create Skimmer quotes directly.
@@ -70,3 +71,17 @@ Keep entries short, but do not skip them.
   - Reason: it makes blocking Skimmer API calls. Running it on read paths was causing all reminder and homepage requests to stall waiting on external HTTP.
 - Skimmer daily route API results are cached in-process for 24 hours.
   - Reason: the labor page makes one HTTP call per calendar day in the selected range. For a payroll week that is 7 serial calls per page load. Cache is safe because past days are immutable and payroll is only reviewed Mon/Tue.
+
+## Weather Widget
+
+- Weather data is fetched server-side on `web-backend` at `/api/weather` and cached in-process for 1 hour.
+  - Reason: avoids CORS issues, controls rate limiting, and prevents every page load hitting external APIs.
+- Open-Meteo is used for weather and dust (free, no API key, global coverage).
+  - Reason: best free weather source; dust model works globally including Saharan transport events over Texas.
+- Tomorrow.io is used for pollen (requires `TOMORROW_API_KEY`, free tier 500 calls/day).
+  - Reason: Open-Meteo pollen uses the European CAMS model which does not cover North America. Tomorrow.io provides tree/grass/weed pollen index (0–5 scale) for US locations.
+- Pool water temperature shown is the 7-day fleet-wide average of `temperature` readings from active pools in `chemistry_readings`.
+  - Reason: real measured data is more accurate than estimating from air temperature. Falls back to 7-day air temp rolling mean if no readings exist.
+- Algae risk thresholds: Low < 60°F, Low-Mod 60–65°F, Moderate 65–70°F, High 70–78°F, Peak > 78°F.
+- Pollen season note is static by month based on North Texas seasonal patterns (cedar Jan–Feb, oak/elm Mar–Apr, grass May–Aug, ragweed Aug–Oct).
+  - Reason: Tomorrow.io covers real-time and recent pollen; the seasonal note provides broader context for planning.

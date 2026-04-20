@@ -283,6 +283,7 @@ Missing pool linkage for those records is a fatal validation problem.
 - operator dashboard SPA (home, alerts, customers, technicians, labor, reminders views)
 - Google Workspace OAuth login for dashboard access
 - standardized plain-text log format across all Python services and Caddy
+- homepage weather widget (current conditions, 6-day forecast, 7-day pool environment history)
 
 ### Not Built Yet
 
