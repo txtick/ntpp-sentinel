@@ -111,6 +111,7 @@ _logger = __import__("logging").getLogger("web_backend")
 
 WEATHER_LAT = float(os.getenv("WEATHER_LAT", "33.15"))
 WEATHER_LON = float(os.getenv("WEATHER_LON", "-96.82"))
+TOMORROW_API_KEY = os.getenv("TOMORROW_API_KEY", "").strip()
 _weather_cache: dict = {}
 _weather_cache_ts: float = 0.0
 WEATHER_CACHE_TTL = 3600  # 1 hour
@@ -612,13 +613,15 @@ def api_weather(request: Request):
             return _weather_cache
         raise HTTPException(status_code=503, detail="Weather data temporarily unavailable")
 
-    # Fetch air quality: dust + pollen (hourly, aggregate to daily max)
-    aq_daily: dict = {}
+    import datetime as _dt
+
+    # Fetch dust from Open-Meteo Air Quality (global model, works for TX)
+    dust_daily: dict = {}
     try:
         aq_params = _urllib_parse.urlencode({
             "latitude": WEATHER_LAT,
             "longitude": WEATHER_LON,
-            "hourly": "dust,grass_pollen,ragweed_pollen",
+            "hourly": "dust",
             "past_days": 7,
             "forecast_days": 1,
             "timezone": "America/Chicago",
@@ -630,23 +633,48 @@ def api_weather(request: Request):
         with _urllib_req.urlopen(aq_req, timeout=10) as resp:
             aq_data = json.loads(resp.read())
         hourly = aq_data.get("hourly", {})
-        times = hourly.get("time", [])
-        dust_h = hourly.get("dust", [])
-        grass_h = hourly.get("grass_pollen", [])
-        ragweed_h = hourly.get("ragweed_pollen", [])
-        for i, t in enumerate(times):
-            date = t[:10]
-            entry = aq_daily.setdefault(date, {"dust": None, "pollen": None})
-            d = dust_h[i] if i < len(dust_h) else None
-            g = grass_h[i] if i < len(grass_h) else None
-            r = ragweed_h[i] if i < len(ragweed_h) else None
-            p = max(v for v in (g, r) if v is not None) if any(v is not None for v in (g, r)) else None
+        for i, t in enumerate(hourly.get("time", [])):
+            d = (hourly.get("dust") or [])[i] if i < len(hourly.get("dust") or []) else None
             if d is not None:
-                entry["dust"] = max(entry["dust"], d) if entry["dust"] is not None else d
-            if p is not None:
-                entry["pollen"] = max(entry["pollen"], p) if entry["pollen"] is not None else p
+                date = t[:10]
+                dust_daily[date] = max(dust_daily.get(date) or 0, d)
     except Exception as exc:
-        _logger.warning(f"Air quality API fetch failed: {exc}")
+        _logger.warning(f"Open-Meteo air quality fetch failed: {exc}")
+
+    # Fetch pollen from Tomorrow.io (covers North America; 0-5 index per type)
+    pollen_daily: dict = {}
+    if TOMORROW_API_KEY:
+        try:
+            start_iso = (_dt.datetime.utcnow() - _dt.timedelta(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+            end_iso = (_dt.datetime.utcnow() + _dt.timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
+            t_params = _urllib_parse.urlencode({
+                "apikey": TOMORROW_API_KEY,
+                "location": f"{WEATHER_LAT},{WEATHER_LON}",
+                "fields": "treeIndex,grassIndex,weedIndex",
+                "timesteps": "1d",
+                "startTime": start_iso,
+                "endTime": end_iso,
+                "units": "imperial",
+            })
+            t_req = _urllib_req.Request(
+                f"https://api.tomorrow.io/v4/timelines?{t_params}",
+                headers={"User-Agent": "NTPP-Sentinel/1.0", "Accept": "application/json"},
+            )
+            with _urllib_req.urlopen(t_req, timeout=10) as resp:
+                t_data = json.loads(resp.read())
+            for timeline in t_data.get("data", {}).get("timelines", []):
+                for interval in timeline.get("intervals", []):
+                    ts = interval.get("startTime", "")
+                    # Tomorrow.io daily intervals start at local midnight; timestamp is UTC.
+                    # Subtract 6h (CST offset, conservative) to get the correct local date.
+                    dt_utc = _dt.datetime.fromisoformat(ts.replace("Z", ""))
+                    local_date = (dt_utc - _dt.timedelta(hours=6)).strftime("%Y-%m-%d")
+                    vals = interval.get("values", {})
+                    indices = [vals.get(k) for k in ("treeIndex", "grassIndex", "weedIndex") if vals.get(k) is not None]
+                    if indices:
+                        pollen_daily[local_date] = max(pollen_daily.get(local_date) or 0, max(indices))
+        except Exception as exc:
+            _logger.warning(f"Tomorrow.io pollen fetch failed: {exc}")
 
     daily = data.get("daily", {})
 
@@ -656,13 +684,12 @@ def api_weather(request: Request):
     daily_precip = daily.get("precipitation_sum", [])
     environmental = []
     for i, date in enumerate(daily_times[:8]):   # first 8 entries cover past 7 days + today
-        aq = aq_daily.get(date, {})
         environmental.append({
             "date": date,
             "max_wind": daily_wind_max[i] if i < len(daily_wind_max) else None,
             "precip": daily_precip[i] if i < len(daily_precip) else None,
-            "max_dust": aq.get("dust"),
-            "max_pollen": aq.get("pollen"),
+            "max_dust": dust_daily.get(date),
+            "max_pollen": pollen_daily.get(date),
         })
 
     # Use actual fleet water temp from chemistry readings (7-day avg across active pools).

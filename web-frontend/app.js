@@ -1166,11 +1166,14 @@ function dustLevel(ugm3) {
   return { label: "Saharan ⚠", color: "var(--danger)" };
 }
 
-function pollenLevel(grains) {
-  if (grains == null) return { label: "—", color: "var(--muted)" };
-  if (grains < 10)  return { label: "Low", color: "var(--ink)" };
-  if (grains < 50)  return { label: "Moderate", color: "var(--gold)" };
-  if (grains < 200) return { label: "High", color: "#d97706" };
+function pollenLevel(index) {
+  // Tomorrow.io 0–5 index: 0=None, 1=Very Low, 2=Low, 3=Medium, 4=High, 5=Very High
+  if (index == null) return { label: "—", color: "var(--muted)" };
+  if (index === 0)   return { label: "None", color: "var(--muted)" };
+  if (index <= 1)    return { label: "Very Low", color: "var(--ink)" };
+  if (index <= 2)    return { label: "Low", color: "var(--ink)" };
+  if (index <= 3)    return { label: "Moderate", color: "var(--gold)" };
+  if (index <= 4)    return { label: "High", color: "#d97706" };
   return { label: "Very High ⚠", color: "var(--danger)" };
 }
 
