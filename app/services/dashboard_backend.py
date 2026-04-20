@@ -161,6 +161,7 @@ def _ghl_headers() -> Dict[str, str]:
         "LocationId": GHL_LOCATION_ID,
         "Accept": "application/json",
         "Content-Type": "application/json",
+        "User-Agent": "NTPP-Sentinel/1.0",
     }
 
 

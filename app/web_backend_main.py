@@ -130,6 +130,7 @@ def _check_ghl_token() -> None:
                 "Authorization": f"Bearer {ghl_token}",
                 "Version": "2021-07-28",
                 "Accept": "application/json",
+                "User-Agent": "NTPP-Sentinel/1.0",
             },
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
