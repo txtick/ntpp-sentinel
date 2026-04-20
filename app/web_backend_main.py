@@ -104,10 +104,43 @@ def _dashboard_read_auth_or_401(request: Request) -> None:
         )
 
 
+_logger = __import__("logging").getLogger("web_backend")
+
+
 @app.on_event("startup")
 def _startup() -> None:
     if os.getenv("DATABASE_URL"):
         ensure_web_backend_schema()
+    _check_ghl_token()
+
+
+def _check_ghl_token() -> None:
+    ghl_token = os.getenv("GHL_TOKEN", "").strip()
+    ghl_location_id = os.getenv("GHL_LOCATION_ID", "").strip()
+    if not ghl_token or not ghl_location_id:
+        _logger.warning("GHL_TOKEN or GHL_LOCATION_ID not set — notify-customer will not work")
+        return
+    try:
+        import urllib.request, urllib.error
+        req = urllib.request.Request(
+            "https://services.leadconnectorhq.com/conversations/search?limit=1",
+            headers={
+                "Authorization": f"Bearer {ghl_token}",
+                "Version": "2021-07-28",
+                "LocationId": ghl_location_id,
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                _logger.info("GHL token OK — conversations/search reachable")
+    except urllib.error.HTTPError as exc:
+        _logger.error(
+            f"GHL token check failed: {exc.code} — notify-customer will return 403. "
+            "Refresh GHL_TOKEN in .env and restart."
+        )
+    except Exception as exc:
+        _logger.warning(f"GHL token check could not complete: {exc}")
 
 
 @app.get("/health")

@@ -41,6 +41,13 @@ Examples:
 - To force a new AI decision, use `recheck_issue`.
 - `trace.sh` is the preferred operational artifact for debugging issue false positives.
 
+## GHL API Token
+
+- GHL appears to track API token "inactivity" per endpoint or integration type, not per token globally. The `sentinel` container calls GHL messaging/webhook endpoints all day, but `web-backend` calls `conversations/search` (used by notify-customer). If notify-customer has not been used in ~90 days, GHL may expire access to that endpoint even though the token is otherwise active.
+- Symptom: notify-customer returns "GHL GET /conversations/search failed: 403" with a Cloudflare HTML error page.
+- Fix: refresh the GHL token in `.env` on both containers, then `docker compose restart web-backend sentinel`.
+- Use notify-customer periodically (or add a scheduled health check) to prevent the 90-day clock from resetting.
+
 ## Mounts / Containers
 
 - `web-backend` does not mount `./data:/data`.
