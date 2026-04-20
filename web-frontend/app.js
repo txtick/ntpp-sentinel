@@ -110,6 +110,7 @@ const state = {
   },
   data: {
     home: null,
+    weather: null,
     alerts: null,
     customers: null,
     technicians: null,
@@ -1123,13 +1124,104 @@ async function loadCurrentView(force = false) {
 }
 
 async function loadHome() {
-  const [summary, alerts, reminders] = await Promise.all([
+  const [summary, alerts, reminders, weather] = await Promise.all([
     api("/api/home/summary"),
     api("/api/alerts?limit=6"),
     api("/api/reminders?limit=6"),
+    api("/api/weather").catch(() => null),
   ]);
   state.data.home = { summary, alerts, reminders };
+  state.data.weather = weather;
   renderHome();
+}
+
+const WMO_LABELS = {
+  0: "Clear", 1: "Mostly Clear", 2: "Partly Cloudy", 3: "Overcast",
+  45: "Foggy", 48: "Icy Fog",
+  51: "Light Drizzle", 53: "Drizzle", 55: "Heavy Drizzle",
+  61: "Light Rain", 63: "Rain", 65: "Heavy Rain",
+  71: "Light Snow", 73: "Snow", 75: "Heavy Snow",
+  80: "Showers", 81: "Heavy Showers", 82: "Downpours",
+  95: "Thunderstorm", 96: "T-Storm + Hail", 99: "Severe T-Storm",
+};
+
+function wmoLabel(code) {
+  return WMO_LABELS[code] ?? "—";
+}
+
+function algaeRisk(tempF) {
+  if (tempF == null) return "—";
+  if (tempF < 60) return "Low — Algae Dormant";
+  if (tempF < 65) return "Low-Mod — Spring Warming";
+  if (tempF < 70) return "Moderate — Monitor Closely";
+  if (tempF < 78) return "High — Algae Season";
+  return "High — Peak Season";
+}
+
+function pollenNote() {
+  const m = new Date().getMonth() + 1;
+  if (m === 1)  return "Mountain cedar — very high";
+  if (m === 2)  return "Cedar ending · elm & oak starting";
+  if (m === 3)  return "Oak, elm, ash — high";
+  if (m === 4)  return "Oak continuing · grass building";
+  if (m === 5)  return "Grass pollen — moderate";
+  if (m === 6)  return "Grass pollen — high";
+  if (m === 7)  return "Grass peak · ragweed starting";
+  if (m === 8)  return "Ragweed building — high";
+  if (m === 9)  return "Ragweed peak — very high";
+  if (m === 10) return "Ragweed ending · mold possible";
+  if (m === 11) return "Low — cedar starting late month";
+  return "Cedar season beginning";
+}
+
+function renderWeatherWidget() {
+  const w = state.data.weather;
+  if (!w) return `<section class="detail-card"><h3>Weather</h3><p class="muted">Weather data unavailable.</p></section>`;
+
+  const cur = w.current || {};
+  const daily = w.daily || {};
+  const waterTemp = w.estimated_water_temp_f;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const forecastDays = (daily.time || [])
+    .map((d, i) => ({
+      date: d,
+      max: daily.temperature_2m_max?.[i],
+      min: daily.temperature_2m_min?.[i],
+      code: daily.weather_code?.[i],
+      precip: daily.precipitation_sum?.[i],
+    }))
+    .filter((d) => d.date >= today)
+    .slice(0, 5);
+
+  const forecastHtml = forecastDays.map((d) => {
+    const label = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
+    const precipLine = d.precip > 0.01 ? `<div class="muted">${d.precip.toFixed(2)}"</div>` : "";
+    return `<div style="background:var(--bg-strong);border-radius:8px;padding:6px 4px;line-height:1.4">
+      <div style="font-weight:600">${label}</div>
+      <div style="font-size:0.85em">${wmoLabel(d.code)}</div>
+      <div>${Math.round(d.max ?? 0)}° / ${Math.round(d.min ?? 0)}°</div>
+      ${precipLine}
+    </div>`;
+  }).join("");
+
+  return `
+    <section class="detail-card">
+      <h3>Weather <span class="muted" style="font-weight:400;font-size:0.8em">· North TX</span></h3>
+      <div class="meta-stack">
+        <div class="meta-row"><span>Now</span><strong>${Math.round(cur.temperature_2m ?? 0)}°F · ${wmoLabel(cur.weather_code)}</strong></div>
+        <div class="meta-row"><span>Feels Like</span><strong>${Math.round(cur.apparent_temperature ?? 0)}°F</strong></div>
+        <div class="meta-row"><span>UV Index</span><strong>${cur.uv_index ?? "—"}</strong></div>
+        <div class="meta-row"><span>Wind</span><strong>${Math.round(cur.wind_speed_10m ?? 0)} mph</strong></div>
+        <div class="meta-row"><span>Est. Water Temp</span><strong>${waterTemp != null ? `${waterTemp}°F` : "—"}</strong></div>
+        <div class="meta-row"><span>Algae Risk</span><strong>${algaeRisk(waterTemp)}</strong></div>
+        <div class="meta-row"><span>Pollen Season</span><strong>${pollenNote()}</strong></div>
+      </div>
+      <div style="margin-top:12px;display:grid;grid-template-columns:repeat(5,1fr);gap:5px;text-align:center;font-size:0.78em">
+        ${forecastHtml}
+      </div>
+    </section>
+  `;
 }
 
 function renderHome() {
@@ -1175,6 +1267,7 @@ function renderHome() {
 
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
+      ${renderWeatherWidget()}
       <section class="detail-card">
         <h3>Pipeline Pulse</h3>
         <div class="meta-stack">

@@ -1,5 +1,7 @@
+import json
 import os
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -105,6 +107,12 @@ def _dashboard_read_auth_or_401(request: Request) -> None:
 
 
 _logger = __import__("logging").getLogger("web_backend")
+
+WEATHER_LAT = float(os.getenv("WEATHER_LAT", "33.15"))
+WEATHER_LON = float(os.getenv("WEATHER_LON", "-96.82"))
+_weather_cache: dict = {}
+_weather_cache_ts: float = 0.0
+WEATHER_CACHE_TTL = 3600  # 1 hour
 
 
 @app.on_event("startup")
@@ -567,3 +575,60 @@ def api_reminder_cancel(request: Request, reminder_id: int, actor: str = "api", 
         actor=actor,
         note=note or None,
     )
+
+
+@app.get("/api/weather")
+def api_weather(request: Request):
+    _dashboard_read_auth_or_401(request)
+    global _weather_cache, _weather_cache_ts
+    now = time.time()
+    if _weather_cache and now - _weather_cache_ts < WEATHER_CACHE_TTL:
+        return _weather_cache
+
+    import urllib.request as _urllib_req
+    import urllib.parse as _urllib_parse
+
+    params = _urllib_parse.urlencode({
+        "latitude": WEATHER_LAT,
+        "longitude": WEATHER_LON,
+        "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation,uv_index",
+        "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum",
+        "past_days": 7,
+        "forecast_days": 5,
+        "temperature_unit": "fahrenheit",
+        "wind_speed_unit": "mph",
+        "precipitation_unit": "inch",
+        "timezone": "America/Chicago",
+    })
+    url = f"https://api.open-meteo.com/v1/forecast?{params}"
+    try:
+        req = _urllib_req.Request(url, headers={"User-Agent": "NTPP-Sentinel/1.0"})
+        with _urllib_req.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        _logger.warning(f"Weather API fetch failed: {exc}")
+        if _weather_cache:
+            return _weather_cache
+        raise HTTPException(status_code=503, detail="Weather data temporarily unavailable")
+
+    # Estimate pool water temp as 7-day rolling mean of daily air temps.
+    # Pools heat/cool slowly so the rolling mean is a reasonable proxy.
+    daily = data.get("daily", {})
+    past_maxes = (daily.get("temperature_2m_max") or [])[:7]
+    past_mins = (daily.get("temperature_2m_min") or [])[:7]
+    means = [
+        (hi + lo) / 2
+        for hi, lo in zip(past_maxes, past_mins)
+        if hi is not None and lo is not None
+    ]
+    estimated_water_temp_f = round(sum(means) / len(means)) if means else None
+
+    result = {
+        "current": data.get("current", {}),
+        "daily": daily,
+        "estimated_water_temp_f": estimated_water_temp_f,
+        "fetched_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+    }
+    _weather_cache = result
+    _weather_cache_ts = now
+    return result
