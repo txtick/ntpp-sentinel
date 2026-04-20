@@ -111,7 +111,8 @@ FILTER_CLEAN_RULE_CODES = {
 DEFAULT_FILTER_CLEAN_NOTIFY_SMS = (
     "North Texas Pool Pros here. Based on your filter PSI readings and your recent filter-clean history, "
     "you are due for a filter clean. We will send a quote for your approval shortly. "
-    "If you would like to proceed, simply approve the quote. If not, you can reject it."
+    "If you would like to proceed, simply approve the quote. If not, you can reject it. "
+    "Reply STOP to unsubscribe."
 )
 FILTER_CLEAN_LOGGER = logging.getLogger("dashboard.filter_clean_quote_sync")
 
@@ -3132,24 +3133,14 @@ def notify_filter_clean_customer(
         with conn.cursor() as cur:
             updated = _fetch_reminder_instance(cur, int(reminder["id"]))
 
-    FILTER_CLEAN_LOGGER.info(
-        "filter_clean_notify",
-        extra={
-            "alert_id": int(alert_id),
-            "reminder_id": int(reminder["id"]),
-            "customer_id": alert.get("customer_id"),
-            "pool_id": alert.get("pool_id"),
-            "source_customer_id": context.get("source_customer_id"),
-            "source_service_location_id": context.get("source_service_location_id"),
-            "conversation_id": conversation_id,
-            "notification_sent": notification_sent,
-            "notification_error": notification_error,
-            "quote_detected": bool(quote_match),
-            "quote_id": _extract_quote_identifier(quote_match) if quote_match else None,
-            "quote_source": quote_source,
-            "actor": actor,
-        },
+    log_msg = (
+        f"filter_clean_notify alert={alert_id} reminder={reminder['id']}"
+        f" sent={notification_sent}"
+        + (f" error={notification_error!r}" if notification_error else "")
+        + (f" quote_detected=True quote_id={_extract_quote_identifier(quote_match)}" if quote_match else "")
+        + f" actor={actor}"
     )
+    FILTER_CLEAN_LOGGER.info(log_msg)
 
     return {
         "ok": True,
