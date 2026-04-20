@@ -456,6 +456,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     r.pool_id,
                     r.reading_key,
                     MAX(r.service_date) AS service_date,
+                    MAX(CASE WHEN r.rn = 1 THEN r.value END) AS latest_value,
                     COUNT(*) FILTER (
                         WHERE (
                             (tr.comparator = 'lt' AND r.value < tr.threshold_value)
@@ -659,7 +660,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             ),
             unioned AS (
                 SELECT rule_code, severity, severity_rank, customer_id, pool_id, reading_key, service_date,
-                       bad_count::NUMERIC AS observed_value, threshold_value
+                       latest_value AS observed_value, threshold_value
                 FROM bad_readings
                 UNION ALL
                 SELECT rule_code, severity, severity_rank, customer_id, pool_id, reading_key, service_date,

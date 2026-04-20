@@ -61,3 +61,12 @@ Keep entries short, but do not skip them.
 - Skimmer API is the preferred live source when current-week route counts matter.
 - Nightly Skimmer DB is preferred when the API does not include the needed data.
 - Normalized Postgres is Sentinel's working analytics model, not the upstream source of truth.
+
+## Performance Decisions
+
+- `dashboard_summary_v` uses counts from `alert_instances` instead of scanning the live analytics views on every request.
+  - Reason: the live views (`current_chemistry_alerts_v`, etc.) run full window-function scans over `chemistry_readings` on every query. With 27k+ readings, this caused 60+ second homepage load times. The dashboard is refresh-driven anyway, so `alert_instances` is the correct source.
+- `sync_filter_clean_quote_reminders()` runs after the main alert refresh commits, not before it, and no longer runs on every `GET /api/reminders` call.
+  - Reason: it makes blocking Skimmer API calls. Running it on read paths was causing all reminder and homepage requests to stall waiting on external HTTP.
+- Skimmer daily route API results are cached in-process for 24 hours.
+  - Reason: the labor page makes one HTTP call per calendar day in the selected range. For a payroll week that is 7 serial calls per page load. Cache is safe because past days are immutable and payroll is only reviewed Mon/Tue.

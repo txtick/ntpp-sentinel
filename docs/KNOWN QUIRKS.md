@@ -46,3 +46,20 @@ Examples:
 - `web-backend` does not mount `./data:/data`.
 - `sentinel` and `ingest-worker` do mount `./data:/data`.
 - Use the right container when querying the live Skimmer SQLite file.
+
+## Dashboard Summary / Homepage
+
+- `dashboard_summary_v` reads alert counts from `alert_instances`, not from the live analytics views (`current_chemistry_alerts_v`, `chemistry_trend_alerts_v`, `revenue_opportunities_v`).
+- This means homepage stat cards reflect the last dashboard refresh run, not a real-time scan. This is intentional — re-running the full analytics on every page load caused 60+ second load times.
+- If summary counts look stale, the fix is to trigger a dashboard refresh (`POST /jobs/dashboard/refresh`), not to query the views directly.
+
+## Quote Sync / Reminders
+
+- `sync_filter_clean_quote_reminders()` only runs as part of `POST /jobs/dashboard/refresh` (after the main alert work commits). It no longer runs on every `GET /api/reminders` call.
+- If a filter-clean quote reminder is not auto-completing, trigger a dashboard refresh — the quote sync will run as a tail step.
+
+## Labor / Skimmer Route Cache
+
+- Skimmer daily route API responses are cached in-process for 24 hours per calendar day.
+- Past days are immutable so 24 hours is safe. Today's routes also cache for 24 hours since payroll is only reviewed on Monday/Tuesday.
+- Cache is in-memory and resets on container restart. First load after a restart will hit the Skimmer API for each day in the selected range.

@@ -83,7 +83,8 @@ It must not treat `sk_*` tables as the final application model.
 - `sentinel`
 - `ingest-worker`
 - `web-backend`
-- `caddy`
+- `web-frontend` (Caddy serving static SPA + proxying `/api/*` and `/auth/*` to web-backend)
+- `caddy` (public TLS proxy — routes `sentinel.*` and `dashboard.*` domains)
 
 ### Persistence
 
@@ -277,12 +278,15 @@ Missing pool linkage for those records is a fatal validation problem.
 - backend-owned derived analytics views for dashboard use
 - backend-owned tracked alert refresh runs and alert instances
 - backend alert detail / ack / resolve APIs
+- reminder lifecycle (create, ack, snooze, complete, cancel) with alert linkage
+- filter-clean quote auto-completion via Skimmer quote sync (runs as tail step of dashboard refresh)
+- operator dashboard SPA (home, alerts, customers, technicians, labor, reminders views)
+- Google Workspace OAuth login for dashboard access
+- standardized plain-text log format across all Python services and Caddy
 
 ### Not Built Yet
 
-- dashboard frontend
 - alert config UI
-- reminder workflows on top of normalized/dashboard data
 - AI query layer over normalized data
 
 ## Design Principles
@@ -296,11 +300,9 @@ Missing pool linkage for those records is a fatal validation problem.
 
 ## Near-Term Next Steps
 
-1. Validate the full two-container flow on the droplet end-to-end.
-2. Add web frontend container and first frontend scaffold.
-3. Expand dashboard/backend read APIs on top of normalized tables, derived views, and tracked alert state.
-4. Add config mutation and reminder workflows in the backend.
-4. Build the first dashboard UI pages.
+1. Alert config UI — allow tuning rule thresholds without a code deploy.
+2. Expand customer/pool detail views in the dashboard.
+3. AI query layer over normalized operational data.
 
 ## Out Of Scope For Now
 

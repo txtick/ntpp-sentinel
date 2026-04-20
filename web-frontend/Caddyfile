@@ -1,6 +1,10 @@
 :8030 {
     encode zstd gzip
 
+    log {
+        format console
+    }
+
     handle /auth/* {
         reverse_proxy web-backend:8020
     }
