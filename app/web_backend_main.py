@@ -662,17 +662,21 @@ def api_weather(request: Request):
             )
             with _urllib_req.urlopen(t_req, timeout=10) as resp:
                 t_data = json.loads(resp.read())
-            for timeline in t_data.get("data", {}).get("timelines", []):
-                for interval in timeline.get("intervals", []):
+            _logger.info(f"Tomorrow.io response top-level keys: {list(t_data.keys())}")
+            timelines = t_data.get("data", {}).get("timelines", [])
+            _logger.info(f"Tomorrow.io timelines count: {len(timelines)}, first keys: {list(timelines[0].keys()) if timelines else 'none'}")
+            for timeline in timelines:
+                intervals = timeline.get("intervals", [])
+                _logger.info(f"Tomorrow.io intervals count: {len(intervals)}, sample: {intervals[0] if intervals else 'none'}")
+                for interval in intervals:
                     ts = interval.get("startTime", "")
-                    # Tomorrow.io daily intervals start at local midnight; timestamp is UTC.
-                    # Subtract 6h (CST offset, conservative) to get the correct local date.
                     dt_utc = _dt.datetime.fromisoformat(ts.replace("Z", ""))
-                    local_date = (dt_utc - _dt.timedelta(hours=6)).strftime("%Y-%m-%d")
+                    local_date = (dt_utc - _dt.timedelta(hours=5)).strftime("%Y-%m-%d")
                     vals = interval.get("values", {})
                     indices = [vals.get(k) for k in ("treeIndex", "grassIndex", "weedIndex") if vals.get(k) is not None]
                     if indices:
                         pollen_daily[local_date] = max(pollen_daily.get(local_date) or 0, max(indices))
+            _logger.info(f"Tomorrow.io pollen_daily: {pollen_daily}")
         except Exception as exc:
             _logger.warning(f"Tomorrow.io pollen fetch failed: {exc}")
 
