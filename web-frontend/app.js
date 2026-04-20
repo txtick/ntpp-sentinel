@@ -646,7 +646,8 @@ function formatAlertSummary(item) {
 function formatAlertReading(item) {
   const metadata = item.metadata_json || {};
   const readingKey = metadata.reading_key || "";
-  const observed = numericOrNull(metadata.value ?? metadata.observed_value);
+  // observed_value is a trend/count for process alerts, not an actual reading — only use value
+  const observed = numericOrNull(metadata.value);
   const threshold = numericOrNull(metadata.threshold_value);
   if (observed === null) return "";
 
@@ -678,7 +679,8 @@ function formatAlertSubline(item) {
   if (readingSummary) {
     return `${readingSummary}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
   }
-  return `${friendlyRule}${assignedTech ? ` · tech ${assignedTech}` : ""}`;
+  if (assignedTech) return `tech ${assignedTech}`;
+  return friendlyRule;
 }
 
 function alertRelevantSeries(detail) {
