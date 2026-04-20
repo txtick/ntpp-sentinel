@@ -48,6 +48,12 @@ Examples:
 - Fix: refresh the GHL token in `.env` on both containers, then `docker compose restart web-backend sentinel`.
 - Use notify-customer periodically (or add a scheduled health check) to prevent the 90-day clock from resetting.
 
+## Python urllib + Cloudflare + GHL
+
+- Python's `urllib` sends `User-Agent: Python-urllib/3.x` by default. Cloudflare (which sits in front of GHL's API) blocks this UA and returns 403 with an HTML error page.
+- `curl` works fine because its UA passes through. This creates a confusing split: manual curl tests succeed, but the app returns 403.
+- Fix: always include `"User-Agent": "NTPP-Sentinel/1.0"` (or any non-Python UA) in `_ghl_headers()` and any other `urllib.request.Request` calls.
+
 ## GHL conversations/search — locationId must be a query param
 
 - `conversations/search` requires `locationId` as a **query parameter**, not just as a header. Passing it only via the `LocationId` header causes a 400 or silent failure.
