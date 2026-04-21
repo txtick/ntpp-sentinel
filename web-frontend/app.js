@@ -2802,16 +2802,14 @@ function openSettingsEditModal(table, rule) {
         <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
       </div>
       <div id="settings-identity-box" style="background:var(--bg-strong);border-radius:8px;padding:12px;margin-bottom:16px"></div>
-      <form id="settings-edit-form">
-        <div id="settings-fields-box"></div>
-        <div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between">
-          <button type="button" id="settings-delete-btn" class="button button-secondary" style="color:var(--critical)">Delete Rule</button>
-          <div style="display:flex;gap:8px">
-            <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
-            <button type="submit" class="button button-primary">Save Changes</button>
-          </div>
+      <div id="settings-fields-box"></div>
+      <div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between">
+        <button type="button" id="settings-delete-btn" class="button button-secondary" style="color:var(--critical)">Delete Rule</button>
+        <div style="display:flex;gap:8px">
+          <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
+          <button type="button" id="settings-save-btn" class="button button-primary">Save Changes</button>
         </div>
-      </form>
+      </div>
     </div>`;
 
   document.body.appendChild(modal);
@@ -2826,12 +2824,9 @@ function openSettingsEditModal(table, rule) {
   });
 
   // Build form fields as real DOM elements with values set directly — no innerHTML parsing
-  console.log("[settings] edit rule object:", JSON.stringify(rule));
   const fieldsBox = document.getElementById("settings-fields-box");
   editFields.forEach((fieldDef) => {
-    const val = rule[fieldDef.key];
-    console.log(`[settings] field ${fieldDef.key} = ${val} (${typeof val})`);
-    fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, val));
+    fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, rule[fieldDef.key]));
   });
 
   const closeModal = () => modal.remove();
@@ -2848,9 +2843,8 @@ function openSettingsEditModal(table, rule) {
     }, `Rule "${rule.rule_code}" deleted`);
   };
 
-  document.getElementById("settings-edit-form").onsubmit = async (e) => {
-    e.preventDefault();
-    const updates = readSettingsForm(e.target, editFields);
+  document.getElementById("settings-save-btn").onclick = async () => {
+    const updates = readSettingsForm(fieldsBox, editFields);
     closeModal();
     await withSaving(async () => {
       await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/update`, {
@@ -2879,13 +2873,11 @@ function openSettingsCreateModal(table) {
         <h3 style="margin:0">New ${escapeHtml(SETTINGS_TABLE_LABELS[table])} Rule</h3>
         <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
       </div>
-      <form id="settings-create-form">
-        <div id="settings-fields-box"></div>
-        <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-          <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
-          <button type="submit" class="button button-primary">Create Rule</button>
-        </div>
-      </form>
+      <div id="settings-fields-box"></div>
+      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+        <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
+        <button type="button" id="settings-create-btn" class="button button-primary">Create Rule</button>
+      </div>
     </div>`;
 
   document.body.appendChild(modal);
@@ -2898,9 +2890,8 @@ function openSettingsCreateModal(table) {
   document.getElementById("settings-modal-cancel").onclick = closeModal;
   modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 
-  document.getElementById("settings-create-form").onsubmit = async (e) => {
-    e.preventDefault();
-    const data = readSettingsForm(e.target, allFields);
+  document.getElementById("settings-create-btn").onclick = async () => {
+    const data = readSettingsForm(fieldsBox, allFields);
     closeModal();
     await withSaving(async () => {
       await api(`/api/config/alerts/${encodeURIComponent(table)}/create`, {
