@@ -488,20 +488,38 @@ def api_config_alerts(request: Request):
 async def api_config_alert_update(request: Request, table: str, rule_code: str):
     _dashboard_mutation_auth_or_401(request)
     body = await request.json()
-    return update_alert_rule_config(table, rule_code, body)
+    result = update_alert_rule_config(table, rule_code, body)
+    try:
+        refresh = refresh_alert_instances(trigger_reason="config_update")
+        result["refresh"] = refresh
+    except Exception as exc:
+        _logger.warning("config_update: refresh_alert_instances failed: %s", exc)
+    return result
 
 
 @app.post("/api/config/alerts/{table}/create")
 async def api_config_alert_create(request: Request, table: str):
     _dashboard_mutation_auth_or_401(request)
     body = await request.json()
-    return create_alert_rule_config(table, body)
+    result = create_alert_rule_config(table, body)
+    try:
+        refresh = refresh_alert_instances(trigger_reason="config_create")
+        result["refresh"] = refresh
+    except Exception as exc:
+        _logger.warning("config_create: refresh_alert_instances failed: %s", exc)
+    return result
 
 
 @app.post("/api/config/alerts/{table}/{rule_code}/delete")
 def api_config_alert_delete(request: Request, table: str, rule_code: str):
     _dashboard_mutation_auth_or_401(request)
-    return delete_alert_rule_config(table, rule_code)
+    result = delete_alert_rule_config(table, rule_code)
+    try:
+        refresh = refresh_alert_instances(trigger_reason="config_delete")
+        result["refresh"] = refresh
+    except Exception as exc:
+        _logger.warning("config_delete: refresh_alert_instances failed: %s", exc)
+    return result
 
 
 @app.get("/api/reminders")
