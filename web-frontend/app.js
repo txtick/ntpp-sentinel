@@ -2768,7 +2768,7 @@ function openSettingsEditModal(table, rule) {
       <strong>${escapeHtml(String(rule[f] ?? "—"))}</strong>
     </div>`).join("");
 
-  const fieldsHtml = editFields.map((f) => buildSettingsField(f, rule[f])).join("");
+  const fieldsHtml = editFields.map((f) => buildSettingsField(f, null)).join("");
 
   const modal = document.createElement("div");
   modal.id = "settings-modal";
@@ -2795,6 +2795,18 @@ function openSettingsEditModal(table, rule) {
     </div>`;
 
   document.body.appendChild(modal);
+
+  // Populate field values after DOM insertion — setting via innerHTML value attribute
+  // is unreliable; direct property assignment is always correct.
+  editFields.forEach(({ key, type }) => {
+    const el = modal.querySelector(`[name="${key}"]`);
+    if (!el || rule[key] === null || rule[key] === undefined) return;
+    if (type === "boolean") {
+      el.checked = !!rule[key];
+    } else {
+      el.value = rule[key];
+    }
+  });
 
   const closeModal = () => modal.remove();
   document.getElementById("settings-modal-close").onclick = closeModal;
