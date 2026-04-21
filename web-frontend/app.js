@@ -2709,32 +2709,61 @@ function severityColor(severity) {
   return "var(--info)";
 }
 
-function buildSettingsField(fieldDef, value) {
+function buildSettingsFieldEl(fieldDef, value) {
   const { key, label, type, options } = fieldDef;
   const id = `sf-${key}`;
+  const wrapper = document.createElement("div");
+  wrapper.style.marginBottom = "10px";
+
   if (type === "boolean") {
-    return `
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <input type="checkbox" id="${id}" name="${key}" ${value ? "checked" : ""}>
-        <span>${escapeHtml(label)}</span>
-      </label>`;
+    const lbl = document.createElement("label");
+    lbl.style.cssText = "display:flex;align-items:center;gap:8px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = id;
+    cb.name = key;
+    cb.checked = !!value;
+    const span = document.createElement("span");
+    span.textContent = label;
+    lbl.appendChild(cb);
+    lbl.appendChild(span);
+    wrapper.appendChild(lbl);
+    return wrapper;
   }
+
+  const lbl = document.createElement("label");
+  lbl.htmlFor = id;
+  lbl.textContent = label;
+  lbl.style.cssText = "display:block;font-size:0.85em;margin-bottom:3px;color:var(--muted)";
+  wrapper.appendChild(lbl);
+
   if (type === "select") {
-    const opts = (options || []).map((o) => `<option value="${o}" ${o === value ? "selected" : ""}>${o}</option>`).join("");
-    return `
-      <div style="margin-bottom:10px">
-        <label for="${id}" style="display:block;font-size:0.85em;margin-bottom:3px;color:var(--muted)">${escapeHtml(label)}</label>
-        <select id="${id}" name="${key}" class="filter-input" style="width:100%">${opts}</select>
-      </div>`;
+    const sel = document.createElement("select");
+    sel.id = id;
+    sel.name = key;
+    sel.className = "filter-input";
+    sel.style.width = "100%";
+    (options || []).forEach((o) => {
+      const opt = document.createElement("option");
+      opt.value = o;
+      opt.textContent = o;
+      if (o === value) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    wrapper.appendChild(sel);
+    return wrapper;
   }
-  const val = value === null || value === undefined ? "" : value;
-  return `
-    <div style="margin-bottom:10px">
-      <label for="${id}" style="display:block;font-size:0.85em;margin-bottom:3px;color:var(--muted)">${escapeHtml(label)}</label>
-      <input type="${type === "number" ? "number" : "text"}" id="${id}" name="${key}"
-        value="${escapeHtml(String(val))}" class="filter-input" style="width:100%"
-        step="${type === "number" ? "any" : undefined}">
-    </div>`;
+
+  const inp = document.createElement("input");
+  inp.type = type === "number" ? "number" : "text";
+  inp.id = id;
+  inp.name = key;
+  inp.className = "filter-input";
+  inp.style.width = "100%";
+  if (type === "number") inp.step = "any";
+  if (value !== null && value !== undefined) inp.value = value;
+  wrapper.appendChild(inp);
+  return wrapper;
 }
 
 function readSettingsForm(form, fields) {
@@ -2762,14 +2791,7 @@ function openSettingsEditModal(table, rule) {
   const identityFields = SETTINGS_IDENTITY_FIELDS[table] || [];
   const editFields = SETTINGS_EDIT_FIELDS[table] || [];
 
-  const identityHtml = identityFields.map((f) => `
-    <div style="margin-bottom:6px;font-size:0.85em">
-      <span class="muted">${f.replace(/_/g, " ")}: </span>
-      <strong>${escapeHtml(String(rule[f] ?? "—"))}</strong>
-    </div>`).join("");
-
-  const fieldsHtml = editFields.map((f) => buildSettingsField(f, null)).join("");
-
+  // Build modal shell via innerHTML (no inputs here — safe)
   const modal = document.createElement("div");
   modal.id = "settings-modal";
   modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
@@ -2779,11 +2801,9 @@ function openSettingsEditModal(table, rule) {
         <h3 style="margin:0">Edit Rule</h3>
         <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
       </div>
-      <div style="background:var(--bg-strong);border-radius:8px;padding:12px;margin-bottom:16px">
-        ${identityHtml}
-      </div>
+      <div id="settings-identity-box" style="background:var(--bg-strong);border-radius:8px;padding:12px;margin-bottom:16px"></div>
       <form id="settings-edit-form">
-        ${fieldsHtml}
+        <div id="settings-fields-box"></div>
         <div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between">
           <button type="button" id="settings-delete-btn" class="button button-secondary" style="color:var(--critical)">Delete Rule</button>
           <div style="display:flex;gap:8px">
@@ -2796,16 +2816,19 @@ function openSettingsEditModal(table, rule) {
 
   document.body.appendChild(modal);
 
-  // Populate field values after DOM insertion — setting via innerHTML value attribute
-  // is unreliable; direct property assignment is always correct.
-  editFields.forEach(({ key, type }) => {
-    const el = modal.querySelector(`[name="${key}"]`);
-    if (!el || rule[key] === null || rule[key] === undefined) return;
-    if (type === "boolean") {
-      el.checked = !!rule[key];
-    } else {
-      el.value = rule[key];
-    }
+  // Populate identity box
+  const identityBox = document.getElementById("settings-identity-box");
+  identityFields.forEach((f) => {
+    const div = document.createElement("div");
+    div.style.cssText = "margin-bottom:6px;font-size:0.85em";
+    div.innerHTML = `<span class="muted">${f.replace(/_/g, " ")}: </span><strong>${escapeHtml(String(rule[f] ?? "—"))}</strong>`;
+    identityBox.appendChild(div);
+  });
+
+  // Build form fields as real DOM elements with values set directly — no innerHTML parsing
+  const fieldsBox = document.getElementById("settings-fields-box");
+  editFields.forEach((fieldDef) => {
+    fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, rule[fieldDef.key]));
   });
 
   const closeModal = () => modal.remove();
@@ -2850,11 +2873,11 @@ function openSettingsCreateModal(table) {
   modal.innerHTML = `
     <div style="background:var(--bg);border-radius:12px;padding:24px;max-width:500px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h3 style="margin:0">New ${SETTINGS_TABLE_LABELS[table]} Rule</h3>
+        <h3 style="margin:0">New ${escapeHtml(SETTINGS_TABLE_LABELS[table])} Rule</h3>
         <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
       </div>
       <form id="settings-create-form">
-        ${allFields.map((f) => buildSettingsField(f, null)).join("")}
+        <div id="settings-fields-box"></div>
         <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
           <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
           <button type="submit" class="button button-primary">Create Rule</button>
@@ -2863,6 +2886,9 @@ function openSettingsCreateModal(table) {
     </div>`;
 
   document.body.appendChild(modal);
+
+  const fieldsBox = document.getElementById("settings-fields-box");
+  allFields.forEach((fieldDef) => fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, null)));
 
   const closeModal = () => modal.remove();
   document.getElementById("settings-modal-close").onclick = closeModal;
