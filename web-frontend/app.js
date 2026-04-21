@@ -2830,30 +2830,35 @@ function openSettingsEditModal(table, rule) {
   });
 
   const closeModal = () => modal.remove();
-  document.getElementById("settings-modal-close").onclick = closeModal;
-  document.getElementById("settings-modal-cancel").onclick = closeModal;
-  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 
-  document.getElementById("settings-delete-btn").onclick = async () => {
-    if (!confirm(`Delete rule "${rule.rule_code}"? This cannot be undone.`)) return;
-    closeModal();
-    await withSaving(async () => {
-      await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/delete`, { method: "POST" });
-      await loadSettings(true);
-    }, `Rule "${rule.rule_code}" deleted`);
-  };
-
-  document.getElementById("settings-save-btn").onclick = async () => {
-    const updates = readSettingsForm(fieldsBox, editFields);
-    closeModal();
-    await withSaving(async () => {
-      await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/update`, {
-        method: "POST",
-        body: JSON.stringify(updates),
-      });
-      await loadSettings(true);
-    }, "Rule saved");
-  };
+  modal.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) {
+      if (e.target === modal) closeModal();
+      return;
+    }
+    const id = btn.id;
+    if (id === "settings-modal-close" || id === "settings-modal-cancel") {
+      closeModal();
+    } else if (id === "settings-delete-btn") {
+      if (!confirm(`Delete rule "${rule.rule_code}"? This cannot be undone.`)) return;
+      closeModal();
+      await withSaving(async () => {
+        await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/delete`, { method: "POST" });
+        await loadSettings(true);
+      }, `Rule "${rule.rule_code}" deleted`);
+    } else if (id === "settings-save-btn") {
+      const updates = readSettingsForm(fieldsBox, editFields);
+      closeModal();
+      await withSaving(async () => {
+        await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/update`, {
+          method: "POST",
+          body: JSON.stringify(updates),
+        });
+        await loadSettings(true);
+      }, "Rule saved");
+    }
+  });
 }
 
 function openSettingsCreateModal(table) {
@@ -2886,21 +2891,28 @@ function openSettingsCreateModal(table) {
   allFields.forEach((fieldDef) => fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, null)));
 
   const closeModal = () => modal.remove();
-  document.getElementById("settings-modal-close").onclick = closeModal;
-  document.getElementById("settings-modal-cancel").onclick = closeModal;
-  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
 
-  document.getElementById("settings-create-btn").onclick = async () => {
-    const data = readSettingsForm(fieldsBox, allFields);
-    closeModal();
-    await withSaving(async () => {
-      await api(`/api/config/alerts/${encodeURIComponent(table)}/create`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      });
-      await loadSettings(true);
-    }, "Rule created");
-  };
+  modal.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) {
+      if (e.target === modal) closeModal();
+      return;
+    }
+    const id = btn.id;
+    if (id === "settings-modal-close" || id === "settings-modal-cancel") {
+      closeModal();
+    } else if (id === "settings-create-btn") {
+      const data = readSettingsForm(fieldsBox, allFields);
+      closeModal();
+      await withSaving(async () => {
+        await api(`/api/config/alerts/${encodeURIComponent(table)}/create`, {
+          method: "POST",
+          body: JSON.stringify(data),
+        });
+        await loadSettings(true);
+      }, "Rule created");
+    }
+  });
 }
 
 init().catch((error) => {
