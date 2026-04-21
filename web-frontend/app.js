@@ -2826,9 +2826,12 @@ function openSettingsEditModal(table, rule) {
   });
 
   // Build form fields as real DOM elements with values set directly — no innerHTML parsing
+  console.log("[settings] edit rule object:", JSON.stringify(rule));
   const fieldsBox = document.getElementById("settings-fields-box");
   editFields.forEach((fieldDef) => {
-    fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, rule[fieldDef.key]));
+    const val = rule[fieldDef.key];
+    console.log(`[settings] field ${fieldDef.key} = ${val} (${typeof val})`);
+    fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, val));
   });
 
   const closeModal = () => modal.remove();
