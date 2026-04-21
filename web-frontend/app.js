@@ -310,6 +310,19 @@ function showToast(message, timeout = 2800) {
   }, timeout);
 }
 
+async function withSaving(run, successMessage = "Saved") {
+  setStatus("Saving…", "info");
+  try {
+    await run();
+    setStatus("Ready", "info");
+    showToast(successMessage);
+  } catch (err) {
+    setStatus("Error", "critical");
+    showToast(`Error: ${err.message}`, 5000);
+    console.error("withSaving error:", err);
+  }
+}
+
 async function api(path, { method = "GET", body = undefined, auth = false } = {}) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
