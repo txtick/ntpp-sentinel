@@ -3372,6 +3372,107 @@ def list_alert_rule_configs() -> Dict[str, Any]:
     return {"ok": True, "items": payload}
 
 
+_VALID_CONFIG_TABLES = {"alert_rule_config", "trend_rule_config", "revenue_rule_config"}
+
+# Fields that may be updated by the UI for each table.  Anything not listed is immutable.
+_UPDATABLE_FIELDS: Dict[str, set] = {
+    "alert_rule_config": {
+        "threshold_value", "severity", "severity_rank", "enabled",
+        "season_start_month", "season_end_month", "description",
+    },
+    "trend_rule_config": {
+        "threshold_value", "severity", "severity_rank", "enabled",
+        "sample_size", "min_bad_count", "window_days", "delta_threshold",
+        "baseline_delta_threshold", "season_start_month", "season_end_month", "description",
+    },
+    "revenue_rule_config": {
+        "threshold_value", "severity", "severity_rank", "enabled",
+        "repeat_count", "window_days", "season_start_month", "season_end_month", "description",
+    },
+}
+
+# Required fields when creating a new rule in each table.
+_REQUIRED_CREATE_FIELDS: Dict[str, List[str]] = {
+    "alert_rule_config": ["rule_code", "reading_key", "comparator", "severity", "severity_rank", "threshold_value"],
+    "trend_rule_config": ["rule_code", "reading_key", "trend_type", "comparator", "severity", "severity_rank", "threshold_value"],
+    "revenue_rule_config": ["rule_code", "opportunity_type", "source_type", "severity", "severity_rank"],
+}
+
+
+def _validate_config_table(table: str) -> None:
+    if table not in _VALID_CONFIG_TABLES:
+        raise HTTPException(status_code=400, detail=f"Unknown config table: {table}")
+
+
+def update_alert_rule_config(table: str, rule_code: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+    require_postgres_configured()
+    _validate_config_table(table)
+    allowed = _UPDATABLE_FIELDS[table]
+    filtered = {k: v for k, v in updates.items() if k in allowed}
+    if not filtered:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    filtered["updated_at"] = "NOW()"
+    set_clauses = []
+    values = []
+    for k, v in filtered.items():
+        if k == "updated_at":
+            set_clauses.append("updated_at = NOW()")
+        else:
+            set_clauses.append(f"{k} = %s")
+            values.append(v)
+    values.append(rule_code)
+    sql = f"UPDATE {table} SET {', '.join(set_clauses)} WHERE rule_code = %s RETURNING *"
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, values)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Rule {rule_code!r} not found in {table}")
+        conn.commit()
+    return {"ok": True, "item": dict(row)}
+
+
+def create_alert_rule_config(table: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    require_postgres_configured()
+    _validate_config_table(table)
+    required = _REQUIRED_CREATE_FIELDS[table]
+    missing = [f for f in required if f not in data or data[f] is None]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {missing}")
+    # Only insert known columns (exclude anything unknown)
+    all_allowed = _UPDATABLE_FIELDS[table] | set(required)
+    filtered = {k: v for k, v in data.items() if k in all_allowed}
+    cols = list(filtered.keys())
+    placeholders = ", ".join(["%s"] * len(cols))
+    col_list = ", ".join(cols)
+    values = [filtered[c] for c in cols]
+    sql = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) RETURNING *"
+    with pg() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(sql, values)
+            except Exception as exc:
+                if "duplicate key" in str(exc).lower():
+                    raise HTTPException(status_code=409, detail=f"Rule code {data.get('rule_code')!r} already exists")
+                raise
+            row = cur.fetchone()
+        conn.commit()
+    return {"ok": True, "item": dict(row)}
+
+
+def delete_alert_rule_config(table: str, rule_code: str) -> Dict[str, Any]:
+    require_postgres_configured()
+    _validate_config_table(table)
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"DELETE FROM {table} WHERE rule_code = %s RETURNING rule_code", (rule_code,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Rule {rule_code!r} not found in {table}")
+        conn.commit()
+    return {"ok": True, "deleted": rule_code}
+
+
 def list_technicians(
     *,
     search: Optional[str] = None,

@@ -144,6 +144,7 @@ const viewMeta = {
   "technician-profile": { kicker: "Technician", title: "Technician Profile" },
   labor: { kicker: "Labor", title: "Weekly Payroll Prep" },
   reminders: { kicker: "Reminders", title: "Follow-Up Queue" },
+  settings: { kicker: "Settings", title: "Alert Rule Configuration" },
 };
 
 const filters = {
@@ -309,9 +310,10 @@ function showToast(message, timeout = 2800) {
   }, timeout);
 }
 
-async function api(path, { method = "GET", auth = false } = {}) {
+async function api(path, { method = "GET", body = undefined, auth = false } = {}) {
   const headers = {};
-  const response = await fetch(path, { method, headers, credentials: "same-origin" });
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(path, { method, headers, body, credentials: "same-origin" });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && data.auth_required) {
@@ -1115,6 +1117,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "technician-profile") await loadTechnicianProfile(force);
     if (state.view === "labor") await loadLabor(force);
     if (state.view === "reminders") await loadReminders(force);
+    if (state.view === "settings") await loadSettings(force);
     setStatus("Live", "info");
   } catch (error) {
     setStatus("Error", "critical");
@@ -2518,6 +2521,354 @@ async function mutate(run, successMessage) {
 
 function itemCard(title, meta, footer) {
   return `<article class="item-card"><div class="item-card-header"><strong>${escapeHtml(title)}</strong><div>${meta}</div></div><div class="muted">${footer}</div></article>`;
+}
+
+// ─── Settings / Alert Config ──────────────────────────────────────────────────
+
+const SETTINGS_TABLE_LABELS = {
+  alert_rule_config: "Chemistry Alerts",
+  trend_rule_config: "Trend Rules",
+  revenue_rule_config: "Revenue Opportunities",
+};
+
+const SETTINGS_TABLE_DESC = {
+  alert_rule_config: "Point-in-time threshold rules. Alert fires when the latest reading crosses the threshold.",
+  trend_rule_config: "Pattern detection over multiple readings. Alert fires when a trend is detected across a window.",
+  revenue_rule_config: "Business opportunity detection. Surfaces upsell and service needs.",
+};
+
+// Fields shown in the rule list row (compact summary)
+const SETTINGS_ROW_FIELDS = {
+  alert_rule_config: ["reading_key", "comparator", "threshold_value", "severity"],
+  trend_rule_config: ["reading_key", "trend_type", "threshold_value", "severity"],
+  revenue_rule_config: ["opportunity_type", "source_type", "threshold_value", "severity"],
+};
+
+// All editable fields per table with labels and types
+const SETTINGS_EDIT_FIELDS = {
+  alert_rule_config: [
+    { key: "threshold_value", label: "Threshold Value", type: "number" },
+    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    { key: "severity_rank", label: "Severity Rank", type: "number" },
+    { key: "enabled", label: "Enabled", type: "boolean" },
+    { key: "season_start_month", label: "Season Start Month (1–12, blank = all year)", type: "number" },
+    { key: "season_end_month", label: "Season End Month (1–12, blank = all year)", type: "number" },
+    { key: "description", label: "Description", type: "text" },
+  ],
+  trend_rule_config: [
+    { key: "threshold_value", label: "Threshold Value", type: "number" },
+    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    { key: "severity_rank", label: "Severity Rank", type: "number" },
+    { key: "enabled", label: "Enabled", type: "boolean" },
+    { key: "sample_size", label: "Sample Size (# readings)", type: "number" },
+    { key: "min_bad_count", label: "Min Bad Count", type: "number" },
+    { key: "window_days", label: "Window Days", type: "number" },
+    { key: "delta_threshold", label: "Delta Threshold", type: "number" },
+    { key: "baseline_delta_threshold", label: "Baseline Delta Threshold", type: "number" },
+    { key: "season_start_month", label: "Season Start Month (1–12, blank = all year)", type: "number" },
+    { key: "season_end_month", label: "Season End Month (1–12, blank = all year)", type: "number" },
+    { key: "description", label: "Description", type: "text" },
+  ],
+  revenue_rule_config: [
+    { key: "threshold_value", label: "Threshold Value", type: "number" },
+    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    { key: "severity_rank", label: "Severity Rank", type: "number" },
+    { key: "enabled", label: "Enabled", type: "boolean" },
+    { key: "repeat_count", label: "Repeat Count", type: "number" },
+    { key: "window_days", label: "Window Days", type: "number" },
+    { key: "season_start_month", label: "Season Start Month (1–12, blank = all year)", type: "number" },
+    { key: "season_end_month", label: "Season End Month (1–12, blank = all year)", type: "number" },
+    { key: "description", label: "Description", type: "text" },
+  ],
+};
+
+// Read-only identity fields shown at top of edit modal (not editable)
+const SETTINGS_IDENTITY_FIELDS = {
+  alert_rule_config: ["rule_code", "reading_key", "comparator"],
+  trend_rule_config: ["rule_code", "reading_key", "trend_type", "comparator"],
+  revenue_rule_config: ["rule_code", "opportunity_type", "source_type"],
+};
+
+// Required fields when creating a new rule
+const SETTINGS_CREATE_REQUIRED = {
+  alert_rule_config: [
+    { key: "rule_code", label: "Rule Code (unique identifier)", type: "text" },
+    { key: "reading_key", label: "Reading Key (e.g. ph, cya, free_chlorine)", type: "text" },
+    { key: "comparator", label: "Comparator (lt, lte, gt, gte)", type: "text" },
+    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    { key: "severity_rank", label: "Severity Rank", type: "number" },
+    { key: "threshold_value", label: "Threshold Value", type: "number" },
+  ],
+  trend_rule_config: [
+    { key: "rule_code", label: "Rule Code (unique identifier)", type: "text" },
+    { key: "reading_key", label: "Reading Key", type: "text" },
+    { key: "trend_type", label: "Trend Type (bad_readings_last_n, delta_over_days, etc.)", type: "text" },
+    { key: "comparator", label: "Comparator (lt, lte, gt, gte)", type: "text" },
+    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    { key: "severity_rank", label: "Severity Rank", type: "number" },
+    { key: "threshold_value", label: "Threshold Value", type: "number" },
+  ],
+  revenue_rule_config: [
+    { key: "rule_code", label: "Rule Code (unique identifier)", type: "text" },
+    { key: "opportunity_type", label: "Opportunity Type (drain_refill, filter_clean, chemical_cost_review)", type: "text" },
+    { key: "source_type", label: "Source Type (reading_repeat, trend_reference, latest_reading, etc.)", type: "text" },
+    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    { key: "severity_rank", label: "Severity Rank", type: "number" },
+  ],
+};
+
+let _settingsData = null;
+
+async function loadSettings(force = false) {
+  if (!_settingsData || force) {
+    const result = await api("/api/config/alerts");
+    _settingsData = result.items;
+  }
+  renderSettings();
+}
+
+function renderSettings() {
+  if (!_settingsData) {
+    els.mainPanel.innerHTML = `<div class="empty-state">Loading settings…</div>`;
+    return;
+  }
+
+  els.mainPanel.innerHTML = Object.entries(SETTINGS_TABLE_LABELS).map(([table, label]) => {
+    const rules = _settingsData[table] || [];
+    const rowFields = SETTINGS_ROW_FIELDS[table];
+    return `
+      <section class="section-card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <h3 style="margin:0">${label}</h3>
+          <button class="button button-secondary" style="font-size:0.8em;padding:4px 10px"
+            data-settings-create="${table}">+ New Rule</button>
+        </div>
+        <p class="panel-subtitle" style="margin-bottom:10px">${SETTINGS_TABLE_DESC[table]}</p>
+        <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:4px 12px;align-items:center;font-size:0.82em">
+          <div class="muted" style="font-weight:600">Rule</div>
+          ${rowFields.map((f) => `<div class="muted" style="font-weight:600;text-align:right">${f.replace(/_/g, " ")}</div>`).join("")}
+          ${rules.map((rule) => `
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="pill ${rule.enabled ? "pill-info" : ""}" style="${rule.enabled ? "" : "background:var(--bg-strong);color:var(--muted)"}"
+                title="Toggle enabled" style="cursor:pointer;font-size:0.75em;padding:1px 6px"
+                data-settings-toggle="${table}" data-settings-rule="${escapeHtml(rule.rule_code)}"
+                data-settings-enabled="${rule.enabled}">${rule.enabled ? "ON" : "OFF"}</span>
+              <button class="button button-secondary" style="font-size:0.78em;padding:2px 8px"
+                data-settings-edit="${table}" data-settings-rule="${escapeHtml(rule.rule_code)}">Edit</button>
+              <span style="font-weight:500">${escapeHtml(rule.rule_code)}</span>
+              ${rule.description ? `<span class="muted" style="font-size:0.9em">· ${escapeHtml(rule.description)}</span>` : ""}
+            </div>
+            ${rowFields.map((f) => {
+              const v = rule[f];
+              const display = v === null || v === undefined ? "—" : String(v);
+              const isSeverity = f === "severity";
+              return `<div style="text-align:right;${isSeverity ? `color:${severityColor(v)}` : ""}"><strong>${escapeHtml(display)}</strong></div>`;
+            }).join("")}
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  // Toggle buttons
+  els.mainPanel.querySelectorAll("[data-settings-toggle]").forEach((btn) => {
+    btn.style.cursor = "pointer";
+    btn.onclick = async () => {
+      const table = btn.dataset.settingsToggle;
+      const ruleCode = btn.dataset.settingsRule;
+      const currentlyEnabled = btn.dataset.settingsEnabled === "true";
+      await withSaving(async () => {
+        await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(ruleCode)}/update`, {
+          method: "POST",
+          body: JSON.stringify({ enabled: !currentlyEnabled }),
+        });
+        await loadSettings(true);
+      }, currentlyEnabled ? "Rule disabled" : "Rule enabled");
+    };
+  });
+
+  // Edit buttons
+  els.mainPanel.querySelectorAll("[data-settings-edit]").forEach((btn) => {
+    btn.onclick = () => {
+      const table = btn.dataset.settingsEdit;
+      const ruleCode = btn.dataset.settingsRule;
+      const rule = (_settingsData[table] || []).find((r) => r.rule_code === ruleCode);
+      if (rule) openSettingsEditModal(table, rule);
+    };
+  });
+
+  // New rule buttons
+  els.mainPanel.querySelectorAll("[data-settings-create]").forEach((btn) => {
+    btn.onclick = () => openSettingsCreateModal(btn.dataset.settingsCreate);
+  });
+}
+
+function severityColor(severity) {
+  if (severity === "critical") return "var(--critical)";
+  if (severity === "warning") return "var(--warning)";
+  return "var(--info)";
+}
+
+function buildSettingsField(fieldDef, value) {
+  const { key, label, type, options } = fieldDef;
+  const id = `sf-${key}`;
+  if (type === "boolean") {
+    return `
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <input type="checkbox" id="${id}" name="${key}" ${value ? "checked" : ""}>
+        <span>${escapeHtml(label)}</span>
+      </label>`;
+  }
+  if (type === "select") {
+    const opts = (options || []).map((o) => `<option value="${o}" ${o === value ? "selected" : ""}>${o}</option>`).join("");
+    return `
+      <div style="margin-bottom:10px">
+        <label for="${id}" style="display:block;font-size:0.85em;margin-bottom:3px;color:var(--muted)">${escapeHtml(label)}</label>
+        <select id="${id}" name="${key}" class="filter-input" style="width:100%">${opts}</select>
+      </div>`;
+  }
+  const val = value === null || value === undefined ? "" : value;
+  return `
+    <div style="margin-bottom:10px">
+      <label for="${id}" style="display:block;font-size:0.85em;margin-bottom:3px;color:var(--muted)">${escapeHtml(label)}</label>
+      <input type="${type === "number" ? "number" : "text"}" id="${id}" name="${key}"
+        value="${escapeHtml(String(val))}" class="filter-input" style="width:100%"
+        step="${type === "number" ? "any" : undefined}">
+    </div>`;
+}
+
+function readSettingsForm(form, fields) {
+  const data = {};
+  fields.forEach(({ key, type }) => {
+    const el = form.querySelector(`[name="${key}"]`);
+    if (!el) return;
+    if (type === "boolean") {
+      data[key] = el.checked;
+    } else if (type === "number") {
+      const v = el.value.trim();
+      data[key] = v === "" ? null : Number(v);
+    } else {
+      const v = el.value.trim();
+      data[key] = v === "" ? null : v;
+    }
+  });
+  return data;
+}
+
+function openSettingsEditModal(table, rule) {
+  const existing = document.getElementById("settings-modal");
+  if (existing) existing.remove();
+
+  const identityFields = SETTINGS_IDENTITY_FIELDS[table] || [];
+  const editFields = SETTINGS_EDIT_FIELDS[table] || [];
+
+  const identityHtml = identityFields.map((f) => `
+    <div style="margin-bottom:6px;font-size:0.85em">
+      <span class="muted">${f.replace(/_/g, " ")}: </span>
+      <strong>${escapeHtml(String(rule[f] ?? "—"))}</strong>
+    </div>`).join("");
+
+  const fieldsHtml = editFields.map((f) => buildSettingsField(f, rule[f])).join("");
+
+  const modal = document.createElement("div");
+  modal.id = "settings-modal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
+  modal.innerHTML = `
+    <div style="background:var(--bg);border-radius:12px;padding:24px;max-width:500px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="margin:0">Edit Rule</h3>
+        <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
+      </div>
+      <div style="background:var(--bg-strong);border-radius:8px;padding:12px;margin-bottom:16px">
+        ${identityHtml}
+      </div>
+      <form id="settings-edit-form">
+        ${fieldsHtml}
+        <div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between">
+          <button type="button" id="settings-delete-btn" class="button button-secondary" style="color:var(--critical)">Delete Rule</button>
+          <div style="display:flex;gap:8px">
+            <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
+            <button type="submit" class="button button-primary">Save Changes</button>
+          </div>
+        </div>
+      </form>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  const closeModal = () => modal.remove();
+  document.getElementById("settings-modal-close").onclick = closeModal;
+  document.getElementById("settings-modal-cancel").onclick = closeModal;
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+  document.getElementById("settings-delete-btn").onclick = async () => {
+    if (!confirm(`Delete rule "${rule.rule_code}"? This cannot be undone.`)) return;
+    closeModal();
+    await withSaving(async () => {
+      await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/delete`, { method: "POST" });
+      await loadSettings(true);
+    }, `Rule "${rule.rule_code}" deleted`);
+  };
+
+  document.getElementById("settings-edit-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const updates = readSettingsForm(e.target, editFields);
+    closeModal();
+    await withSaving(async () => {
+      await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/update`, {
+        method: "POST",
+        body: JSON.stringify(updates),
+      });
+      await loadSettings(true);
+    }, "Rule saved");
+  };
+}
+
+function openSettingsCreateModal(table) {
+  const existing = document.getElementById("settings-modal");
+  if (existing) existing.remove();
+
+  const requiredFields = SETTINGS_CREATE_REQUIRED[table] || [];
+  const editFields = SETTINGS_EDIT_FIELDS[table] || [];
+  const allFields = [...requiredFields, ...editFields.filter((f) => !requiredFields.find((r) => r.key === f.key))];
+
+  const modal = document.createElement("div");
+  modal.id = "settings-modal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
+  modal.innerHTML = `
+    <div style="background:var(--bg);border-radius:12px;padding:24px;max-width:500px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="margin:0">New ${SETTINGS_TABLE_LABELS[table]} Rule</h3>
+        <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
+      </div>
+      <form id="settings-create-form">
+        ${allFields.map((f) => buildSettingsField(f, null)).join("")}
+        <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+          <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
+          <button type="submit" class="button button-primary">Create Rule</button>
+        </div>
+      </form>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  const closeModal = () => modal.remove();
+  document.getElementById("settings-modal-close").onclick = closeModal;
+  document.getElementById("settings-modal-cancel").onclick = closeModal;
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+  document.getElementById("settings-create-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const data = readSettingsForm(e.target, allFields);
+    closeModal();
+    await withSaving(async () => {
+      await api(`/api/config/alerts/${encodeURIComponent(table)}/create`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      await loadSettings(true);
+    }, "Rule created");
+  };
 }
 
 init().catch((error) => {

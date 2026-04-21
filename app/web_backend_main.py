@@ -23,6 +23,9 @@ from services.dashboard_backend import (
     list_alert_events,
     list_alert_instances,
     list_alert_rule_configs,
+    update_alert_rule_config,
+    create_alert_rule_config,
+    delete_alert_rule_config,
     list_customers,
     list_reminders,
     list_technicians,
@@ -479,6 +482,26 @@ def api_refresh_run_detail(request: Request, refresh_run_id: int):
 def api_config_alerts(request: Request):
     _dashboard_read_auth_or_401(request)
     return list_alert_rule_configs()
+
+
+@app.post("/api/config/alerts/{table}/{rule_code}/update")
+async def api_config_alert_update(request: Request, table: str, rule_code: str):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return update_alert_rule_config(table, rule_code, body)
+
+
+@app.post("/api/config/alerts/{table}/create")
+async def api_config_alert_create(request: Request, table: str):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return create_alert_rule_config(table, body)
+
+
+@app.post("/api/config/alerts/{table}/{rule_code}/delete")
+def api_config_alert_delete(request: Request, table: str, rule_code: str):
+    _dashboard_mutation_auth_or_401(request)
+    return delete_alert_rule_config(table, rule_code)
 
 
 @app.get("/api/reminders")
