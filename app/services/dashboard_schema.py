@@ -200,8 +200,6 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 comparator = EXCLUDED.comparator,
                 severity = EXCLUDED.severity,
                 severity_rank = EXCLUDED.severity_rank,
-                threshold_value = EXCLUDED.threshold_value,
-                enabled = EXCLUDED.enabled,
                 season_start_month = EXCLUDED.season_start_month,
                 season_end_month = EXCLUDED.season_end_month,
                 description = EXCLUDED.description
@@ -237,13 +235,11 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 comparator = EXCLUDED.comparator,
                 severity = EXCLUDED.severity,
                 severity_rank = EXCLUDED.severity_rank,
-                threshold_value = EXCLUDED.threshold_value,
                 sample_size = EXCLUDED.sample_size,
                 min_bad_count = EXCLUDED.min_bad_count,
                 window_days = EXCLUDED.window_days,
                 delta_threshold = EXCLUDED.delta_threshold,
                 baseline_delta_threshold = EXCLUDED.baseline_delta_threshold,
-                enabled = EXCLUDED.enabled,
                 season_start_month = EXCLUDED.season_start_month,
                 season_end_month = EXCLUDED.season_end_month,
                 description = EXCLUDED.description
@@ -325,10 +321,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 comparator = EXCLUDED.comparator,
                 severity = EXCLUDED.severity,
                 severity_rank = EXCLUDED.severity_rank,
-                threshold_value = EXCLUDED.threshold_value,
                 repeat_count = EXCLUDED.repeat_count,
                 window_days = EXCLUDED.window_days,
-                enabled = EXCLUDED.enabled,
                 season_start_month = EXCLUDED.season_start_month,
                 season_end_month = EXCLUDED.season_end_month,
                 description = EXCLUDED.description
