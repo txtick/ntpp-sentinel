@@ -81,6 +81,17 @@ Examples:
 - This means homepage stat cards reflect the last dashboard refresh run, not a real-time scan. This is intentional — re-running the full analytics on every page load caused 60+ second load times.
 - If summary counts look stale, the fix is to trigger a dashboard refresh (`POST /jobs/dashboard/refresh`), not to query the views directly.
 
+## Problem Pools Report
+
+- The `Problem Pools` page is not refresh-driven like tracked alerts; it reads directly from `problem_pools_v`, so page loads reflect the current imported Postgres data without a dashboard refresh step.
+- Monthly service rate there is derived from imported `sk_service_location.rate` and `rate_type`.
+- Known cadence conversions today:
+  - weekly -> `rate * 52 / 12`
+  - biweekly -> `rate * 26 / 12`
+  - twice-monthly / semi-monthly -> `rate * 2`
+  - quarterly -> `rate / 3`
+- Any unmapped or blank `rate_type` falls back to the raw imported `rate`, because that is how current pricing workflows already treat Skimmer's service-location rate field.
+
 ## Quote Sync / Reminders
 
 - `sync_filter_clean_quote_reminders()` only runs as part of `POST /jobs/dashboard/refresh` (after the main alert work commits). It no longer runs on every `GET /api/reminders` call.

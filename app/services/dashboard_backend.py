@@ -2092,6 +2092,171 @@ def list_customers(
     }
 
 
+def list_problem_pools(
+    *,
+    flag: Optional[str] = None,
+    technician: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    require_postgres_configured()
+    safe_limit = max(1, min(int(limit), 500))
+    safe_offset = max(0, int(offset))
+    params: List[Any] = []
+    where_clauses: List[str] = []
+
+    normalized_flag = (flag or "").strip().lower()
+    allowed_flags = {
+        "watch": "Watch",
+        "problem": "Problem",
+        "critical": "Critical",
+    }
+    if normalized_flag in allowed_flags:
+        where_clauses.append("flag = %s")
+        params.append(allowed_flags[normalized_flag])
+
+    technician_value = (technician or "").strip()
+    if technician_value:
+        where_clauses.append("COALESCE(technician_name, '') = %s")
+        params.append(technician_value)
+
+    search_value = (search or "").strip()
+    if search_value:
+        pattern = f"%{search_value}%"
+        where_clauses.append(
+            """
+            (
+                customer_name ILIKE %s
+                OR COALESCE(pool_name, '') ILIKE %s
+                OR COALESCE(pool_address, '') ILIKE %s
+                OR COALESCE(technician_name, '') ILIKE %s
+            )
+            """
+        )
+        params.extend([pattern, pattern, pattern, pattern])
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    from_sql = f"FROM problem_pools_v {where_sql}"
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            if not _view_exists(cur, "problem_pools_v"):
+                return {
+                    "ok": True,
+                    "total": 0,
+                    "limit": safe_limit,
+                    "offset": safe_offset,
+                    "items": [],
+                    "summary": {
+                        "total_active_pool_count": 0,
+                        "total_active_customer_count": 0,
+                        "watch_count": 0,
+                        "problem_count": 0,
+                        "critical_count": 0,
+                        "healthy_count": 0,
+                        "missing_rate_count": 0,
+                        "total_monthly_leak": 0,
+                    },
+                    "filters": {
+                        "flag": allowed_flags.get(normalized_flag),
+                        "technician": technician_value or None,
+                        "search": search_value or None,
+                    },
+                    "filter_options": {
+                        "technicians": [],
+                    },
+                    "source": "problem_pools_v",
+                }
+
+            cur.execute("SELECT COUNT(*) AS total " + from_sql, params)
+            total = int(cur.fetchone()["total"])
+
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_active_pool_count,
+                    COUNT(DISTINCT customer_id) AS total_active_customer_count,
+                    COUNT(*) FILTER (WHERE flag = 'Watch') AS watch_count,
+                    COUNT(*) FILTER (WHERE flag = 'Problem') AS problem_count,
+                    COUNT(*) FILTER (WHERE flag = 'Critical') AS critical_count,
+                    COUNT(*) FILTER (WHERE flag = 'Healthy') AS healthy_count,
+                    COUNT(*) FILTER (WHERE flag = 'Missing Rate') AS missing_rate_count,
+                    COALESCE(SUM(monthly_leak), 0) AS total_monthly_leak
+                """
+                + from_sql,
+                params,
+            )
+            summary = dict(cur.fetchone() or {})
+
+            cur.execute(
+                """
+                SELECT
+                    customer_id,
+                    customer_name,
+                    pool_id,
+                    pool_name,
+                    pool_address,
+                    technician_name,
+                    technician_route,
+                    service_rate_type,
+                    monthly_service_rate,
+                    monthly_chemical_cost,
+                    chemical_percent,
+                    flag,
+                    flag_rank,
+                    monthly_leak,
+                    suggested_action,
+                    latest_chemical_service_date
+                """
+                + from_sql
+                + """
+                ORDER BY
+                    flag_rank ASC,
+                    monthly_leak DESC,
+                    chemical_percent DESC NULLS LAST,
+                    customer_name ASC,
+                    pool_name ASC NULLS LAST,
+                    pool_id ASC
+                LIMIT %s OFFSET %s
+                """,
+                params + [safe_limit, safe_offset],
+            )
+            items = [dict(row) for row in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT DISTINCT technician_name
+                FROM problem_pools_v
+                WHERE technician_name IS NOT NULL
+                  AND btrim(technician_name) <> ''
+                ORDER BY technician_name ASC
+                """
+            )
+            technician_options = [str(row["technician_name"]) for row in cur.fetchall()]
+
+    return {
+        "ok": True,
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "items": items,
+        "summary": summary,
+        "filters": {
+            "flag": allowed_flags.get(normalized_flag),
+            "technician": technician_value or None,
+            "search": search_value or None,
+        },
+        "filter_options": {
+            "technicians": technician_options,
+        },
+        "source": "problem_pools_v",
+    }
+
+
 def get_customer_detail(customer_id: int) -> Dict[str, Any]:
     require_postgres_configured()
     chart_policy = _load_customer_chart_policy()

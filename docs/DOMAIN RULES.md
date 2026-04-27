@@ -36,6 +36,19 @@ This document captures business behavior that should remain stable unless intent
   - `freedom`
   - `no-sentinel-alerts`
 
+## Dashboard Reports
+
+- The dashboard `Problem Pools` page compares each pool's last-30-days chemical cost against its monthly service rate.
+- `chemical_percent = monthly_chemical_cost / monthly_service_rate`, displayed as a percentage with 1 decimal place.
+- Problem Pools flag thresholds:
+  - `Healthy` when chemical percent is under `20%`
+  - `Watch` when chemical percent is `20%` up to but not including `25%`
+  - `Problem` when chemical percent is `25%` up to but not including `35%`
+  - `Critical` when chemical percent is `35%` or higher
+- Problem Pools monthly leak uses a `20%` target:
+  - `monthly_leak = max(0, monthly_chemical_cost - (monthly_service_rate * 20%))`
+- Pools with missing or zero service rate stay visible on the report as `Missing Rate`, show `N/A` for percent, and are excluded from Watch/Problem/Critical totals.
+
 ## Filter Clean Logic
 
 - Filter-clean opportunities are PSI/work-order based, not just raw time-since-last-clean.

@@ -77,6 +77,38 @@ Alert opt-out:
 
 This page is meant to give you the numbers you need for Gusto without manually counting route work and filter-clean work orders.
 
+## Problem Pools Page
+
+The dashboard also includes a `Problem Pools` page for chemical-cost pricing review.
+
+What it shows:
+
+- monthly chemical cost for each active pool based on the last `30` days
+- monthly service rate pulled from imported Skimmer service-location pricing
+- chemical cost as a percent of service rate
+- a `monthly leak` amount above the healthy `20%` target
+- a severity flag and suggested manager action
+
+Flag meanings:
+
+- `Watch` = `20%` to under `25%`
+- `Problem` = `25%` to under `35%`
+- `Critical` = `35%` or higher
+
+Suggested actions:
+
+- `Watch` -> monitor
+- `Problem` -> review / recommend treatment
+- `Critical` -> immediate review: treatment, price increase, or service adjustment
+
+Important detail:
+
+- pools with missing or zero service rate stay on the page as `Missing Rate`
+- those rows show `N/A` for chemical percent
+- they do not count toward the Watch / Problem / Critical totals
+
+This page is meant to help managers quickly spot underpriced pools, unusually chemical-heavy pools, or accounts that need a service-plan conversation.
+
 ## Dashboard Reminders
 
 Dashboard alerts can create tracked reminders in the dashboard backend.

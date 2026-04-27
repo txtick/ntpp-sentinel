@@ -55,6 +55,15 @@ Keep entries short, but do not skip them.
 - Filter-clean quote reminders auto-complete when a matching live Skimmer quote is detected.
   - Reason: once the quote exists, the human follow-up debt is gone and should drop out of reminder pressure automatically.
 
+## Dashboard Reports
+
+- Added a dedicated `Problem Pools` dashboard page backed by a backend-owned SQL view instead of frontend-only math.
+  - Reason: chemical-cost review thresholds and leak dollars need one canonical calculation path that is easy to reuse for future notes/status/automation.
+- `Problem Pools` uses `20%` as the healthy target chemical-cost ratio and reports leak dollars above that target.
+  - Reason: managers want the page to surface both severity and estimated margin erosion, not just raw chemical spend.
+- Pools with missing or zero service rate remain visible as `Missing Rate`, but they do not count toward Watch/Problem/Critical totals.
+  - Reason: missing pricing data is operationally important, but it should not distort the flagged severity counts.
+
 ## Data Source Decisions
 
 - GHL is authoritative for communication history.
@@ -62,6 +71,8 @@ Keep entries short, but do not skip them.
 - Skimmer API is the preferred live source when current-week route counts matter.
 - Nightly Skimmer DB is preferred when the API does not include the needed data.
 - Normalized Postgres is Sentinel's working analytics model, not the upstream source of truth.
+- `Problem Pools` derives monthly service rate from imported `sk_service_location.rate` / `rate_type`, with explicit cadence conversion for a few known labels and a fallback to the raw rate.
+  - Reason: the normalized dashboard layer already has reliable imported pricing there, and existing pricing workflows already treat Skimmer `ServiceLocation.Rate` as the operative service rate.
 
 ## Performance Decisions
 

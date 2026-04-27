@@ -27,6 +27,7 @@ from services.dashboard_backend import (
     create_alert_rule_config,
     delete_alert_rule_config,
     list_customers,
+    list_problem_pools,
     list_reminders,
     list_technicians,
     list_refresh_runs,
@@ -286,6 +287,25 @@ def api_customers(
         status=status or None,
         search=search or None,
         operational_only=bool(operational_only),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/api/problem-pools")
+def api_problem_pools(
+    request: Request,
+    flag: str = "",
+    technician: str = "",
+    search: str = "",
+    limit: int = 100,
+    offset: int = 0,
+):
+    _dashboard_read_auth_or_401(request)
+    return list_problem_pools(
+        flag=flag or None,
+        technician=technician or None,
+        search=search or None,
         limit=limit,
         offset=offset,
     )

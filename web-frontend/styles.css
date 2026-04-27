@@ -352,6 +352,10 @@ textarea {
   min-width: 980px;
 }
 
+.problem-pools-table {
+  min-width: 1320px;
+}
+
 .payroll-table-row {
   display: grid;
   grid-template-columns: minmax(220px, 1.8fr) repeat(8, minmax(88px, 0.8fr)) minmax(120px, 1fr);
@@ -375,6 +379,31 @@ textarea {
 
 .payroll-table-row.is-muted {
   opacity: 0.78;
+}
+
+.problem-pools-row,
+.problem-pools-head {
+  grid-template-columns:
+    minmax(190px, 1.15fr)
+    minmax(220px, 1.4fr)
+    minmax(170px, 1.05fr)
+    minmax(100px, 0.72fr)
+    minmax(100px, 0.72fr)
+    minmax(85px, 0.6fr)
+    minmax(105px, 0.7fr)
+    minmax(105px, 0.72fr)
+    minmax(220px, 1.4fr);
+}
+
+.problem-pools-row.is-clickable {
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.problem-pools-row.is-clickable:hover {
+  transform: translateY(-1px);
+  border-color: rgba(47, 150, 229, 0.24);
+  box-shadow: 0 14px 28px rgba(25, 47, 78, 0.1);
 }
 
 .chart-grid-wide {

@@ -1004,6 +1004,156 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
 
         cur.execute(
             """
+            CREATE OR REPLACE VIEW problem_pools_v AS
+            WITH monthly_chemical_costs AS (
+                SELECT
+                    d.customer_id,
+                    d.pool_id,
+                    SUM(COALESCE(d.estimated_cost, 0))::NUMERIC(12, 2) AS monthly_chemical_cost,
+                    MAX(d.service_date) AS latest_chemical_service_date
+                FROM chemical_dose_events d
+                WHERE d.service_date >= NOW() - INTERVAL '30 days'
+                GROUP BY d.customer_id, d.pool_id
+            ),
+            current_assignments AS (
+                SELECT
+                    a.source_system,
+                    a.source_service_location_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''),
+                        NULLIF(t.username, ''),
+                        t.source_account_id
+                    ) AS technician_name,
+                    concat_ws(' · ', a.day_of_week, a.frequency) AS technician_route,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY a.source_system, a.source_service_location_id
+                        ORDER BY a.sequence ASC NULLS LAST, a.start_date DESC NULLS LAST, a.id DESC
+                    ) AS rn
+                FROM service_location_technician_assignments a
+                JOIN technicians t ON t.id = a.technician_id
+                WHERE a.is_deleted = FALSE
+                  AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+            ),
+            recent_service_techs AS (
+                SELECT
+                    s.source_system,
+                    s.source_service_location_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', t.first_name, t.last_name)), ''),
+                        NULLIF(t.username, ''),
+                        t.source_account_id
+                    ) AS technician_name,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY s.source_system, s.source_service_location_id
+                        ORDER BY s.service_date DESC, s.sequence ASC NULLS LAST, s.id DESC
+                    ) AS rn
+                FROM technician_route_stops s
+                JOIN technicians t ON t.id = s.technician_id
+                WHERE s.is_skipped = FALSE
+            ),
+            base AS (
+                SELECT
+                    c.id AS customer_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(c.company_name, ''),
+                        'Unknown Customer'
+                    ) AS customer_name,
+                    p.id AS pool_id,
+                    p.name AS pool_name,
+                    p.address AS pool_address,
+                    COALESCE(ca.technician_name, rs.technician_name) AS technician_name,
+                    ca.technician_route,
+                    sl.rate AS service_rate,
+                    sl.rate_type AS service_rate_type,
+                    /* Problem Pools works off a monthly rate. We convert a few known cadence labels here,
+                       then fall back to the imported ServiceLocation.Rate because current pricing workflows
+                       already treat that Skimmer field as the operative service rate. */
+                    CASE
+                        WHEN sl.rate IS NULL OR sl.rate <= 0 THEN NULL::NUMERIC
+                        WHEN lower(COALESCE(sl.rate_type, '')) IN ('weekly', 'week', 'per_week', 'per week') THEN ROUND((sl.rate * 52.0 / 12.0)::NUMERIC, 2)
+                        WHEN lower(COALESCE(sl.rate_type, '')) IN ('biweekly', 'bi-weekly', 'every_other_week', 'every other week') THEN ROUND((sl.rate * 26.0 / 12.0)::NUMERIC, 2)
+                        WHEN lower(COALESCE(sl.rate_type, '')) IN ('twice_monthly', 'semi_monthly', 'semi-monthly', 'semimonthly') THEN ROUND((sl.rate * 2.0)::NUMERIC, 2)
+                        WHEN lower(COALESCE(sl.rate_type, '')) IN ('quarterly', 'quarter') THEN ROUND((sl.rate / 3.0)::NUMERIC, 2)
+                        ELSE ROUND(sl.rate::NUMERIC, 2)
+                    END AS monthly_service_rate,
+                    COALESCE(mcc.monthly_chemical_cost, 0)::NUMERIC(12, 2) AS monthly_chemical_cost,
+                    mcc.latest_chemical_service_date
+                FROM pools p
+                JOIN customers c ON c.id = p.customer_id
+                LEFT JOIN sk_service_location sl
+                  ON sl.source_system = p.source_system
+                 AND sl.source_location_id = p.source_service_location_id
+                LEFT JOIN monthly_chemical_costs mcc
+                  ON mcc.customer_id = p.customer_id
+                 AND mcc.pool_id = p.id
+                LEFT JOIN current_assignments ca
+                  ON ca.source_system = p.source_system
+                 AND ca.source_service_location_id = p.source_service_location_id
+                 AND ca.rn = 1
+                LEFT JOIN recent_service_techs rs
+                  ON rs.source_system = p.source_system
+                 AND rs.source_service_location_id = p.source_service_location_id
+                 AND rs.rn = 1
+                WHERE c.is_operationally_active = TRUE
+                  AND p.is_operationally_active = TRUE
+            ),
+            scored AS (
+                SELECT
+                    base.*,
+                    /* chemical_percent = monthly_chemical_cost / monthly_service_rate, displayed as a percentage. */
+                    CASE
+                        WHEN base.monthly_service_rate IS NULL OR base.monthly_service_rate <= 0 THEN NULL::NUMERIC
+                        ELSE ROUND(((base.monthly_chemical_cost / base.monthly_service_rate) * 100.0)::NUMERIC, 1)
+                    END AS chemical_percent,
+                    /* monthly_leak = max(0, monthly_chemical_cost - (monthly_service_rate * 20%)). */
+                    CASE
+                        WHEN base.monthly_service_rate IS NULL OR base.monthly_service_rate <= 0 THEN 0::NUMERIC(12, 2)
+                        ELSE ROUND(GREATEST(0, base.monthly_chemical_cost - (base.monthly_service_rate * 0.20))::NUMERIC, 2)
+                    END AS monthly_leak
+                FROM base
+            )
+            SELECT
+                s.customer_id,
+                s.customer_name,
+                s.pool_id,
+                s.pool_name,
+                s.pool_address,
+                s.technician_name,
+                s.technician_route,
+                s.service_rate_type,
+                s.monthly_service_rate,
+                s.monthly_chemical_cost,
+                s.chemical_percent,
+                CASE
+                    WHEN s.monthly_service_rate IS NULL OR s.monthly_service_rate <= 0 THEN 'Missing Rate'
+                    WHEN s.chemical_percent >= 35 THEN 'Critical'
+                    WHEN s.chemical_percent >= 25 THEN 'Problem'
+                    WHEN s.chemical_percent >= 20 THEN 'Watch'
+                    ELSE 'Healthy'
+                END AS flag,
+                CASE
+                    WHEN s.monthly_service_rate IS NULL OR s.monthly_service_rate <= 0 THEN 4
+                    WHEN s.chemical_percent >= 35 THEN 0
+                    WHEN s.chemical_percent >= 25 THEN 1
+                    WHEN s.chemical_percent >= 20 THEN 2
+                    ELSE 3
+                END AS flag_rank,
+                s.monthly_leak,
+                CASE
+                    WHEN s.monthly_service_rate IS NULL OR s.monthly_service_rate <= 0 THEN 'Add service rate'
+                    WHEN s.chemical_percent >= 35 THEN 'Immediate review: treatment, price increase, or service adjustment'
+                    WHEN s.chemical_percent >= 25 THEN 'Review / recommend treatment'
+                    WHEN s.chemical_percent >= 20 THEN 'Monitor'
+                    ELSE 'Healthy'
+                END AS suggested_action,
+                s.latest_chemical_service_date
+            FROM scored s
+            """
+        )
+
+        cur.execute(
+            """
             CREATE OR REPLACE VIEW dashboard_summary_v AS
             SELECT
                 NOW() AS generated_at,

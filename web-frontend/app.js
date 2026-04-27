@@ -113,6 +113,7 @@ const state = {
     weather: null,
     alerts: null,
     customers: null,
+    problemPools: null,
     technicians: null,
     labor: null,
     reminders: null,
@@ -139,6 +140,7 @@ const viewMeta = {
   alerts: { kicker: "Alerts", title: "Tracked Alert Queue" },
   "alert-profile": { kicker: "Alert", title: "Alert Detail" },
   customers: { kicker: "Customers", title: "Customer Operations View" },
+  "problem-pools": { kicker: "Problem Pools", title: "Chemical Cost Leak Report" },
   "customer-profile": { kicker: "Customer", title: "Customer Chemistry Profile" },
   technicians: { kicker: "Technicians", title: "Field Operator Snapshot" },
   "technician-profile": { kicker: "Technician", title: "Technician Profile" },
@@ -150,6 +152,7 @@ const viewMeta = {
 const filters = {
   alerts: { status: "", category: "", severity: "", rule_code: "", search: "", limit: 20, offset: 0 },
   customers: { search: "", operational_only: 1, status: "", limit: 20, offset: 0 },
+  problemPools: { flag: "", technician: "", search: "", limit: 100, offset: 0 },
   technicians: {
     search: "",
     active_only: 0,
@@ -404,6 +407,8 @@ function wirePagination(root = document) {
         await loadAlerts();
       } else if (target === "customers") {
         await loadCustomers();
+      } else if (target === "problemPools") {
+        await loadProblemPools();
       }
       pushBrowserState();
     };
@@ -467,6 +472,21 @@ function currency(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(number);
+}
+
+function percent1(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "N/A";
+  return `${number.toFixed(1)}%`;
+}
+
+function problemPoolFlagBadge(flag) {
+  const normalized = String(flag || "").trim().toLowerCase();
+  if (normalized === "critical") return badge("Critical", "critical");
+  if (normalized === "problem") return badge("Problem", "high");
+  if (normalized === "watch") return badge("Watch", "warning");
+  if (normalized === "healthy") return badge("Healthy", "info");
+  return badge(flag || "Missing Rate", "muted");
 }
 
 function mergeCustomerChartPolicy(policy = {}) {
@@ -971,6 +991,42 @@ function renderFilters() {
     return;
   }
 
+  if (state.view === "problem-pools") {
+    setLayout("single");
+    const f = filters.problemPools;
+    const technicians = state.data.problemPools?.filter_options?.technicians || [];
+    els.filters.innerHTML = `
+      <label class="filter-chip"><span>Flag</span>
+        <select id="filter-problem-pools-flag">
+          <option value="">All</option>
+          <option value="Watch" ${f.flag === "Watch" ? "selected" : ""}>Watch</option>
+          <option value="Problem" ${f.flag === "Problem" ? "selected" : ""}>Problem</option>
+          <option value="Critical" ${f.flag === "Critical" ? "selected" : ""}>Critical</option>
+        </select>
+      </label>
+      <label class="filter-chip"><span>Technician</span>
+        <select id="filter-problem-pools-technician">
+          <option value="">All</option>
+          ${technicians.map((name) => `<option value="${escapeHtml(name)}" ${f.technician === name ? "selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="filter-chip"><span>Search</span><input id="filter-problem-pools-search" value="${escapeHtml(f.search)}" placeholder="Customer, pool, address" /></label>
+    `;
+    document.getElementById("filter-problem-pools-flag").onchange = (e) => {
+      filters.problemPools.flag = e.target.value;
+      loadProblemPools(true);
+    };
+    document.getElementById("filter-problem-pools-technician").onchange = (e) => {
+      filters.problemPools.technician = e.target.value;
+      loadProblemPools(true);
+    };
+    document.getElementById("filter-problem-pools-search").onchange = (e) => {
+      filters.problemPools.search = e.target.value.trim();
+      loadProblemPools(true);
+    };
+    return;
+  }
+
   if (state.view === "technicians") {
     setLayout("single");
     const f = filters.technicians;
@@ -1125,6 +1181,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "alerts") await loadAlerts(force);
     if (state.view === "alert-profile") await loadAlertProfile(force);
     if (state.view === "customers") await loadCustomers(force);
+    if (state.view === "problem-pools") await loadProblemPools(force);
     if (state.view === "customer-profile") await loadCustomerProfile(force);
     if (state.view === "technicians") await loadTechnicians(force);
     if (state.view === "technician-profile") await loadTechnicianProfile(force);
@@ -1794,6 +1851,89 @@ function renderCustomers() {
         }).join("")}
       </div>
       ${renderPaginationControls(result, "customers")}
+    </section>
+  `;
+  wireNavigationTargets(els.mainPanel);
+  wirePagination(els.mainPanel);
+}
+
+async function loadProblemPools(resetOffset = false) {
+  if (resetOffset) filters.problemPools.offset = 0;
+  const result = await api(`/api/problem-pools${qs(filters.problemPools)}`);
+  state.data.problemPools = result;
+  renderFilters();
+  renderProblemPools();
+}
+
+function renderProblemPools() {
+  const result = state.data.problemPools || {};
+  const summary = result.summary || {};
+  const items = result.items || [];
+  const activePoolLabel = `${summary.total_active_pool_count ?? 0} / ${summary.total_active_customer_count ?? 0}`;
+
+  els.mainPanel.innerHTML = `
+    <section class="section-card">
+      <div class="item-card-header">
+        <div>
+          <h3>Problem Pools</h3>
+          <p class="panel-subtitle">Chemical cost as a share of the imported monthly service rate. Missing rates stay visible, but they do not contribute to flagged leak totals.</p>
+        </div>
+        <div class="dense">${escapeHtml(result.total ?? 0)} rows</div>
+      </div>
+      <div class="stat-grid">
+        <article class="stat-card"><span class="muted">Active Pools / Customers</span><strong>${escapeHtml(activePoolLabel)}</strong></article>
+        <article class="stat-card"><span class="muted">Watch</span><strong>${escapeHtml(summary.watch_count ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Problem</span><strong>${escapeHtml(summary.problem_count ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Critical</span><strong>${escapeHtml(summary.critical_count ?? 0)}</strong></article>
+        <article class="stat-card"><span class="muted">Total Monthly Leak</span><strong>${escapeHtml(currency(summary.total_monthly_leak) || "$0.00")}</strong></article>
+      </div>
+    </section>
+    <section class="section-card">
+      <div class="item-card-header">
+        <div>
+          <h3>Report Table</h3>
+          <p class="panel-subtitle">Default order is Critical, then Problem, then Watch, then highest monthly leak.</p>
+        </div>
+        <div class="dense">${escapeHtml(summary.missing_rate_count ?? 0)} missing rate</div>
+      </div>
+      <div class="payroll-table-wrap">
+        <div class="payroll-table problem-pools-table">
+          <div class="payroll-table-row payroll-table-head problem-pools-head">
+            <div>Customer</div>
+            <div>Pool / Address</div>
+            <div>Technician / Route</div>
+            <div>Monthly Rate</div>
+            <div>Chem Cost</div>
+            <div>Chem %</div>
+            <div>Flag</div>
+            <div>Monthly Leak</div>
+            <div>Suggested Action</div>
+          </div>
+          ${items.map((item) => `
+            <div class="payroll-table-row problem-pools-row is-clickable" data-customer-id="${escapeHtml(item.customer_id)}">
+              <div>
+                <strong>${escapeHtml(item.customer_name || `Customer ${item.customer_id}`)}</strong>
+                <div class="muted">Customer ID ${escapeHtml(item.customer_id)}</div>
+              </div>
+              <div>
+                <strong>${escapeHtml(item.pool_name || `Pool ${item.pool_id}`)}</strong>
+                <div class="muted">${escapeHtml(item.pool_address || "No address on file")}</div>
+              </div>
+              <div>
+                <strong>${escapeHtml(item.technician_name || "Unassigned")}</strong>
+                <div class="muted">${escapeHtml(item.technician_route || item.service_rate_type || "No route detail")}</div>
+              </div>
+              <div>${escapeHtml(currency(item.monthly_service_rate) || "N/A")}</div>
+              <div>${escapeHtml(currency(item.monthly_chemical_cost) || "$0.00")}</div>
+              <div>${escapeHtml(percent1(item.chemical_percent))}</div>
+              <div>${problemPoolFlagBadge(item.flag)}</div>
+              <div>${escapeHtml(currency(item.monthly_leak) || "$0.00")}</div>
+              <div>${escapeHtml(item.suggested_action || "—")}</div>
+            </div>
+          `).join("") || `<div class="empty-state">No pools matched this filter set.</div>`}
+        </div>
+      </div>
+      ${renderPaginationControls(result, "problemPools")}
     </section>
   `;
   wireNavigationTargets(els.mainPanel);
