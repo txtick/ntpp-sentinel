@@ -69,6 +69,12 @@ Examples:
 - Other endpoints (contacts, messages) accept `LocationId` as a header; this one does not.
 - The startup health check and `_ghl_find_conversation_id` were both missing this param — fixed 2026-04-19.
 
+## GHL / LeadConnector SMS Size Limit
+
+- GHL can accept an outbound summary API request and still mark the actual SMS as `Failed` in the conversation if the message body is too long.
+- The observed failure was `Error 30019` / `SMS Size Limit`.
+- Even though GHL says it supports longer payloads, manager summary SMS needs to stay much shorter in practice to avoid carrier-side failures.
+
 ## Mounts / Containers
 
 - `web-backend` does not mount `./data:/data`.

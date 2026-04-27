@@ -36,6 +36,8 @@ Keep entries short, but do not skip them.
 - AI false positives should be debugged at the AI-gate/input/prompt layer first, not patched with endless deterministic suppressions.
 - Manager summaries should include dashboard reminder pressure.
   - Reason: operational follow-up like quote work should ride the same manager reminder cadence so it does not get forgotten.
+- Manager summaries currently omit dashboard reminder pressure and the `resolved since last summary` section.
+  - Reason: GHL/LeadConnector was accepting the API request but failing delivery with SMS size-limit errors, so the summary had to be shortened first.
 
 ## Dashboard Alerts
 

@@ -21,8 +21,12 @@ You get scheduled summary texts (timing set by admin), typically:
 - `3:00pm`
 
 Each summary shows overdue calls/texts and what was resolved since the last summary.
+Current summary focus is just overdue calls/texts plus escalated items.
 
-Summaries can also include dashboard reminder pressure, such as overdue follow-up reminders created from dashboard alerts. This is intended to keep operational tasks like quote follow-up visible in the same manager text rhythm as SLA items.
+To keep SMS delivery reliable, the manager summary currently does **not** include:
+
+- the `resolved since last summary` section
+- dashboard reminder pressure / overdue reminder detail
 
 The default repo schedule runs on Monday-Saturday, but exact send times and active days come from admin configuration.
 
@@ -117,7 +121,6 @@ What managers should know:
 
 - reminders are separate from missed-call and missed-text SLA issues
 - reminders can be created from alerts when work still needs human follow-up
-- overdue dashboard reminders are now surfaced in the scheduled Sentinel manager summaries so they do not get forgotten
 
 Filter-clean alert workflow:
 

@@ -2618,7 +2618,6 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     Sections:
       - Missed / Unanswered Calls
       - Unanswered Customer Texts
-      - Resolved since last summary (dopamine, then disappears)
 
     Escalation:
       - If still OPEN after 24 business hours -> Escalated section
@@ -2635,31 +2634,34 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     except Exception:
         pass
 
-    # Resolved since last summary
     key = "last_summary_ts"
     slot_key = f"last_summary_ts_{slot.lower()}"  # backward-compat fallback
-    last_ts = kv_get(key) or kv_get(slot_key)
     overdue_sms = fetch_overdue_issues(now_iso, "SMS")
     overdue_calls = fetch_overdue_issues(now_iso, "CALL")
-    resolved_since = fetch_resolved_since(last_ts, now_iso)
-    dashboard_reminders = await fetch_dashboard_reminder_rollup(limit=3)
+    resolved_since: List[sqlite3.Row] = []
+    reminder_overdue = 0
+    reminder_actionable = 0
+    reminder_items: List[dict] = []
+
+    # Commented out for now to keep manager summary SMS shorter and within safer carrier limits.
+    # We may want to restore dashboard reminder pressure later in a more compact format.
+    # dashboard_reminders = await fetch_dashboard_reminder_rollup(limit=3)
+    # reminder_summary = dashboard_reminders.get("summary") or {}
+    # reminder_overdue = int(reminder_summary.get("overdue_count") or 0)
+    # reminder_actionable = int(reminder_summary.get("actionable_count") or 0)
+    # reminder_items = dashboard_reminders.get("items") or []
 
     # Enrich issues with contact names if missing
-    await _enrich_issues_with_contact_names(list(overdue_sms) + list(overdue_calls) + list(resolved_since))
+    await _enrich_issues_with_contact_names(list(overdue_sms) + list(overdue_calls))
 
     # Re-fetch issues after enrichment to get updated meta data
     overdue_sms = fetch_overdue_issues(now_iso, "SMS")
     overdue_calls = fetch_overdue_issues(now_iso, "CALL")
-    resolved_since = fetch_resolved_since(last_ts, now_iso)
 
     title = summary_title(slot)
     lines: List[str] = []
     lines.append(f"NTPP Sentinel — {title} ({_fmt_date_local(now_local)}) • as of {_fmt_as_of_local(now_local)}")
     lines.append(f"Overdue: Calls {len(overdue_calls)} | Texts {len(overdue_sms)}")
-    reminder_summary = dashboard_reminders.get("summary") or {}
-    reminder_overdue = int(reminder_summary.get("overdue_count") or 0)
-    reminder_actionable = int(reminder_summary.get("actionable_count") or 0)
-    lines.append(f"Dashboard Reminders: {reminder_overdue} overdue | {reminder_actionable} actionable")
     lines.append("")
 
     # Calls
@@ -2680,32 +2682,23 @@ async def send_summary(request: Request, slot: str = "morning", dry_run: int = 0
     if escalated_lines:
         lines.extend(escalated_lines)
 
-    reminder_items = dashboard_reminders.get("items") or []
-    if reminder_items:
-        lines.append("📋 Dashboard Reminders:")
-        for item in reminder_items[:3]:
-            customer_name = str(item.get("customer_name") or "").strip()
-            pool_name = str(item.get("pool_name") or "").strip()
-            title_text = str(item.get("title") or "Reminder").strip()
-            due_at = item.get("due_at")
-            due_label = _fmt_dt_local(due_at) if due_at else "no due date"
-            subject = customer_name or pool_name or "Unassigned"
-            if pool_name and customer_name and pool_name.lower() != customer_name.lower():
-                subject = f"{customer_name} / {pool_name}"
-            lines.append(f"• {subject} — {title_text} — due {due_label}")
-        if reminder_overdue > len(reminder_items):
-            lines.append(f"• +{reminder_overdue - len(reminder_items)} more overdue reminders")
+    # Commented out for now to keep manager summary SMS shorter and within safer carrier limits.
+    # We may want to restore dashboard reminder pressure later in a more compact format.
+    # if reminder_items:
+    #     lines.append("📋 Dashboard Reminders:")
+    #     for item in reminder_items[:3]:
+    #         customer_name = str(item.get("customer_name") or "").strip()
+    #         pool_name = str(item.get("pool_name") or "").strip()
+    #         title_text = str(item.get("title") or "Reminder").strip()
+    #         due_at = item.get("due_at")
+    #         due_label = _fmt_dt_local(due_at) if due_at else "no due date"
+    #         subject = customer_name or pool_name or "Unassigned"
+    #         if pool_name and customer_name and pool_name.lower() != customer_name.lower():
+    #             subject = f"{customer_name} / {pool_name}"
+    #         lines.append(f"• {subject} — {title_text} — due {due_label}")
+    #     if reminder_overdue > len(reminder_items):
+    #         lines.append(f"• +{reminder_overdue - len(reminder_items)} more overdue reminders")
 
-    # Dopamine section: show once then disappears
-    if last_ts:
-        if resolved_since:
-            lines.append(f"✅ Resolved since last summary ({len(resolved_since)}):")
-            for r in resolved_since[:RESOLVED_SINCE_MAX_ITEMS]:
-                who = _display_name(r)
-                rt = _fmt_dt_local(r["resolved_ts"])
-                lines.append(f"#{r['id']} {r['issue_type']} {who} at {rt}")
-        else:
-            lines.append("✅ Resolved since last summary: none")
     lines.append("")
     lines.append("Reply:")
     lines.append("Open 3 | Resolve 3 5 6 | Spam 7 | Note 3 <text> | List | More")
