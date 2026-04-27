@@ -103,6 +103,12 @@ Examples:
 - `sync_filter_clean_quote_reminders()` only runs as part of `POST /jobs/dashboard/refresh` (after the main alert work commits). It no longer runs on every `GET /api/reminders` call.
 - If a filter-clean quote reminder is not auto-completing, trigger a dashboard refresh — the quote sync will run as a tail step.
 
+## Dashboard Frontend Cache
+
+- The dashboard SPA is static `index.html` + `app.js` + `styles.css` served by Caddy.
+- If the browser keeps an older cached `app.js` after a deploy, a newly added nav item can appear in HTML while clicks silently fail because the old JS does not know that view exists yet.
+- Frontend static assets now send no-cache headers to reduce HTML/JS version mismatches after deploys.
+
 ## Labor / Skimmer Route Cache
 
 - Skimmer daily route API responses are cached in-process for 24 hours per calendar day.
