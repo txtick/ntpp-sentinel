@@ -38,6 +38,8 @@ Keep entries short, but do not skip them.
   - Reason: operational follow-up like quote work should ride the same manager reminder cadence so it does not get forgotten.
 - Manager summaries currently omit dashboard reminder pressure and the `resolved since last summary` section.
   - Reason: GHL/LeadConnector was accepting the API request but failing delivery with SMS size-limit errors, so the summary had to be shortened first.
+- Manager summary rows now use a shorter contact label and due-time-only formatting.
+  - Reason: keeps the full issue list functional for field staff while shaving characters off every line to reduce SMS size-limit failures.
 
 ## Dashboard Alerts
 

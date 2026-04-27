@@ -28,6 +28,14 @@ To keep SMS delivery reliable, the manager summary currently does **not** includ
 - the `resolved since last summary` section
 - dashboard reminder pressure / overdue reminder detail
 
+Current summary lines also prefer a shorter contact label:
+
+- last name when a full contact name exists
+- first/only name when there is no last name
+- phone number fallback when no name is available
+
+Issue rows show the due time only, not the original inbound timestamp.
+
 The default repo schedule runs on Monday-Saturday, but exact send times and active days come from admin configuration.
 
 ## Response-time window (SLA)

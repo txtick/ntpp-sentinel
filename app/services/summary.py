@@ -24,13 +24,26 @@ def phone_label(phone: Optional[str]) -> str:
     return str(phone).strip() or "-"
 
 
+def _summary_contact_label(name: str, phone: Optional[str]) -> str:
+    raw_name = (name or "").strip()
+    if not raw_name:
+        return phone_label(phone)
+
+    parts = [part for part in raw_name.split() if part]
+    if not parts:
+        return phone_label(phone)
+    if len(parts) == 1:
+        return parts[0]
+    return parts[-1]
+
+
 def display_name(row: sqlite3.Row) -> str:
     try:
         meta = json.loads(row["meta"] or "{}")
     except Exception:
         meta = {}
     name = (meta.get("contact_name") or "").strip()
-    return name if name else phone_label(row["phone"])
+    return _summary_contact_label(name, row["phone"])
 
 
 def build_section_lines(
@@ -46,11 +59,10 @@ def build_section_lines(
     for row in rows[:summary_max_items]:
         issue_type = row["issue_type"]
         who = display_name(row)
-        last_in = row["last_inbound_ts"] or row["created_ts"]
         due = row["due_ts"]
         inbound_count = row["inbound_count"] if row["inbound_count"] is not None else 0
         display_issue_id = row["display_id"] if row["display_id"] is not None else row["id"]
-        marker = f"#{display_issue_id} {who} — {fmt_dt_local(business_time_cfg.tz_name, last_in)} | due {fmt_dt_local(business_time_cfg.tz_name, due)}"
+        marker = f"#{display_issue_id} {who} — due {fmt_dt_local(business_time_cfg.tz_name, due)}"
         if issue_type == "SMS":
             marker += f" in={inbound_count}"
         if is_escalated(
