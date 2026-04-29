@@ -20,8 +20,7 @@ You get scheduled summary texts (timing set by admin), typically:
 - `11:00am`
 - `3:00pm`
 
-Each summary shows overdue calls/texts and what was resolved since the last summary.
-Current summary focus is just overdue calls/texts plus escalated items.
+Current summary focus is overdue calls/texts plus escalated items.
 
 To keep SMS delivery reliable, the manager summary currently does **not** include:
 

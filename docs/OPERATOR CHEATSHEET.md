@@ -68,6 +68,33 @@ cd /opt/ntpp-sentinel
 ./curl_job.sh "/jobs/skimmer_drive_sync?import_after=1"
 ```
 
+## Skimmer Price Increase Dry Run
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv
+```
+
+## Skimmer Price Increase Apply One Location
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv \
+  --service-location-id E96F4668-53AE-4251-970C-6A231CFC595C \
+  --apply
+```
+
+## Skimmer Price Increase Apply Full File
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv \
+  --apply
+```
+
 ## Validate Worker Against Current SQLite
 
 ```bash

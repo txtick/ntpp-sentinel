@@ -130,7 +130,7 @@ Notes:
 - use `recheck_issue?id=<issue>` when you have a Sentinel issue id, or `recheck_issue?conversation_id=<ghl_conversation_id>` when you want to re-evaluate the whole thread directly
 - `dashboard/refresh` re-runs backend-owned dashboard alert detection and clears alert instances that no longer qualify
 - `dashboard/refresh` also runs reminder-side filter-clean quote detection, so quote reminders can auto-complete when a matching Skimmer quote exists
-- manager summaries also include dashboard reminder counts and a short overdue-reminders section when reminders need attention
+- manager summaries currently focus on overdue calls/texts plus escalated items; dashboard reminder pressure and `resolved since last summary` are omitted to keep SMS length reliable
 
 Manual dashboard alert refresh:
 
@@ -401,7 +401,55 @@ Key worker fallback cron env:
 
 ---
 
-## 8. Recovery Notes
+## 8. Price Increase Push To Skimmer
+
+Dry run one location first:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv \
+  --service-location-id E96F4668-53AE-4251-970C-6A231CFC595C
+```
+
+Dry run the full approved file:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv
+```
+
+Apply one location first:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv \
+  --service-location-id E96F4668-53AE-4251-970C-6A231CFC595C \
+  --apply
+```
+
+Apply the full approved file:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel python /app/scripts/skimmer_update_service_rates_from_csv.py \
+  --csv /app/sri_042026_price_export.csv \
+  --apply
+```
+
+Notes:
+
+- source of truth is CSV column `L` / `final_new_rate`
+- only rows with `approved_for_increase=yes` are eligible by default
+- rows with blank `final_new_rate` are skipped
+- updates are keyed by `service_location_id`
+- the script reads the live Skimmer service location first, preserves the existing `rateType`, and only changes the numeric rate
+
+---
+
+## 9. Recovery Notes
 
 If Skimmer download succeeds but normalization does not:
 
@@ -508,7 +556,7 @@ Operator-relevant backend paths:
 
 Reminder note:
 
-- Sentinel manager summaries now pull dashboard reminder counts from `web-backend` internally and include a short overdue reminder rollup when present.
+- Sentinel manager summaries currently omit dashboard reminder pressure and `resolved since last summary` so they stay under the current GHL/LeadConnector SMS size limits.
 - Ingest worker:
   - `GET /health`
   - `POST /jobs/run`

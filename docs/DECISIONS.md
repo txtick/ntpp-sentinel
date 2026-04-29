@@ -77,6 +77,10 @@ Keep entries short, but do not skip them.
 - Normalized Postgres is Sentinel's working analytics model, not the upstream source of truth.
 - `Problem Pools` derives monthly service rate from imported `sk_service_location.rate` / `rate_type`, with explicit cadence conversion for a few known labels and a fallback to the raw rate.
   - Reason: the normalized dashboard layer already has reliable imported pricing there, and existing pricing workflows already treat Skimmer `ServiceLocation.Rate` as the operative service rate.
+- The live Skimmer price-increase updater uses `sri_042026_price_export.csv` column `L` / `final_new_rate` as the source of truth for the new service rate per `service_location_id`.
+  - Reason: that CSV is the manually approved pricing sheet, so the apply step should follow the finalized value directly instead of recalculating rates again.
+- The Skimmer rate updater preserves the live `rateType` returned by the Skimmer API and changes only the numeric service rate.
+  - Reason: the CSV decides the amount, but the billing cadence/type still belongs to the existing Skimmer service-location record.
 
 ## Performance Decisions
 
