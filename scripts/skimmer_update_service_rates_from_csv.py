@@ -30,6 +30,18 @@ import httpx  # type: ignore
 SKIMMER_API_BASE_URL = os.getenv("SKIMMER_API_BASE_URL", "https://publicapi.getskimmer.com")
 SKIMMER_API_KEY = os.getenv("SKIMMER_API_KEY", "")
 DEFAULT_CSV_PATH = os.getenv("PRICE_EXPORT_CSV_PATH", "sri_042026_price_export.csv")
+RATE_TYPE_MAP = {
+    "none": "None",
+    "perstopincludingchemicals": "PerStopIncludingChemicals",
+    "perstoppluschemicals": "PerStopPlusChemicals",
+    "flatmonthlyrateincludingchemicals": "FlatMonthlyRateIncludingChemicals",
+    "flatmonthlyratepluschemicals": "FlatMonthlyRatePlusChemicals",
+}
+LABOR_COST_TYPE_MAP = {
+    "none": "None",
+    "perstop": "PerStop",
+    "permonth": "PerMonth",
+}
 
 
 def clean_text(value: Any) -> str:
@@ -204,9 +216,26 @@ def maybe_copy(payload: Dict[str, Any], source: Dict[str, Any], key: str) -> Non
         payload[key] = source.get(key)
 
 
+def normalize_enum(value: Any, mapping: Dict[str, str], *, fallback: str) -> str:
+    text = clean_text(value)
+    if not text:
+        return fallback
+    return mapping.get(text.lower(), text)
+
+
 def build_service_location_update_payload(location: Dict[str, Any], new_rate: str) -> Dict[str, Any]:
-    # Skimmer's current public docs show PUT /ServiceLocations with a nested
-    # serviceRate object. We preserve the live rateType and update only the rate.
+    # Skimmer's public docs for PUT /ServiceLocations use nested cost/type
+    # objects. We preserve the live type values and change only the numeric rate.
+    service_rate_type = normalize_enum(
+        location.get("rateType"),
+        RATE_TYPE_MAP,
+        fallback="None",
+    )
+    labor_cost_type = normalize_enum(
+        location.get("laborCostType"),
+        LABOR_COST_TYPE_MAP,
+        fallback="None",
+    )
     payload: Dict[str, Any] = {
         "id": location.get("id"),
         "address": location.get("address"),
@@ -214,8 +243,12 @@ def build_service_location_update_payload(location: Dict[str, Any], new_rate: st
         "state": location.get("state"),
         "zip": location.get("zip"),
         "serviceRate": {
-            "rate": float(money_decimal(new_rate)),
-            "rateType": clean_text(location.get("rateType")) or "None",
+            "cost": float(money_decimal(new_rate)),
+            "type": service_rate_type,
+        },
+        "laborCost": {
+            "cost": float(location.get("laborCost") or 0),
+            "type": labor_cost_type,
         },
     }
 
@@ -345,6 +378,13 @@ def main() -> int:
                 summary["updated"] += 1
                 item["action"] = "updated"
                 item["updated_rate"] = display_rate(updated.get("rate")) or new_rate
+                summary["items"].append(item)
+            except httpx.HTTPStatusError as exc:
+                summary["errors"] += 1
+                item["action"] = "error_update"
+                item["error"] = str(exc)
+                item["response_text"] = exc.response.text if exc.response is not None else ""
+                item["payload"] = payload
                 summary["items"].append(item)
             except Exception as exc:
                 summary["errors"] += 1
