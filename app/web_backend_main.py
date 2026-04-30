@@ -123,6 +123,51 @@ _weather_cache_ts: float = 0.0
 WEATHER_CACHE_TTL = 3600  # 1 hour
 
 
+def _fetch_current_pollen() -> dict:
+    """Fetch the latest Ambee pollen reading for the configured coordinates."""
+    if not AMBEE_API_KEY:
+        return {}
+
+    import urllib.request as _urllib_req
+
+    a_req = _urllib_req.Request(
+        f"https://api.ambeedata.com/latest/pollen/by-lat-lng?lat={WEATHER_LAT}&lng={WEATHER_LON}",
+        headers={
+            "x-api-key": AMBEE_API_KEY,
+            "Accept": "application/json",
+            "User-Agent": "NTPP-Sentinel/1.0",
+        },
+    )
+    with _urllib_req.urlopen(a_req, timeout=10) as resp:
+        a_data = json.loads(resp.read())
+
+    entry = (a_data.get("data") or [{}])[0]
+    risk = entry.get("Risk", {})
+    counts = entry.get("Count", {})
+    species = entry.get("Species", {})
+
+    # Build top-species string for tree pollen (most relevant for TX).
+    tree_species = species.get("Tree", {})
+    top_trees = sorted(
+        [(k, v) for k, v in tree_species.items() if isinstance(v, (int, float)) and v > 0],
+        key=lambda x: x[1],
+        reverse=True,
+    )[:3]
+    tree_detail = ", ".join(f"{k.split('/')[0].strip()} {v}" for k, v in top_trees) if top_trees else ""
+
+    return {
+        "tree_risk": risk.get("tree_pollen"),
+        "grass_risk": risk.get("grass_pollen"),
+        "weed_risk": risk.get("weed_pollen"),
+        "tree_count": counts.get("tree_pollen"),
+        "grass_count": counts.get("grass_pollen"),
+        "weed_count": counts.get("weed_pollen"),
+        "tree_detail": tree_detail,
+        "ragweed_count": (species.get("Weed") or {}).get("Ragweed"),
+        "updated_at": entry.get("updatedAt"),
+    }
+
+
 @app.on_event("startup")
 def _startup() -> None:
     if os.getenv("DATABASE_URL"):
@@ -486,6 +531,28 @@ def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
     return refresh_alert_instances(trigger_reason=trigger_reason)
 
 
+@app.post("/jobs/weather/pollen_snapshot")
+def job_weather_pollen_snapshot(request: Request):
+    _auth_or_401(request)
+    if not AMBEE_API_KEY:
+        return {"ok": False, "saved": False, "reason": "AMBEE_API_KEY not configured"}
+    try:
+        current_pollen = _fetch_current_pollen()
+        if not current_pollen:
+            return {"ok": False, "saved": False, "reason": "No pollen data returned"}
+        upsert_pollen_daily_log(current_pollen)
+        return {
+            "ok": True,
+            "saved": True,
+            "provider": "ambee",
+            "log_date": __import__("datetime").date.today().isoformat(),
+            "current_pollen": current_pollen,
+        }
+    except Exception as exc:
+        _logger.warning("weather pollen snapshot failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Pollen snapshot failed")
+
+
 @app.get("/api/refresh-runs")
 def api_refresh_runs(request: Request, limit: int = 20):
     _dashboard_read_auth_or_401(request)
@@ -708,36 +775,7 @@ def api_weather(request: Request):
     current_pollen: dict = {}
     if AMBEE_API_KEY:
         try:
-            a_req = _urllib_req.Request(
-                f"https://api.ambeedata.com/latest/pollen/by-lat-lng?lat={WEATHER_LAT}&lng={WEATHER_LON}",
-                headers={"x-api-key": AMBEE_API_KEY, "Accept": "application/json"},
-            )
-            with _urllib_req.urlopen(a_req, timeout=10) as resp:
-                a_data = json.loads(resp.read())
-            entry = (a_data.get("data") or [{}])[0]
-            risk = entry.get("Risk", {})
-            counts = entry.get("Count", {})
-            species = entry.get("Species", {})
-
-            # Build top-species string for tree pollen (most relevant for TX)
-            tree_species = species.get("Tree", {})
-            top_trees = sorted(
-                [(k, v) for k, v in tree_species.items() if isinstance(v, (int, float)) and v > 0],
-                key=lambda x: x[1], reverse=True
-            )[:3]
-            tree_detail = ", ".join(f"{k.split('/')[0].strip()} {v}" for k, v in top_trees) if top_trees else ""
-
-            current_pollen = {
-                "tree_risk": risk.get("tree_pollen"),
-                "grass_risk": risk.get("grass_pollen"),
-                "weed_risk": risk.get("weed_pollen"),
-                "tree_count": counts.get("tree_pollen"),
-                "grass_count": counts.get("grass_pollen"),
-                "weed_count": counts.get("weed_pollen"),
-                "tree_detail": tree_detail,
-                "ragweed_count": (species.get("Weed") or {}).get("Ragweed"),
-                "updated_at": entry.get("updatedAt"),
-            }
+            current_pollen = _fetch_current_pollen()
             # Persist today's reading so we can show pollen history
             upsert_pollen_daily_log(current_pollen)
         except Exception as exc:

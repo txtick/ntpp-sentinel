@@ -50,10 +50,11 @@ Examples:
 
 ## Weather Widget APIs
 
-- **Open-Meteo pollen (CAMS) does not cover North America.** Grass/ragweed pollen fields return null for Texas. Use Tomorrow.io (`TOMORROW_API_KEY`) for pollen data instead.
+- **Open-Meteo pollen (CAMS) does not cover North America.** Do not try to source Texas pollen history from Open-Meteo.
 - **Open-Meteo dust works globally** — use it for Saharan dust events (dust μg/m³ > 75 = elevated, > 200 = Saharan event).
-- **Tomorrow.io free tier:** 500 calls/day, 25/hour. With the 1-hour in-process cache this stays around 24 calls/day. Pollen index is 0–5 (None → Very High).
-- **Weather cache is in-process and resets on container restart.** First load after restart hits all three APIs (Open-Meteo weather, Open-Meteo AQ, Tomorrow.io). Cached for `WEATHER_CACHE_TTL` seconds (default 3600).
+- **Production pollen fetches currently use Ambee latest-only data**, not a true historical API. The dashboard history fills from one stored row per day in `pollen_daily_log`.
+- **Weather cache is in-process and resets on container restart.** First load after restart hits Open-Meteo weather, Open-Meteo AQ, and Ambee pollen. Cached for `WEATHER_CACHE_TTL` seconds (default 3600).
+- **Pollen history was previously traffic-driven.** Before the dedicated `weather_pollen` cron job, blank days appeared whenever `/api/weather` was not loaded that day or the live pollen fetch failed.
 - **`WEATHER_LAT` / `WEATHER_LON`** env vars control coordinates (default 33.15, -96.82 = Frisco/McKinney area).
 - `/api/weather` is on `web-backend` and requires dashboard auth. Weather data is fetched server-side and cached; the frontend does not call external APIs directly.
 

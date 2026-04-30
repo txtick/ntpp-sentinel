@@ -61,6 +61,15 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+## Manual Pollen Snapshot
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/weather/pollen_snapshot" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
 ## Skimmer Download + Import
 
 ```bash

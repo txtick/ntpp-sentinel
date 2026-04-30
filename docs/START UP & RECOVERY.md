@@ -140,6 +140,14 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+Manual pollen snapshot:
+
+```bash
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/weather/pollen_snapshot" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
 Filter-clean notify/reminder workflow:
 
 - use the dashboard `Notify Customer` action on filter-clean alerts when you want Sentinel to text the customer and create the quote-follow-up reminder

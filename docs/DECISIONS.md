@@ -97,10 +97,12 @@ Keep entries short, but do not skip them.
   - Reason: avoids CORS issues, controls rate limiting, and prevents every page load hitting external APIs.
 - Open-Meteo is used for weather and dust (free, no API key, global coverage).
   - Reason: best free weather source; dust model works globally including Saharan transport events over Texas.
-- Tomorrow.io is used for pollen (requires `TOMORROW_API_KEY`, free tier 500 calls/day).
-  - Reason: Open-Meteo pollen uses the European CAMS model which does not cover North America. Tomorrow.io provides tree/grass/weed pollen index (0–5 scale) for US locations.
+- Ambee is currently used for pollen (requires `AMBEE_API_KEY`) and only provides the latest reading, not historical ranges.
+  - Reason: the production code path is built around Ambee's latest-by-lat-lng endpoint and persists one snapshot per day into Postgres for the dashboard history view.
+- Pollen history is collected by a dedicated authenticated `web-backend` cron job twice daily, with `/api/weather` also upserting on successful page loads.
+  - Reason: relying on homepage traffic alone left blank days in the 7-day history whenever the widget was not loaded or the live fetch missed.
 - Pool water temperature shown is the 7-day fleet-wide average of `temperature` readings from active pools in `chemistry_readings`.
   - Reason: real measured data is more accurate than estimating from air temperature. Falls back to 7-day air temp rolling mean if no readings exist.
 - Algae risk thresholds: Low < 60°F, Low-Mod 60–65°F, Moderate 65–70°F, High 70–78°F, Peak > 78°F.
 - Pollen season note is static by month based on North Texas seasonal patterns (cedar Jan–Feb, oak/elm Mar–Apr, grass May–Aug, ragweed Aug–Oct).
-  - Reason: Tomorrow.io covers real-time and recent pollen; the seasonal note provides broader context for planning.
+  - Reason: the live pollen source gives current conditions, while the seasonal note provides broader context for planning.
