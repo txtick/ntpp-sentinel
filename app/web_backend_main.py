@@ -533,6 +533,7 @@ def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
 
 @app.post("/jobs/weather/pollen_snapshot")
 def job_weather_pollen_snapshot(request: Request):
+    global _weather_cache, _weather_cache_ts
     _auth_or_401(request)
     if not AMBEE_API_KEY:
         return {"ok": False, "saved": False, "reason": "AMBEE_API_KEY not configured"}
@@ -541,6 +542,9 @@ def job_weather_pollen_snapshot(request: Request):
         if not current_pollen:
             return {"ok": False, "saved": False, "reason": "No pollen data returned"}
         upsert_pollen_daily_log(current_pollen)
+        # Force the next /api/weather request to rebuild from fresh DB + API data.
+        _weather_cache = {}
+        _weather_cache_ts = 0.0
         return {
             "ok": True,
             "saved": True,
