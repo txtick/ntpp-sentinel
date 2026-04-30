@@ -4530,6 +4530,7 @@ def upsert_pollen_daily_log(pollen: dict) -> None:
     """Store today's Ambee pollen reading. Called after each successful Ambee fetch."""
     if not DATABASE_URL or not pollen:
         return
+    log_date = _now_tz().date()
     try:
         with pg() as conn:
             with conn.cursor() as cur:
@@ -4539,7 +4540,7 @@ def upsert_pollen_daily_log(pollen: dict) -> None:
                         (log_date, tree_risk, grass_risk, weed_risk,
                          tree_count, grass_count, weed_count, tree_detail, updated_at)
                     VALUES
-                        (CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                     ON CONFLICT (log_date) DO UPDATE SET
                         tree_risk   = EXCLUDED.tree_risk,
                         grass_risk  = EXCLUDED.grass_risk,
@@ -4551,6 +4552,7 @@ def upsert_pollen_daily_log(pollen: dict) -> None:
                         updated_at  = EXCLUDED.updated_at
                     """,
                     (
+                        log_date,
                         pollen.get("tree_risk"),
                         pollen.get("grass_risk"),
                         pollen.get("weed_risk"),
@@ -4569,6 +4571,7 @@ def get_pollen_daily_log(days: int = 7) -> dict:
     """Return a {date_str: pollen_dict} map for the last N days."""
     if not DATABASE_URL:
         return {}
+    cutoff_date = _now_tz().date() - timedelta(days=int(days))
     try:
         with pg() as conn:
             with conn.cursor() as cur:
@@ -4577,10 +4580,10 @@ def get_pollen_daily_log(days: int = 7) -> dict:
                     SELECT log_date::text, tree_risk, grass_risk, weed_risk,
                            tree_count, grass_count, weed_count, tree_detail
                     FROM pollen_daily_log
-                    WHERE log_date >= CURRENT_DATE - make_interval(days => %s)
+                    WHERE log_date >= %s
                     ORDER BY log_date
                     """,
-                    (int(days),),
+                    (cutoff_date,),
                 )
                 rows = cur.fetchall()
         result = {}
