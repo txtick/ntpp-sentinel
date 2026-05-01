@@ -130,6 +130,7 @@ Notes:
 - use `recheck_issue?id=<issue>` when you have a Sentinel issue id, or `recheck_issue?conversation_id=<ghl_conversation_id>` when you want to re-evaluate the whole thread directly
 - `dashboard/refresh` re-runs backend-owned dashboard alert detection and clears alert instances that no longer qualify
 - `dashboard/refresh` also runs reminder-side filter-clean quote detection, so quote reminders can auto-complete when a matching Skimmer quote exists
+- filter-clean quote reminders are also rechecked automatically by the dedicated `web-backend` quote-sync cron job during business hours
 - manager summaries currently focus on overdue calls/texts plus escalated items; dashboard reminder pressure and `resolved since last summary` are omitted to keep SMS length reliable
 
 Manual dashboard alert refresh:
@@ -137,6 +138,14 @@ Manual dashboard alert refresh:
 ```bash
 docker compose exec -T web-backend curl -s -X POST \
   "http://localhost:8020/jobs/dashboard/refresh?trigger_reason=manual" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
+Manual filter-clean quote sync:
+
+```bash
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/filter-clean/quote-sync" \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
@@ -152,7 +161,7 @@ Filter-clean notify/reminder workflow:
 
 - use the dashboard `Notify Customer` action on filter-clean alerts when you want Sentinel to text the customer and create the quote-follow-up reminder
 - Sentinel does not create the Skimmer quote directly through the public API today
-- once a matching filter-clean quote exists in Skimmer, the reminder should auto-complete on the next dashboard refresh or reminders/dashboard-summary read
+- once a matching filter-clean quote exists in Skimmer, the reminder should auto-complete on the next quote-sync run or dashboard refresh
 
 ---
 

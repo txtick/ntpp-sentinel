@@ -102,8 +102,8 @@ Examples:
 
 ## Quote Sync / Reminders
 
-- `sync_filter_clean_quote_reminders()` only runs as part of `POST /jobs/dashboard/refresh` (after the main alert work commits). It no longer runs on every `GET /api/reminders` call.
-- If a filter-clean quote reminder is not auto-completing, trigger a dashboard refresh — the quote sync will run as a tail step.
+- `sync_filter_clean_quote_reminders()` runs after `Notify Customer`, as part of `POST /jobs/dashboard/refresh`, and on the dedicated `POST /jobs/filter-clean/quote-sync` background job. It no longer runs on every `GET /api/reminders` call.
+- If a filter-clean quote reminder is not auto-completing, either trigger a dashboard refresh or run the dedicated quote-sync job directly.
 
 ## Dashboard Frontend Cache
 

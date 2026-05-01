@@ -52,6 +52,15 @@ docker compose exec -T web-backend curl -s -X POST \
 
 Use this after a filter-clean quote has been created if you want reminder cleanup to happen immediately.
 
+Dedicated filter-clean quote sync:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend curl -s -X POST \
+  "http://localhost:8020/jobs/filter-clean/quote-sync" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
 ## Dashboard Alert Refresh
 
 ```bash

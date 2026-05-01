@@ -36,6 +36,7 @@ from services.dashboard_backend import (
     get_pollen_daily_log,
     notify_filter_clean_customer,
     refresh_alert_instances,
+    sync_filter_clean_quote_reminders,
     snooze_reminder,
     update_alert_instance_status,
     update_reminder_fields,
@@ -529,6 +530,12 @@ def api_alert_snooze(
 def job_dashboard_refresh(request: Request, trigger_reason: str = "manual"):
     _auth_or_401(request)
     return refresh_alert_instances(trigger_reason=trigger_reason)
+
+
+@app.post("/jobs/filter-clean/quote-sync")
+def job_filter_clean_quote_sync(request: Request):
+    _auth_or_401(request)
+    return sync_filter_clean_quote_reminders()
 
 
 @app.post("/jobs/weather/pollen_snapshot")

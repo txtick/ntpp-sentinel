@@ -62,6 +62,7 @@ This document captures business behavior that should remain stable unless intent
   - It sends the customer an SMS through GHL saying they are due for a filter clean and that a quote will follow.
   - It creates or updates a dashboard reminder so the quote does not get forgotten.
   - The reminder auto-completes when Sentinel later detects a matching filter-clean quote via the live Skimmer quotes API.
+- Open filter-clean quote reminders are also rechecked automatically in the background during business hours.
 
 ## Communication / SLA
 

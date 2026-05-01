@@ -58,6 +58,8 @@ Keep entries short, but do not skip them.
   - Reason: the public Skimmer API appears read-only for quotes, so the reliable workflow is notify + reminder + quote detection.
 - Filter-clean quote reminders auto-complete when a matching live Skimmer quote is detected.
   - Reason: once the quote exists, the human follow-up debt is gone and should drop out of reminder pressure automatically.
+- Filter-clean quote reminder sync now has a dedicated background `web-backend` job in addition to the immediate post-notify check and dashboard refresh path.
+  - Reason: quote cleanup should not depend on somebody loading the dashboard or manually triggering a full alert refresh.
 
 ## Dashboard Reports
 

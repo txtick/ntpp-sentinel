@@ -109,8 +109,9 @@ FILTER_CLEAN_RULE_CODES = {
     "freedom_filter_clean_not_scheduled",
 }
 DEFAULT_FILTER_CLEAN_NOTIFY_SMS = (
-    "North Texas Pool Pros here. Based on your filter PSI readings and your recent filter-clean history, "
-    "you are due for a filter clean. We will send a quote for your approval shortly. "
+    "North Texas Pool Pros here. Your recent filter PSI readings suggest it is time for a filter clean, "
+    "which we recommend to help prevent reduced circulation and possible system damage. "
+    "We will send a quote for your approval shortly. "
     "If you would like to proceed, simply approve the quote. If not, you can reject it. "
     "Reply STOP to unsubscribe."
 )

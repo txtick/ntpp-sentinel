@@ -63,6 +63,9 @@ case "$JOB" in
   weather_pollen)
     call_backend_job "${WEB_BACKEND_BASE}/jobs/weather/pollen_snapshot"
     ;;
+  filter_clean_quote_sync)
+    call_backend_job "${WEB_BACKEND_BASE}/jobs/filter-clean/quote-sync"
+    ;;
   *)
     echo "$(ts) Unknown job: ${JOB}"
     exit 1
