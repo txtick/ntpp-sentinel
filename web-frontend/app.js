@@ -65,6 +65,57 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
   },
 };
 
+// ── Chart visual config (presentation-only; not business logic) ──────────────
+// Safe-range bands are visual guidance only — subtle background tint showing
+// the industry-standard "acceptable" window for each chemistry metric.
+const METRIC_CHART_CONFIG = {
+  free_chlorine:     { color: "#2F9BE8", fillOpacity: 0.13, safeMin: 1.0,  safeMax: 3.0   },
+  ph:                { color: "#0d9488", fillOpacity: 0.11, safeMin: 7.2,  safeMax: 7.8   },
+  cya:               { color: "#d97706", fillOpacity: 0.11, safeMin: 30,   safeMax: 50    },
+  alkalinity:        { color: "#6366f1", fillOpacity: 0.11, safeMin: 80,   safeMax: 120   },
+  calcium_hardness:  { color: "#7c3aed", fillOpacity: 0.11, safeMin: 200,  safeMax: 400   },
+  lsi:               { color: "#8b5cf6", fillOpacity: 0.10, safeMin: -0.3, safeMax: 0.3   },
+  salt:              { color: "#059669", fillOpacity: 0.10, safeMin: 2700, safeMax: 3400  },
+  filter_pressure:   { color: "#ea580c", fillOpacity: 0.10 },
+  temperature:       { color: "#dc2626", fillOpacity: 0.08 },
+  tds:               { color: "#64748b", fillOpacity: 0.08 },
+  phosphates:        { color: "#f59e0b", fillOpacity: 0.10 },
+  total_chlorine:    { color: "#3b82f6", fillOpacity: 0.10 },
+  combined_chlorine: { color: "#0ea5e9", fillOpacity: 0.08 },
+};
+
+function metricChartConfig(readingKey) {
+  return METRIC_CHART_CONFIG[normalizeMetricKey(readingKey)] || { color: "#2F9BE8", fillOpacity: 0.12 };
+}
+
+const CHART_LAYOUT = {
+  compact: {
+    width: 360,
+    height: 210,
+    preserveAspectRatio: "xMinYMin meet",
+  },
+  standard: {
+    width: 420,
+    height: 220,
+    preserveAspectRatio: "none",
+  },
+  margin: { top: 20, right: 18, bottom: 42, left: 54 },
+  latestLabelFontSize: 10,
+};
+
+let chartInstanceSerial = 0;
+
+function nextChartInstanceId(seriesItem, readingKey, compact) {
+  chartInstanceSerial += 1;
+  return [
+    seriesItem.poolId || "p0",
+    readingKey,
+    compact ? "compact" : "full",
+    chartInstanceSerial,
+  ].join("_").replace(/[^a-z0-9_]/gi, "_");
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function isoDate(value) {
   return value.toISOString().slice(0, 10);
 }
@@ -726,31 +777,49 @@ function alertRelevantSeries(detail) {
   return allSeries.filter((seriesItem) => keys.has(normalizeMetricKey(seriesItem.readingKey)));
 }
 
+function renderChartCaption(seriesItem) {
+  const latest = seriesItem.points[seriesItem.points.length - 1];
+  const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+  const meta = chemistrySeriesMeta(seriesItem);
+  return `
+    <div class="chart-caption">
+      <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
+      <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
+    </div>
+  `;
+}
+
+function renderMetricChartCard(seriesItem, options = {}) {
+  const meta = chemistrySeriesMeta(seriesItem);
+  if (meta.hide) return "";
+  const compact = Boolean(options.compact);
+  const cardClass = options.cardClass ? ` ${options.cardClass}` : "";
+  const subtitle = options.subtitle ? `<div class="chart-subtitle muted">${escapeHtml(options.subtitle)}</div>` : "";
+  return `
+    <article class="chart-card${cardClass}">
+      <div class="chart-card-header">
+        <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
+        ${subtitle}
+      </div>
+      ${buildLineChart(seriesItem, { compact })}
+      ${renderChartCaption(seriesItem)}
+    </article>
+  `;
+}
+
 function renderAlertCharts(detail, mode = "detail") {
   const series = filterSeriesByDays(alertRelevantSeries(detail), customerChartPolicy().default_days || 90);
   if (!series.length) {
     return `<div class="empty-state">No matching chemistry chart data for this alert yet.</div>`;
   }
-  const gridClass = mode === "profile" ? "chart-grid chart-grid-alert" : "chart-grid chart-grid-alert";
+  const gridClass = "chart-grid chart-grid-alert";
   return `
     <div class="${gridClass}">
-      ${series.map((seriesItem) => {
-        const latest = seriesItem.points[seriesItem.points.length - 1];
-        const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
-        return `
-          <article class="chart-card chart-card-alert">
-            <div>
-              <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
-              ${seriesItem.poolName && seriesItem.poolName !== "Pool" ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
-            </div>
-            ${buildLineChart(seriesItem, { compact: true })}
-            <div class="chart-caption">
-              <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}</span>
-              <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
-            </div>
-          </article>
-        `;
-      }).join("")}
+      ${series.map((seriesItem) => renderMetricChartCard(seriesItem, {
+        compact: true,
+        cardClass: "chart-card-alert",
+        subtitle: seriesItem.poolName && seriesItem.poolName !== "Pool" ? seriesItem.poolName : "",
+      })).join("")}
     </div>
   `;
 }
@@ -2008,9 +2077,9 @@ function buildLineChart(seriesItem, options = {}) {
     return `<div class="empty-state">No chart data.</div>`;
   }
   const compact = Boolean(options.compact);
-  const width = compact ? 360 : 420;
-  const height = compact ? 210 : 220;
-  const margin = { top: 20, right: 18, bottom: 42, left: 54 };
+  const layout = compact ? CHART_LAYOUT.compact : CHART_LAYOUT.standard;
+  const { width, height, preserveAspectRatio } = layout;
+  const margin = CHART_LAYOUT.margin;
   const values = points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
   if (!values.length) {
     return `<div class="empty-state">No numeric values to chart.</div>`;
@@ -2039,25 +2108,79 @@ function buildLineChart(seriesItem, options = {}) {
   const xForIndex = (index) => (points.length === 1 ? (xMin + xMax) / 2 : xMin + stepX * index);
   const yForValue = (value) => yMax - ((Number(value) - paddedMin) / valueRange) * (yMax - yMin);
 
+  // Metric-specific color and fill config
+  const chartConf = metricChartConfig(readingKey);
+  const color = chartConf.color;
+
+  // Unique IDs per chart to avoid SVG gradient/clip conflicts when multiple charts render
+  const safeId = nextChartInstanceId(seriesItem, readingKey, compact);
+  const gradId = `cg_${safeId}`;
+  const clipId = `cc_${safeId}`;
+
+  // Data line path
   const path = points.map((point, index) => {
     const x = xForIndex(index);
     const y = yForValue(point.value);
     return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
   }).join(" ");
 
-  const dots = points.map((point, index) => {
+  // Area fill path — close back to the baseline
+  const areaPath = `${path} L ${xForIndex(points.length - 1).toFixed(1)} ${yMax} L ${xForIndex(0).toFixed(1)} ${yMax} Z`;
+
+  // Safe-range band (visual guidance only — see METRIC_CHART_CONFIG)
+  const safeRangeBand = (() => {
+    if (chartConf.safeMin === undefined || chartConf.safeMax === undefined) return "";
+    const clampedMin = Math.max(chartConf.safeMin, paddedMin);
+    const clampedMax = Math.min(chartConf.safeMax, paddedMax);
+    if (clampedMin >= clampedMax) return "";
+    const bandTop = yForValue(clampedMax);
+    const bandBottom = yForValue(clampedMin);
+    return `<rect x="${xMin}" y="${bandTop.toFixed(1)}" width="${xMax - xMin}" height="${(bandBottom - bandTop).toFixed(1)}" fill="${color}" fill-opacity="0.07" />`;
+  })();
+
+  // Regular dots (all except the latest)
+  const meta = chemistrySeriesMeta(seriesItem);
+  const regularDots = points.slice(0, points.length - 1).map((point, index) => {
     const x = xForIndex(index);
     const y = yForValue(point.value);
-    const meta = chemistrySeriesMeta(seriesItem);
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${meta.sparse ? "4.6" : "3.5"}" class="chart-dot${meta.sparse ? " chart-dot-sparse" : ""}">
+    const r = meta.sparse ? "4" : "2.5";
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${color}" stroke="white" stroke-width="1.5" fill-opacity="0.72">
       <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value, readingKey)}`)}</title>
     </circle>`;
   }).join("");
 
+  // Latest point — larger dot with halo + optional value label
+  const latestPoint = points[points.length - 1];
+  const latestX = xForIndex(points.length - 1);
+  const latestY = yForValue(latestPoint?.value);
+  const latestValueText = formatAxisValue(latestPoint?.value, readingKey);
+  // Place label on whichever side has more room, staying inside the SVG bounds
+  const useLeftLabel = latestX > (xMin + xMax) / 2;
+  const latestLabelX = (useLeftLabel ? latestX - 9 : latestX + 9).toFixed(1);
+  const latestLabelAnchor = useLeftLabel ? "end" : "start";
+  const latestLabelY = Math.max(yMin + 10, Math.min(yMax - 4, latestY - 7)).toFixed(1);
+  const showLatestLabel = !compact && points.length > 1;
+  const latestDot = `
+    <circle cx="${latestX.toFixed(1)}" cy="${latestY.toFixed(1)}" r="9" fill="${color}" fill-opacity="0.13" />
+    <circle cx="${latestX.toFixed(1)}" cy="${latestY.toFixed(1)}" r="${meta.sparse ? "5.5" : "4.5"}" fill="${color}" stroke="white" stroke-width="2">
+      <title>${escapeHtml(`Latest · ${formatShortDate(latestPoint?.service_date)}: ${latestValueText}`)}</title>
+    </circle>
+    ${showLatestLabel ? `<text x="${latestLabelX}" y="${latestLabelY}" text-anchor="${latestLabelAnchor}" fill="${color}" font-size="${CHART_LAYOUT.latestLabelFontSize}" font-weight="700" font-family="Avenir Next,Segoe UI,system-ui,sans-serif">${escapeHtml(latestValueText)}</text>` : ""}
+  `;
+
   const metricLabel = formatMetricLabel(seriesItem);
-  const meta = chemistrySeriesMeta(seriesItem);
   return `
-    <svg class="chart-svg${compact ? " chart-svg-compact" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="${compact ? "xMinYMin meet" : "none"}" role="img" aria-label="Chemistry trend chart">
+    <svg class="chart-svg${compact ? " chart-svg-compact" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="${preserveAspectRatio}" role="img" aria-label="Chemistry trend chart">
+      <defs>
+        <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="${chartConf.fillOpacity ?? 0.12}"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+        </linearGradient>
+        <clipPath id="${clipId}">
+          <rect x="${xMin}" y="${yMin}" width="${xMax - xMin}" height="${yMax - yMin}"/>
+        </clipPath>
+      </defs>
+      ${safeRangeBand}
       ${yTicks.map((tick) => {
         const y = yForValue(tick);
         return `
@@ -2076,8 +2199,10 @@ function buildLineChart(seriesItem, options = {}) {
       <line x1="${xMin}" y1="${yMin}" x2="${xMin}" y2="${yMax}" class="chart-axis" />
       <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(metricLabel)}</text>
       <text x="${(width / 2)}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
-      <path d="${path}" fill="none" stroke="#1f6b72" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-      ${dots}
+      <path d="${areaPath}" fill="url(#${gradId})" clip-path="url(#${clipId})" />
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+      ${regularDots}
+      ${latestDot}
     </svg>
   `;
 }
@@ -2169,19 +2294,7 @@ async function loadCustomerProfile() {
     </div>`;
   };
   const renderChartCard = (seriesItem) => {
-    const meta = chemistrySeriesMeta(seriesItem);
-    if (meta.hide) return "";
-    const latest = seriesItem.points[seriesItem.points.length - 1];
-    const values = seriesItem.points.map((p) => Number(p.value)).filter((v) => Number.isFinite(v));
-    return `
-      <article class="chart-card chart-card-large">
-        <div><h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4></div>
-        ${buildLineChart(seriesItem)}
-        <div class="chart-caption">
-          <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
-          <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
-        </div>
-      </article>`;
+    return renderMetricChartCard(seriesItem, { cardClass: "chart-card-large" });
   };
   // Group chemistry series by pool for multi-pool rendering
   const chartPoolGroups = !multiplePools ? null : (() => {

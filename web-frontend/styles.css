@@ -874,13 +874,34 @@ textarea {
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
   background: var(--surface);
-  padding: 14px 16px;
+  padding: 12px 14px;
   display: grid;
   gap: 8px;
   box-shadow: var(--shadow);
 }
 
-.chart-card-large { padding: 16px 18px; }
+.chart-card h4 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.chart-card-header {
+  display: grid;
+  gap: 2px;
+}
+
+.chart-subtitle {
+  font-size: 0.8rem;
+}
+
+.chart-card-large { padding: 14px 16px; }
+
+.chart-card-large h4 {
+  font-size: 0.9rem;
+}
 
 .chart-card-alert {
   width: min(100%, 520px);
@@ -892,9 +913,10 @@ textarea {
   height: 200px;
   border-radius: var(--radius-sm);
   background: var(--surface-dim);
+  border: 1px solid var(--line);
 }
 
-.chart-card-large .chart-svg { height: 300px; }
+.chart-card-large .chart-svg { height: 230px; }
 
 .chart-card-alert .chart-svg {
   width: 100%;
@@ -906,12 +928,12 @@ textarea {
 .chart-svg-compact { display: block; }
 
 .chart-gridline {
-  stroke: rgba(16,32,51,0.08);
-  stroke-dasharray: 3 4;
+  stroke: rgba(16,32,51,0.055);
+  stroke-dasharray: 4 5;
 }
 
 .chart-axis {
-  stroke: rgba(16,32,51,0.18);
+  stroke: rgba(16,32,51,0.14);
   stroke-width: 1;
 }
 
@@ -921,14 +943,16 @@ textarea {
 }
 
 .chart-axis-label {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  fill: #94a3b8;
 }
 
-.chart-tick-label { font-size: 9px; }
+.chart-tick-label { font-size: 9px; fill: #94a3b8; }
 
+/* Dots are now inline-styled with metric colors; these are fallback/default */
 .chart-dot {
   fill: var(--accent);
   stroke: #fff;
@@ -937,15 +961,20 @@ textarea {
 
 .chart-dot-sparse {
   fill: var(--color-teal);
+  stroke: #fff;
   stroke-width: 2;
 }
 
 .chart-caption {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 10px;
   color: var(--muted);
   font-size: 0.8rem;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+  margin-top: 2px;
 }
 
 /* ─────────────────────────────────────────────
@@ -1230,6 +1259,11 @@ textarea {
   .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
   .range-controls { grid-auto-flow: row; }
+
+  .chart-caption {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 
   .settings-grid {
     grid-template-columns: 1fr;
