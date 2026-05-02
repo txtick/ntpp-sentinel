@@ -1472,7 +1472,7 @@ function renderPollenRows(pollen) {
   const grass = pollenRisk(pollen.grass_risk);
   const weed = pollenRisk(pollen.weed_risk);
   const treeLabel = pollen.tree_detail
-    ? `<strong style="color:${tree.color}">${tree.label}</strong> <span class="muted weather-pollen-detail">${escapeHtml(pollen.tree_detail)}</span>`
+    ? `<div class="weather-pollen-stack"><strong style="color:${tree.color}">${tree.label}</strong><span class="muted weather-pollen-detail">${escapeHtml(pollen.tree_detail)}</span></div>`
     : `<strong style="color:${tree.color}">${tree.label}</strong>`;
   const ragweed =
     pollen.ragweed_count > 0 ? ` · ragweed ${pollen.ragweed_count}` : "";
@@ -1524,7 +1524,7 @@ function renderWeatherWidget() {
     <div class="weather-history">
       <div class="weather-history-kicker">Past 7 Days · Pool Environment</div>
       <div class="weather-history-grid">
-        <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div><div class="muted">Pollen</div>
+        <div class="weather-history-head">Date</div><div class="weather-history-head">Wind</div><div class="weather-history-head">Dust</div><div class="weather-history-head">Pollen</div>
         ${envDays
           .map((d) => {
             const isToday = d.date === todayLocal2;
@@ -1575,8 +1575,8 @@ function renderWeatherWidget() {
           : "";
       return `<div class="weather-forecast-card">
       <div class="weather-forecast-label">${label}</div>
-      <div class="weather-pollen-detail">${wmoLabel(d.code)}</div>
-      <div>${Math.round(d.max ?? 0)}° / ${Math.round(d.min ?? 0)}°</div>
+      <div class="weather-forecast-condition">${wmoLabel(d.code)}</div>
+      <div class="weather-forecast-temps">${Math.round(d.max ?? 0)}° / ${Math.round(d.min ?? 0)}°</div>
       ${precipLine}${windLine}
     </div>`;
     })
