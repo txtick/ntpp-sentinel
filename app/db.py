@@ -136,6 +136,10 @@ def ensure_schema() -> None:
 
 
 def allocate_issue_display_id(conn: sqlite3.Connection, max_display_id: int = ISSUE_DISPLAY_ID_MAX) -> int:
+    # Acquire a write lock before reading so two concurrent handlers can't
+    # both read the same set of used IDs and allocate the same display_id.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     rows = conn.execute(
         """
         SELECT display_id
@@ -301,15 +305,15 @@ def purge_raw_events(retention_days: int, source: Optional[str] = None, dry_run:
         where += " AND source = ?"
         params.append(source)
 
-    eligible = int(
-        conn.execute(f"SELECT COUNT(*) AS n FROM raw_events WHERE {where}", params).fetchone()["n"]  # nosec B608
-    )
+    if dry_run:
+        eligible = int(
+            conn.execute(f"SELECT COUNT(*) AS n FROM raw_events WHERE {where}", params).fetchone()["n"]  # nosec B608
+        )
+        conn.close()
+        return {"eligible": eligible, "deleted": 0}
 
-    deleted = 0
-    if not dry_run and eligible > 0:
-        cur = conn.execute(f"DELETE FROM raw_events WHERE {where}", params)  # nosec B608
-        conn.commit()
-        deleted = int(cur.rowcount if cur.rowcount is not None else 0)
-
+    cur = conn.execute(f"DELETE FROM raw_events WHERE {where}", params)  # nosec B608
+    conn.commit()
+    deleted = int(cur.rowcount if cur.rowcount is not None else 0)
     conn.close()
-    return {"eligible": eligible, "deleted": deleted}
+    return {"eligible": deleted, "deleted": deleted}

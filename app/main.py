@@ -13,6 +13,7 @@ import datetime as dt
 import time
 from typing import Any, Dict, Optional, List, Tuple
 import re
+import urllib.parse
 import httpx # type: ignore
 from zoneinfo import ZoneInfo
 from db import db, init_db, ensure_schema, purge_raw_events, allocate_issue_display_id
@@ -220,10 +221,25 @@ CALL_MISSED_MARKER_KEYS = [
 ]
 POLL_RESOLVER_CONCURRENCY = max(1, int(os.getenv("POLL_RESOLVER_CONCURRENCY", "8")))
 
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(512 * 1024)))  # 512 KB default
+
 app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": False},
     redoc_url=None,  # ReDoc loads from CDN and shows blank page; use /docs instead
 )
+
+
+@app.middleware("http")
+async def _body_size_guard(request: Request, call_next):
+    cl = request.headers.get("content-length")
+    if cl:
+        try:
+            if int(cl) > MAX_REQUEST_BODY_BYTES:
+                from fastapi.responses import JSONResponse  # type: ignore
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        except ValueError:
+            pass
+    return await call_next(request)
 
 
 def _custom_openapi():
@@ -300,8 +316,25 @@ def _business_day_end_for(ts_local: dt.datetime) -> dt.datetime:
     return business_day_end_for(BUSINESS_TIME, ts_local)
 
 
+def _validate_config() -> None:
+    errors: list[str] = []
+    if not WEBHOOK_SECRET:
+        errors.append("WEBHOOK_SECRET must be set to a non-empty value")
+    if not GHL_TOKEN:
+        errors.append("GHL_TOKEN must be set")
+    if not GHL_LOCATION_ID:
+        errors.append("GHL_LOCATION_ID must be set")
+    if AI_GATE_ENABLED and not OPENAI_API_KEY:
+        errors.append("AI_GATE_ENABLED=1 but OPENAI_API_KEY is not set")
+    if ROLLOVER_ENABLED and not os.getenv("SKIMMER_API_KEY", ""):
+        _log_line("WARNING: ROLLOVER_ENABLED=1 but SKIMMER_API_KEY is not set — rollover will fail at runtime")
+    if errors:
+        raise RuntimeError("Sentinel startup config errors:\n" + "\n".join(f"  - {e}" for e in errors))
+
+
 @app.on_event("startup")
 def _startup():
+    _validate_config()
     os.makedirs("/data", exist_ok=True)
     init_db()
     ensure_schema()
@@ -590,7 +623,8 @@ async def _trigger_ingest_worker(
         try:
             response = await client.post(url, headers=headers, json=payload)
         except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"ingest worker request failed: {exc}")
+            _log_line(f"ERROR: ingest worker request failed: {exc}")
+            raise HTTPException(status_code=502, detail="Ingest worker request failed")
 
     if response.status_code >= 400:
         detail = None
@@ -695,19 +729,41 @@ def _ghl_headers() -> Dict[str, str]:
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Version": GHL_VERSION,
-        "LocationId": GHL_LOCATION_ID,   # <-- THIS is the fix
+        "LocationId": GHL_LOCATION_ID,
     }
+
+_GHL_RETRY_ATTEMPTS = int(os.getenv("GHL_RETRY_ATTEMPTS", "3"))
+_GHL_RETRY_BACKOFF = float(os.getenv("GHL_RETRY_BACKOFF_SECONDS", "1.0"))
+
+async def _ghl_request_with_retry(method: str, url: str, **kwargs) -> httpx.Response:
+    """Retry GHL requests on transient 5xx errors with exponential backoff."""
+    last_exc: Optional[Exception] = None
+    for attempt in range(_GHL_RETRY_ATTEMPTS):
+        try:
+            r = await _ghl_client.request(method, url, **kwargs)
+            if r.status_code < 500:
+                return r
+            last_exc = None
+            _log_line(f"WARN: GHL {method} {url} returned {r.status_code} (attempt {attempt + 1}/{_GHL_RETRY_ATTEMPTS})")
+        except httpx.TransportError as exc:
+            last_exc = exc
+            _log_line(f"WARN: GHL {method} {url} transport error: {exc} (attempt {attempt + 1}/{_GHL_RETRY_ATTEMPTS})")
+        if attempt < _GHL_RETRY_ATTEMPTS - 1:
+            await asyncio.sleep(_GHL_RETRY_BACKOFF * (2 ** attempt))
+    if last_exc:
+        raise last_exc
+    return r  # last 5xx response — caller will surface it as 502
 
 async def ghl_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
-    r = await _ghl_client.get(url, headers=_ghl_headers(), params=params or {})
+    r = await _ghl_request_with_retry("GET", url, headers=_ghl_headers(), params=params or {})
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"GHL GET {path} failed: {r.status_code}")
     return r.json()
 
 async def ghl_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
-    r = await _ghl_client.post(url, headers=_ghl_headers(), json=payload)
+    r = await _ghl_request_with_retry("POST", url, headers=_ghl_headers(), json=payload)
     if r.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"GHL POST {path} failed: {r.status_code}")
     return r.json()
@@ -715,7 +771,7 @@ async def ghl_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 async def ghl_put(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = GHL_BASE_URL.rstrip("/") + path
-    r = await _ghl_client.put(url, headers=_ghl_headers(), json=payload)
+    r = await _ghl_request_with_retry("PUT", url, headers=_ghl_headers(), json=payload)
     if r.status_code >= 400:
         detail = (r.text or "").strip()
         raise HTTPException(
@@ -905,11 +961,14 @@ async def _ghl_search_conversation_by_phone(phone: str) -> Tuple[Optional[str], 
     return None, None
 
 
+_CUSTOMER_SYNC_MAX_PAGES = int(os.getenv("CUSTOMER_SYNC_MAX_PAGES", "200"))
+
 async def ghl_fetch_all_contacts(page_limit: int = CUSTOMER_SYNC_PAGE_LIMIT) -> List[Dict[str, Any]]:
     contacts: List[Dict[str, Any]] = []
     search_after: Optional[List[Any]] = None
+    pages_fetched = 0
 
-    while True:
+    while pages_fetched < _CUSTOMER_SYNC_MAX_PAGES:
         payload: Dict[str, Any] = {
             "locationId": GHL_LOCATION_ID,
             "pageLimit": page_limit,
@@ -923,10 +982,14 @@ async def ghl_fetch_all_contacts(page_limit: int = CUSTOMER_SYNC_PAGE_LIMIT) -> 
             break
 
         contacts.extend([contact for contact in page if isinstance(contact, dict)])
+        pages_fetched += 1
         last = page[-1] if isinstance(page[-1], dict) else {}
         search_after = last.get("searchAfter")
         if len(page) < page_limit or not search_after:
             break
+
+    if pages_fetched >= _CUSTOMER_SYNC_MAX_PAGES:
+        _log_line(f"WARN: ghl_fetch_all_contacts hit page cap ({_CUSTOMER_SYNC_MAX_PAGES} pages, ~{len(contacts)} contacts) — increase CUSTOMER_SYNC_MAX_PAGES if needed")
 
     return contacts
 
@@ -1108,6 +1171,8 @@ def _set_resolved_metadata_conn(
 async def _parse_request_payload(request: Request) -> Dict[str, Any]:
     content_type = (request.headers.get("content-type") or "").lower()
     raw_body = await request.body()
+    if len(raw_body) > MAX_REQUEST_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Request body too large")
     payload: Dict[str, Any] = {
         "_meta": {
             "content_type": content_type,
@@ -2178,17 +2243,37 @@ async def skimmer_link(request: Request):
     link = link.strip()
     if not link:
         raise HTTPException(status_code=400, detail="Expected non-empty link")
-    if not re.fullmatch(r"https?://.+", link) and not re.fullmatch(r"[A-Za-z0-9_-]+", link):
+
+    _SKIMMER_URL_ALLOWED_HOSTS = {
+        "storage.googleapis.com",
+        "drive.google.com",
+        "getskimmer.com",
+        "publicapi.getskimmer.com",
+        "s3.amazonaws.com",
+    }
+
+    parsed = urllib.parse.urlparse(link)
+    if parsed.scheme in ("http", "https"):
+        if parsed.scheme != "https":
+            raise HTTPException(status_code=400, detail="skimmer_url must use https")
+        host = parsed.hostname or ""
+        if not any(host == allowed or host.endswith("." + allowed) for allowed in _SKIMMER_URL_ALLOWED_HOSTS):
+            raise HTTPException(
+                status_code=400,
+                detail="skimmer_url host is not in the allowed list",
+            )
+    elif not re.fullmatch(r"[A-Za-z0-9_-]+", link):
         raise HTTPException(
             status_code=400,
-            detail="skimmer_url must be a valid URL or Google Drive file ID",
+            detail="skimmer_url must be a valid https URL or Google Drive file ID",
         )
 
-    if link.lower().startswith("http://") or link.lower().startswith("https://"):
+    if parsed.scheme in ("http", "https"):
         try:
             _download_and_save_skimmer(link, SKIMMER_DB_PATH)
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Skimmer download failed: {exc}")
+            _log_line(f"ERROR: Skimmer download failed: {exc}")
+            raise HTTPException(status_code=500, detail="Skimmer download failed")
         import_result = _run_skimmer_import()
         return {
             "status": "downloaded",
@@ -2205,8 +2290,13 @@ async def skimmer_link(request: Request):
     }
 
 
+_SKIMMER_IMPORT_TABLES_ALLOWED = {"all", "customers", "routes", "pools", "service_stops", "work_orders"}
+
 def _run_skimmer_import() -> dict:
-    tables = os.getenv("SKIMMER_IMPORT_TABLES", "all")
+    tables = os.getenv("SKIMMER_IMPORT_TABLES", "all").strip().lower()
+    if tables not in _SKIMMER_IMPORT_TABLES_ALLOWED:
+        _log_line(f"WARN: SKIMMER_IMPORT_TABLES={tables!r} not in allowlist, defaulting to 'all'")
+        tables = "all"
     script = os.path.join(os.path.dirname(__file__), "scripts", "import_skimmer_customers.py")
     script = os.path.normpath(script)
     result = subprocess.run(
@@ -2223,8 +2313,13 @@ def _run_skimmer_import() -> dict:
 @app.post("/jobs/skimmer_import")
 async def skimmer_import_job(request: Request):
     _auth_or_401(request)
-    if not os.path.exists(SKIMMER_DB_PATH):
-        raise HTTPException(status_code=422, detail=f"Skimmer DB not found at {SKIMMER_DB_PATH}")
+    try:
+        open(SKIMMER_DB_PATH, "rb").close()
+    except FileNotFoundError:
+        raise HTTPException(status_code=422, detail="Skimmer DB not found")
+    except OSError as exc:
+        _log_line(f"ERROR: Cannot open Skimmer DB: {exc}")
+        raise HTTPException(status_code=500, detail="Skimmer DB is not accessible")
     result = _run_skimmer_import()
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=result.get("detail", "Import failed"))

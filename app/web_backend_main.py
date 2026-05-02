@@ -53,7 +53,9 @@ DASHBOARD_BASE_URL = os.getenv("DASHBOARD_BASE_URL", "https://dashboard.northtex
 GOOGLE_DASHBOARD_CLIENT_ID = os.getenv("GOOGLE_DASHBOARD_CLIENT_ID", "").strip()
 GOOGLE_DASHBOARD_CLIENT_SECRET = os.getenv("GOOGLE_DASHBOARD_CLIENT_SECRET", "").strip()
 GOOGLE_DASHBOARD_ALLOWED_DOMAIN = os.getenv("GOOGLE_DASHBOARD_ALLOWED_DOMAIN", "northtexaspoolpros.com").strip().lower()
-DASHBOARD_SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "").strip() or WEB_BACKEND_SECRET or "ntpp-dashboard-dev-session-secret"
+DASHBOARD_SESSION_SECRET = os.getenv("DASHBOARD_SESSION_SECRET", "").strip() or WEB_BACKEND_SECRET
+if not DASHBOARD_SESSION_SECRET:
+    raise RuntimeError("DASHBOARD_SESSION_SECRET (or WEB_BACKEND_SECRET / WEBHOOK_SECRET) must be set")
 GOOGLE_AUTH_AUTHORIZE_URL = os.getenv("GOOGLE_AUTH_AUTHORIZE_URL", "https://accounts.google.com/o/oauth2/v2/auth").strip()
 GOOGLE_AUTH_TOKEN_URL = os.getenv("GOOGLE_AUTH_TOKEN_URL", "https://oauth2.googleapis.com/token").strip()
 GOOGLE_AUTH_USERINFO_URL = os.getenv("GOOGLE_AUTH_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo").strip()
