@@ -866,8 +866,8 @@ textarea {
 }
 
 .chart-grid-alert {
-  grid-template-columns: minmax(0, 640px);
-  justify-content: start;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  align-items: start;
 }
 
 .chart-card {
@@ -904,8 +904,8 @@ textarea {
 }
 
 .chart-card-alert {
-  width: min(100%, 520px);
-  max-width: 520px;
+  width: 100%;
+  max-width: none;
 }
 
 .chart-svg {
@@ -921,7 +921,7 @@ textarea {
 .chart-card-alert .chart-svg {
   width: 100%;
   height: auto;
-  max-height: 180px;
+  max-height: 260px;
   aspect-ratio: 12 / 7;
 }
 
@@ -1242,6 +1242,8 @@ textarea {
   }
 
   .chart-grid-wide { grid-template-columns: 1fr; }
+
+  .chart-grid-alert { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
