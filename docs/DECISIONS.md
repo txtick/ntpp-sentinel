@@ -47,6 +47,8 @@ Keep entries short, but do not skip them.
   - Reason: they are operationally leaving and do not need new maintenance/revenue alerts.
 - Customers tagged `no-sentinel-alerts` in Skimmer are suppressed from dashboard alerts.
   - Reason: gives operators a durable business-controlled opt-out.
+- Customers tagged `filter-sand` are excluded from filter-clean alerts.
+  - Reason: sand filters are not being tracked in the current filter-clean workflow, so PSI-driven filter-clean opportunities would be noisy or misleading for that equipment type.
 - Filter-clean alerts suppress when the clean is already scheduled/upcoming.
   - Reason: do not alert for work already planned.
 - Recent completed filter cleans (within 90 days, service_date in the past) suppress ALL `filter_clean` opportunity types including `filter_clean_trend`.

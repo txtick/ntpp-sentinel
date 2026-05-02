@@ -35,6 +35,9 @@ This document captures business behavior that should remain stable unless intent
 - Current meaningful customer tags in repo logic:
   - `freedom`
   - `no-sentinel-alerts`
+  - `filter-cart`
+  - `filter-de`
+  - `filter-sand`
 
 ## Dashboard Reports
 
@@ -54,6 +57,7 @@ This document captures business behavior that should remain stable unless intent
 - Filter-clean opportunities are PSI/work-order based, not just raw time-since-last-clean.
 - Existing filter-clean opportunities should be suppressed when:
   - a matching filter clean is already scheduled/upcoming
+- Customers tagged `filter-sand` are excluded from filter-clean alerts for now.
 - `filter_clean_missing_psi` is also suppressed when a recent completed filter clean exists in the last `90` days.
 - `filter_clean_trend` is not suppressed by a recent completed filter clean alone; if PSI is still repeatedly high after a clean, the alert should still appear.
 - Freedom-package customers are expected to have filter cleans pre-scheduled.

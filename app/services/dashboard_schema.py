@@ -752,6 +752,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 ) psi ON TRUE
                 WHERE c.is_operationally_active = TRUE
                   AND customer_alert_eligible(c.id, csh.first_service_date, c.raw_json)
+                  AND NOT customer_has_tag(c.raw_json, 'filter-sand')
                   AND (
                       assignment.has_current_assignment IS NOT NULL
                       OR recent_stop.has_recent_route_stop IS NOT NULL

@@ -40,6 +40,7 @@ This repository runs North Texas Pool Pros' internal Sentinel platform. This fil
 - Customers tagged `no-sentinel-alerts` in Skimmer should not generate dashboard alerts after import + refresh.
 - `freedom` is a meaningful customer tag today.
 - Filter-clean alerts must be suppressed when a matching filter clean is already scheduled/upcoming.
+- Customers tagged `filter-sand` should be excluded from filter-clean alerts for now.
 - Skimmer sometimes stores fake `complete_time` values like `2010-01-01`; treat those as not actually completed.
 - Filter-clean alert follow-up currently uses `Notify Customer` + dashboard reminder + quote detection; do not assume Sentinel can create Skimmer quotes through the public API.
 
@@ -55,6 +56,9 @@ This repository runs North Texas Pool Pros' internal Sentinel platform. This fil
 
 - `freedom`
 - `no-sentinel-alerts`
+- `filter-cart`
+- `filter-de`
+- `filter-sand`
 
 If you discover more tag-driven behavior, document it in `docs/DOMAIN RULES.md` and `docs/DECISIONS.md`.
 
