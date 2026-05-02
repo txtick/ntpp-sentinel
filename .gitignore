@@ -19,6 +19,10 @@ __pycache__/
 *.pyd
 .venv/
 
+# Node
+node_modules/
+npm-debug.log*
+
 # OS/editor junk
 .DS_Store
 .idea/

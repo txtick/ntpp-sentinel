@@ -1,0 +1,20 @@
+{
+  "name": "ntpp-sentinel-frontend-tooling",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Minimal frontend validation tooling for the NTPP Sentinel dashboard.",
+  "scripts": {
+    "check": "npm run lint && npm run format:check && npm run test",
+    "format:check": "prettier --check \"web-frontend/*.{html,js,css}\" \"scripts/frontend-smoke.mjs\" \"eslint.config.js\" \"package.json\"",
+    "format:write": "prettier --write \"web-frontend/*.{html,js,css}\" \"scripts/frontend-smoke.mjs\" \"eslint.config.js\" \"package.json\"",
+    "lint": "eslint web-frontend/app.js scripts/frontend-smoke.mjs",
+    "syntax": "node --check web-frontend/app.js",
+    "test": "npm run syntax && npm run test:smoke",
+    "test:smoke": "node scripts/frontend-smoke.mjs"
+  },
+  "devDependencies": {
+    "eslint": "^9.26.0",
+    "prettier": "^3.5.3"
+  }
+}

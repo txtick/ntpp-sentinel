@@ -13,11 +13,7 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
     "salt",
     "filter_pressure",
   ],
-  monthly_metrics: [
-    "phosphates",
-    "calcium_hardness",
-    "cya",
-  ],
+  monthly_metrics: ["phosphates", "calcium_hardness", "cya"],
   chart_order: [
     "free_chlorine",
     "ph",
@@ -67,25 +63,27 @@ const DEFAULT_CUSTOMER_CHART_POLICY = {
 
 // ── Chart visual config (presentation-only; not business logic) ──────────────
 // Safe-range bands are visual guidance only — subtle background tint showing
-// the industry-standard "acceptable" window for each chemistry metric.
+// the expected operating window for each chemistry metric.
 const METRIC_CHART_CONFIG = {
-  free_chlorine:     { color: "#2F9BE8", fillOpacity: 0.13, safeMin: 1.0,  safeMax: 3.0   },
-  ph:                { color: "#0d9488", fillOpacity: 0.11, safeMin: 7.2,  safeMax: 7.8   },
-  cya:               { color: "#d97706", fillOpacity: 0.11, safeMin: 30,   safeMax: 50    },
-  alkalinity:        { color: "#6366f1", fillOpacity: 0.11, safeMin: 80,   safeMax: 120   },
-  calcium_hardness:  { color: "#7c3aed", fillOpacity: 0.11, safeMin: 200,  safeMax: 400   },
-  lsi:               { color: "#8b5cf6", fillOpacity: 0.10, safeMin: -0.3, safeMax: 0.3   },
-  salt:              { color: "#059669", fillOpacity: 0.10, safeMin: 2700, safeMax: 3400  },
-  filter_pressure:   { color: "#ea580c", fillOpacity: 0.10 },
-  temperature:       { color: "#dc2626", fillOpacity: 0.08 },
-  tds:               { color: "#64748b", fillOpacity: 0.08 },
-  phosphates:        { color: "#f59e0b", fillOpacity: 0.10 },
-  total_chlorine:    { color: "#3b82f6", fillOpacity: 0.10 },
-  combined_chlorine: { color: "#0ea5e9", fillOpacity: 0.08 },
+  free_chlorine: { color: "#2F9BE8", safeMin: 3.0, safeMax: 6.0 },
+  ph: { color: "#0d9488", safeMin: 7.2, safeMax: 7.8 },
+  cya: { color: "#d97706", safeMin: 30, safeMax: 50 },
+  alkalinity: { color: "#6366f1", safeMin: 80, safeMax: 120 },
+  calcium_hardness: { color: "#7c3aed", safeMin: 200, safeMax: 400 },
+  lsi: { color: "#8b5cf6", safeMin: -0.3, safeMax: 0.3 },
+  salt: { color: "#059669", safeMin: 3200, safeMax: 3800 },
+  filter_pressure: { color: "#ea580c" },
+  temperature: { color: "#dc2626" },
+  tds: { color: "#64748b" },
+  phosphates: { color: "#f59e0b" },
+  total_chlorine: { color: "#3b82f6" },
+  combined_chlorine: { color: "#0ea5e9" },
 };
 
 function metricChartConfig(readingKey) {
-  return METRIC_CHART_CONFIG[normalizeMetricKey(readingKey)] || { color: "#2F9BE8", fillOpacity: 0.12 };
+  return (
+    METRIC_CHART_CONFIG[normalizeMetricKey(readingKey)] || { color: "#2F9BE8" }
+  );
 }
 
 const CHART_LAYOUT = {
@@ -103,17 +101,6 @@ const CHART_LAYOUT = {
   latestLabelFontSize: 10,
 };
 
-let chartInstanceSerial = 0;
-
-function nextChartInstanceId(seriesItem, readingKey, compact) {
-  chartInstanceSerial += 1;
-  return [
-    seriesItem.poolId || "p0",
-    readingKey,
-    compact ? "compact" : "full",
-    chartInstanceSerial,
-  ].join("_").replace(/[^a-z0-9_]/gi, "_");
-}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function isoDate(value) {
@@ -122,7 +109,11 @@ function isoDate(value) {
 
 function defaultLaborWeek() {
   const now = new Date();
-  const localMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const localMidnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  );
   const sundayOffset = localMidnight.getDay();
   const start = new Date(localMidnight);
   start.setDate(localMidnight.getDate() - sundayOffset);
@@ -191,8 +182,14 @@ const viewMeta = {
   alerts: { kicker: "Alerts", title: "Tracked Alert Queue" },
   "alert-profile": { kicker: "Alert", title: "Alert Detail" },
   customers: { kicker: "Customers", title: "Customer Operations View" },
-  "problem-pools": { kicker: "Problem Pools", title: "Chemical Cost Leak Report" },
-  "customer-profile": { kicker: "Customer", title: "Customer Chemistry Profile" },
+  "problem-pools": {
+    kicker: "Problem Pools",
+    title: "Chemical Cost Leak Report",
+  },
+  "customer-profile": {
+    kicker: "Customer",
+    title: "Customer Chemistry Profile",
+  },
   technicians: { kicker: "Technicians", title: "Field Operator Snapshot" },
   "technician-profile": { kicker: "Technician", title: "Technician Profile" },
   labor: { kicker: "Labor", title: "Weekly Payroll Prep" },
@@ -201,8 +198,22 @@ const viewMeta = {
 };
 
 const filters = {
-  alerts: { status: "", category: "", severity: "", rule_code: "", search: "", limit: 20, offset: 0 },
-  customers: { search: "", operational_only: 1, status: "", limit: 20, offset: 0 },
+  alerts: {
+    status: "",
+    category: "",
+    severity: "",
+    rule_code: "",
+    search: "",
+    limit: 20,
+    offset: 0,
+  },
+  customers: {
+    search: "",
+    operational_only: 1,
+    status: "",
+    limit: 20,
+    offset: 0,
+  },
   problemPools: { flag: "", technician: "", search: "", limit: 100, offset: 0 },
   technicians: {
     search: "",
@@ -214,7 +225,14 @@ const filters = {
     limit: 40,
   },
   labor: { ...DEFAULT_LABOR_FILTERS },
-  reminders: { status: "", assigned_to: "", source_type: "", overdue_only: 0, search: "", limit: 40 },
+  reminders: {
+    status: "",
+    assigned_to: "",
+    source_type: "",
+    overdue_only: 0,
+    search: "",
+    limit: 40,
+  },
 };
 
 function cloneFilters() {
@@ -245,7 +263,8 @@ function pushBrowserState() {
 function renderSessionCard() {
   if (!els.sessionCard) return;
   if (!state.auth.enabled) {
-    els.sessionSummary.textContent = "Dashboard auth is not configured. Secret-based local development is still available.";
+    els.sessionSummary.textContent =
+      "Dashboard auth is not configured. Secret-based local development is still available.";
     els.loginButton.hidden = true;
     els.logoutButton.hidden = true;
     return;
@@ -258,7 +277,8 @@ function renderSessionCard() {
     els.logoutButton.hidden = false;
     return;
   }
-  els.sessionSummary.textContent = "Sign in with your North Texas Pool Pros Google Workspace account to use the dashboard.";
+  els.sessionSummary.textContent =
+    "Sign in with your North Texas Pool Pros Google Workspace account to use the dashboard.";
   els.loginButton.hidden = false;
   els.logoutButton.hidden = true;
   els.loginButton.href = state.auth.loginUrl || "/auth/google/start";
@@ -294,7 +314,10 @@ async function init() {
 
   if (els.logoutButton) {
     els.logoutButton.addEventListener("click", async () => {
-      await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+      await fetch("/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
       state.auth.authenticated = false;
       state.auth.user = null;
       state.actor = "";
@@ -304,7 +327,9 @@ async function init() {
     });
   }
 
-  document.getElementById("refresh-view").addEventListener("click", () => loadCurrentView(true));
+  document
+    .getElementById("refresh-view")
+    .addEventListener("click", () => loadCurrentView(true));
 
   window.addEventListener("popstate", (event) => {
     restoreAppState(event.state || { view: "home" });
@@ -377,10 +402,15 @@ async function withSaving(run, successMessage = "Saved") {
   }
 }
 
-async function api(path, { method = "GET", body = undefined, auth = false } = {}) {
+async function api(path, { method = "GET", body = undefined } = {}) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(path, { method, headers, body, credentials: "same-origin" });
+  const response = await fetch(path, {
+    method,
+    headers,
+    body,
+    credentials: "same-origin",
+  });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 401 && data.auth_required) {
@@ -391,7 +421,9 @@ async function api(path, { method = "GET", body = undefined, auth = false } = {}
       renderAuthRequired();
       throw new Error("Dashboard login required.");
     }
-    const detail = data.detail ? JSON.stringify(data.detail) : `${response.status} ${response.statusText}`;
+    const detail = data.detail
+      ? JSON.stringify(data.detail)
+      : `${response.status} ${response.statusText}`;
     throw new Error(detail);
   }
   return data;
@@ -400,7 +432,14 @@ async function api(path, { method = "GET", body = undefined, auth = false } = {}
 function qs(params) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value === null || value === undefined || value === "" || value === 0 || value === false) return;
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      value === 0 ||
+      value === false
+    )
+      return;
     search.set(key, String(value));
   });
   const query = search.toString();
@@ -420,9 +459,12 @@ function isFilterCleanAlert(item = {}) {
 }
 
 function filterCleanNotifyToast(payload = {}) {
-  if (payload.quote_detected) return "Customer notified. Matching filter clean quote found and reminder completed.";
-  if (payload.notification_sent) return "Customer notified and quote reminder saved.";
-  if (payload.notification_error) return `Reminder saved, but SMS was not sent: ${payload.notification_error}`;
+  if (payload.quote_detected)
+    return "Customer notified. Matching filter clean quote found and reminder completed.";
+  if (payload.notification_sent)
+    return "Customer notified and quote reminder saved.";
+  if (payload.notification_error)
+    return `Reminder saved, but SMS was not sent: ${payload.notification_error}`;
   return "Quote reminder saved.";
 }
 
@@ -450,9 +492,10 @@ function wirePagination(root = document) {
       const direction = el.dataset.pageAction;
       const limit = Number(filters[target]?.limit || 20);
       const currentOffset = Number(filters[target]?.offset || 0);
-      const nextOffset = direction === "next"
-        ? currentOffset + limit
-        : Math.max(0, currentOffset - limit);
+      const nextOffset =
+        direction === "next"
+          ? currentOffset + limit
+          : Math.max(0, currentOffset - limit);
       filters[target].offset = nextOffset;
       if (target === "alerts") {
         await loadAlerts();
@@ -508,7 +551,8 @@ function toUtcIso(localValue) {
 function setLayout(mode = "split") {
   const single = mode === "single";
   els.contentGrid.classList.toggle("is-single", single);
-  const stickyDetail = !single && ["customers", "technicians", "reminders"].includes(state.view);
+  const stickyDetail =
+    !single && ["customers", "technicians", "reminders"].includes(state.view);
   els.contentGrid.classList.toggle("has-sticky-detail", stickyDetail);
   els.detailPanel.style.display = single ? "none" : "block";
   els.mainPanel.style.gridColumn = single ? "1 / -1" : "";
@@ -532,7 +576,9 @@ function percent1(value) {
 }
 
 function problemPoolFlagBadge(flag) {
-  const normalized = String(flag || "").trim().toLowerCase();
+  const normalized = String(flag || "")
+    .trim()
+    .toLowerCase();
   if (normalized === "critical") return badge("Critical", "critical");
   if (normalized === "problem") return badge("Problem", "high");
   if (normalized === "watch") return badge("Watch", "warning");
@@ -544,16 +590,19 @@ function mergeCustomerChartPolicy(policy = {}) {
   return {
     ...DEFAULT_CUSTOMER_CHART_POLICY,
     ...policy,
-    range_days: Array.isArray(policy.range_days) && policy.range_days.length
-      ? policy.range_days
-      : DEFAULT_CUSTOMER_CHART_POLICY.range_days,
+    range_days:
+      Array.isArray(policy.range_days) && policy.range_days.length
+        ? policy.range_days
+        : DEFAULT_CUSTOMER_CHART_POLICY.range_days,
     hidden_metrics: Array.isArray(policy.hidden_metrics)
       ? policy.hidden_metrics
       : DEFAULT_CUSTOMER_CHART_POLICY.hidden_metrics,
     sparse_metrics: Array.isArray(policy.sparse_metrics)
       ? policy.sparse_metrics
       : DEFAULT_CUSTOMER_CHART_POLICY.sparse_metrics,
-    required_every_visit_metrics: Array.isArray(policy.required_every_visit_metrics)
+    required_every_visit_metrics: Array.isArray(
+      policy.required_every_visit_metrics,
+    )
       ? policy.required_every_visit_metrics
       : DEFAULT_CUSTOMER_CHART_POLICY.required_every_visit_metrics,
     monthly_metrics: Array.isArray(policy.monthly_metrics)
@@ -582,39 +631,73 @@ function customerChartPolicy() {
 }
 
 function normalizeMetricKey(seriesItemOrKey, description = "") {
-  const rawValue = typeof seriesItemOrKey === "string"
-    ? seriesItemOrKey
-    : seriesItemOrKey?.readingKey || seriesItemOrKey?.description || "value";
-  const raw = String(rawValue || "").trim().toLowerCase().replace(/[\s_]+/g, "");
+  const rawValue =
+    typeof seriesItemOrKey === "string"
+      ? seriesItemOrKey
+      : seriesItemOrKey?.readingKey || seriesItemOrKey?.description || "value";
+  const raw = String(rawValue || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "");
   const desc = String(
-    typeof seriesItemOrKey === "string" ? description : seriesItemOrKey?.description || description || ""
-  ).trim().toLowerCase();
+    typeof seriesItemOrKey === "string"
+      ? description
+      : seriesItemOrKey?.description || description || "",
+  )
+    .trim()
+    .toLowerCase();
 
-  if ((raw === "none" || raw === "value") && (desc.includes("water temp") || desc.includes("water temperature"))) {
+  if (
+    (raw === "none" || raw === "value") &&
+    (desc.includes("water temp") || desc.includes("water temperature"))
+  ) {
     return "temperature";
   }
-  if ((raw === "none" || raw === "value") && desc.includes("filter pressure")) return "filter_pressure";
-  if ((raw === "none" || raw === "value") && desc.includes("alkalinity")) return "alkalinity";
-  if ((raw === "none" || raw === "value") && desc.includes("cyanuric")) return "cya";
-  if ((raw === "none" || raw === "value") && desc.includes("phosphate")) return "phosphates";
-  if ((raw === "none" || raw === "value") && desc.includes("salt")) return "salt";
+  if ((raw === "none" || raw === "value") && desc.includes("filter pressure"))
+    return "filter_pressure";
+  if ((raw === "none" || raw === "value") && desc.includes("alkalinity"))
+    return "alkalinity";
+  if ((raw === "none" || raw === "value") && desc.includes("cyanuric"))
+    return "cya";
+  if ((raw === "none" || raw === "value") && desc.includes("phosphate"))
+    return "phosphates";
+  if ((raw === "none" || raw === "value") && desc.includes("salt"))
+    return "salt";
   if ((raw === "none" || raw === "value") && desc.includes("tds")) return "tds";
-  if ((raw === "none" || raw === "value") && (desc.includes("saturation index") || desc.includes("(lsi)") || desc === "lsi")) return "lsi";
-  if ((raw === "none" || raw === "value") && desc.includes("hardness")) return "calcium_hardness";
-  if ((raw === "none" || raw === "value") && desc.includes("chlorine")) return "free_chlorine";
+  if (
+    (raw === "none" || raw === "value") &&
+    (desc.includes("saturation index") ||
+      desc.includes("(lsi)") ||
+      desc === "lsi")
+  )
+    return "lsi";
+  if ((raw === "none" || raw === "value") && desc.includes("hardness"))
+    return "calcium_hardness";
+  if ((raw === "none" || raw === "value") && desc.includes("chlorine"))
+    return "free_chlorine";
   if ((raw === "none" || raw === "value") && desc === "ph") return "ph";
   if (raw === "freechlorine") return "free_chlorine";
   if (raw === "totalchlorine") return "total_chlorine";
   if (raw === "combinedchlorine") return "combined_chlorine";
   if (raw === "cyanuricacid" || raw === "cya") return "cya";
-  if (raw === "lsi" || raw === "saturationindex" || raw === "saturationindex(lsi)") return "lsi";
+  if (
+    raw === "lsi" ||
+    raw === "saturationindex" ||
+    raw === "saturationindex(lsi)"
+  )
+    return "lsi";
   if (raw === "totalalkalinity" || raw === "alkalinity") return "alkalinity";
-  if (raw === "totalhardness" || raw === "calciumhardness") return "calcium_hardness";
+  if (raw === "totalhardness" || raw === "calciumhardness")
+    return "calcium_hardness";
   if (raw === "watertemperature" || raw === "temperature") return "temperature";
   if (raw === "tds") return "tds";
-  if (raw === "none" && desc.includes("filter pressure")) return "filter_pressure";
+  if (raw === "none" && desc.includes("filter pressure"))
+    return "filter_pressure";
   if (raw === "filterpressure" || raw === "psi") return "filter_pressure";
-  return String(rawValue || "").trim().toLowerCase().replace(/\s+/g, "_");
+  return String(rawValue || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
 }
 
 function formatMetricLabel(seriesItem) {
@@ -641,7 +724,8 @@ function formatAxisValue(value, readingKey = "") {
   if (!Number.isFinite(number)) return "—";
   const normalizedKey = normalizeMetricKey(readingKey);
   const precision = customerChartPolicy().display_precision?.[normalizedKey];
-  if (Number.isFinite(Number(precision))) return number.toFixed(Number(precision));
+  if (Number.isFinite(Number(precision)))
+    return number.toFixed(Number(precision));
   return number.toFixed(0);
 }
 
@@ -652,16 +736,24 @@ function chartBoundsForReading(readingKey, values, recommendedHigh) {
 
   if (normalizedKey === "ph") {
     const lower = Math.max(6.8, Math.min(rawMin - 0.15, 7.2));
-    const upper = Math.min(8.6, Math.max(rawMax + 0.15, 8.0, Number.isFinite(recommendedHigh) ? recommendedHigh : 0));
+    const upper = Math.min(
+      8.6,
+      Math.max(
+        rawMax + 0.15,
+        8.0,
+        Number.isFinite(recommendedHigh) ? recommendedHigh : 0,
+      ),
+    );
     if (upper - lower >= 0.2) {
       return { min: lower, max: upper };
     }
   }
 
   const paddedMin = 0;
-  const paddedMax = Number.isFinite(recommendedHigh) && recommendedHigh > 0
-    ? recommendedHigh
-    : Math.max(rawMax * 1.2, 10);
+  const paddedMax =
+    Number.isFinite(recommendedHigh) && recommendedHigh > 0
+      ? recommendedHigh
+      : Math.max(rawMax * 1.2, 10);
   return { min: paddedMin, max: paddedMax };
 }
 
@@ -676,24 +768,14 @@ function chemistrySeriesMeta(seriesItem) {
 }
 
 function isSparseChecklistMetric(readingKey) {
-  return new Set(customerChartPolicy().sparse_metrics || []).has(normalizeMetricKey(readingKey));
+  return new Set(customerChartPolicy().sparse_metrics || []).has(
+    normalizeMetricKey(readingKey),
+  );
 }
 
 function numericOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function isLikelyUntestedPoint(row) {
-  const readingKey = normalizeMetricKey(row.reading_key, row.description);
-  const value = Number(row.value);
-  if (!isSparseChecklistMetric(readingKey) || value !== 0) return false;
-  const selectedIndex = Number(
-    row?.raw_json?.service_stop_entry?.SelectedIndex ??
-    row?.raw_json?.service_stop_entry?.selected_index
-  );
-  if (Number.isFinite(selectedIndex)) return selectedIndex === 0;
-  return true;
 }
 
 function filterSeriesByDays(series, days) {
@@ -721,7 +803,10 @@ function alertReasonBadge(item) {
 function formatAlertSummary(item) {
   const metadata = item.metadata_json || {};
   if (metadata.rule_description) return metadata.rule_description;
-  if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
+  if (
+    item.category === "revenue" &&
+    metadata.opportunity_type === "chemical_cost_review"
+  ) {
     const observedCost = currency(metadata.observed_count);
     if (observedCost) {
       return `Chemical spend flagged at ${observedCost} in the review window.`;
@@ -738,7 +823,10 @@ function formatAlertReading(item) {
   const threshold = numericOrNull(metadata.threshold_value);
   if (observed === null) return "";
 
-  const metricLabel = formatMetricLabel({ readingKey, description: metadata.description || "" });
+  const metricLabel = formatMetricLabel({
+    readingKey,
+    description: metadata.description || "",
+  });
   const observedLabel = formatAxisValue(observed, readingKey);
   if (threshold === null) return `Last ${metricLabel} ${observedLabel}`;
 
@@ -751,8 +839,12 @@ function formatAlertReading(item) {
 function formatAlertSubline(item) {
   const metadata = item.metadata_json || {};
   const assignedTech = metadata.assigned_technician?.tech_name;
-  const friendlyRule = metadata.rule_description || item.rule_code?.replaceAll("_", " ");
-  if (item.category === "revenue" && metadata.opportunity_type === "chemical_cost_review") {
+  const friendlyRule =
+    metadata.rule_description || item.rule_code?.replaceAll("_", " ");
+  if (
+    item.category === "revenue" &&
+    metadata.opportunity_type === "chemical_cost_review"
+  ) {
     const observedCost = currency(metadata.observed_count);
     const threshold = currency(metadata.threshold_value);
     if (observedCost && threshold) {
@@ -771,20 +863,32 @@ function formatAlertSubline(item) {
 }
 
 function alertRelevantSeries(detail) {
-  const keys = new Set((detail.alert_chart_keys || []).map((key) => normalizeMetricKey(key)));
+  const keys = new Set(
+    (detail.alert_chart_keys || []).map((key) => normalizeMetricKey(key)),
+  );
   const allSeries = groupChemistrySeries(detail.chemistry_history || []);
   if (!keys.size) return [];
-  return allSeries.filter((seriesItem) => keys.has(normalizeMetricKey(seriesItem.readingKey)));
+  return allSeries.filter((seriesItem) =>
+    keys.has(normalizeMetricKey(seriesItem.readingKey)),
+  );
 }
 
 function renderChartCaption(seriesItem) {
   const latest = seriesItem.points[seriesItem.points.length - 1];
-  const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+  const values = seriesItem.points
+    .map((point) => Number(point.value))
+    .filter((value) => Number.isFinite(value));
   const meta = chemistrySeriesMeta(seriesItem);
+  const chartConf = metricChartConfig(seriesItem.readingKey);
+  const targetRange =
+    chartConf.safeMin !== undefined && chartConf.safeMax !== undefined
+      ? `<span>Target ${escapeHtml(formatAxisValue(chartConf.safeMin, seriesItem.readingKey))}–${escapeHtml(formatAxisValue(chartConf.safeMax, seriesItem.readingKey))}</span>`
+      : "";
   return `
     <div class="chart-caption">
       <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
       <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
+      ${targetRange}
     </div>
   `;
 }
@@ -794,7 +898,9 @@ function renderMetricChartCard(seriesItem, options = {}) {
   if (meta.hide) return "";
   const compact = Boolean(options.compact);
   const cardClass = options.cardClass ? ` ${options.cardClass}` : "";
-  const subtitle = options.subtitle ? `<div class="chart-subtitle muted">${escapeHtml(options.subtitle)}</div>` : "";
+  const subtitle = options.subtitle
+    ? `<div class="chart-subtitle muted">${escapeHtml(options.subtitle)}</div>`
+    : "";
   return `
     <article class="chart-card${cardClass}">
       <div class="chart-card-header">
@@ -807,25 +913,37 @@ function renderMetricChartCard(seriesItem, options = {}) {
   `;
 }
 
-function renderAlertCharts(detail, mode = "detail") {
-  const series = filterSeriesByDays(alertRelevantSeries(detail), customerChartPolicy().default_days || 90);
+function renderAlertCharts(detail) {
+  const series = filterSeriesByDays(
+    alertRelevantSeries(detail),
+    customerChartPolicy().default_days || 90,
+  );
   if (!series.length) {
     return `<div class="empty-state">No matching chemistry chart data for this alert yet.</div>`;
   }
   const gridClass = "chart-grid chart-grid-alert";
   return `
     <div class="${gridClass}">
-      ${series.map((seriesItem) => renderMetricChartCard(seriesItem, {
-        compact: true,
-        cardClass: "chart-card-alert",
-        subtitle: seriesItem.poolName && seriesItem.poolName !== "Pool" ? seriesItem.poolName : "",
-      })).join("")}
+      ${series
+        .map((seriesItem) =>
+          renderMetricChartCard(seriesItem, {
+            compact: true,
+            cardClass: "chart-card-alert",
+            subtitle:
+              seriesItem.poolName && seriesItem.poolName !== "Pool"
+                ? seriesItem.poolName
+                : "",
+          }),
+        )
+        .join("")}
     </div>
   `;
 }
 
 function badge(value, typeHint = "") {
-  const normalized = String(typeHint || value || "muted").toLowerCase().replace(/\s+/g, "-");
+  const normalized = String(typeHint || value || "muted")
+    .toLowerCase()
+    .replace(/\s+/g, "-");
   const klass = [
     "critical",
     "high",
@@ -857,7 +975,9 @@ function wireNavigationTargets(root = document) {
     el.onclick = () => {
       const customerId = Number(el.dataset.customerId);
       state.selections.customerId = customerId;
-      state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
+      state.selections.customerChartDays =
+        customerChartPolicy().default_days ||
+        DEFAULT_CUSTOMER_CHART_POLICY.default_days;
       state.selections.customerVisitsExpanded = false;
       setView("customer-profile");
     };
@@ -866,7 +986,9 @@ function wireNavigationTargets(root = document) {
     el.onclick = (event) => {
       event.stopPropagation();
       state.selections.customerId = Number(el.dataset.customerOpenProfile);
-      state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
+      state.selections.customerChartDays =
+        customerChartPolicy().default_days ||
+        DEFAULT_CUSTOMER_CHART_POLICY.default_days;
       state.selections.customerVisitsExpanded = false;
       setView("customer-profile");
     };
@@ -944,13 +1066,6 @@ function wireNavigationTargets(root = document) {
       }
     };
   });
-}
-
-async function selectAlert(alertId, { pushHistory = true } = {}) {
-  state.selections.alertId = Number(alertId);
-  renderAlerts();
-  await loadAlertDetail(state.selections.alertId);
-  if (pushHistory) pushBrowserState();
 }
 
 function renderFilters() {
@@ -1063,7 +1178,8 @@ function renderFilters() {
   if (state.view === "problem-pools") {
     setLayout("single");
     const f = filters.problemPools;
-    const technicians = state.data.problemPools?.filter_options?.technicians || [];
+    const technicians =
+      state.data.problemPools?.filter_options?.technicians || [];
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Flag</span>
         <select id="filter-problem-pools-flag">
@@ -1085,7 +1201,9 @@ function renderFilters() {
       filters.problemPools.flag = e.target.value;
       loadProblemPools(true);
     };
-    document.getElementById("filter-problem-pools-technician").onchange = (e) => {
+    document.getElementById("filter-problem-pools-technician").onchange = (
+      e,
+    ) => {
       filters.problemPools.technician = e.target.value;
       loadProblemPools(true);
     };
@@ -1120,11 +1238,15 @@ function renderFilters() {
       loadTechnicians(true);
     };
     document.getElementById("filter-tech-current").onchange = (e) => {
-      filters.technicians.with_current_assignments_only = Number(e.target.value);
+      filters.technicians.with_current_assignments_only = Number(
+        e.target.value,
+      );
       loadTechnicians(true);
     };
     document.getElementById("filter-tech-recent").onchange = (e) => {
-      filters.technicians.with_recent_route_activity_only = Number(e.target.value);
+      filters.technicians.with_recent_route_activity_only = Number(
+        e.target.value,
+      );
       loadTechnicians(true);
     };
     document.getElementById("filter-tech-role").onchange = (e) => {
@@ -1213,7 +1335,8 @@ function renderFilters() {
         <div class="muted">${customerId ? `Customer ID ${escapeHtml(customerId)}` : "No customer selected"}</div>
       </div>
     `;
-    document.getElementById("customer-profile-back").onclick = () => setView("customers");
+    document.getElementById("customer-profile-back").onclick = () =>
+      setView("customers");
     return;
   }
 
@@ -1226,7 +1349,8 @@ function renderFilters() {
         <div class="muted">${alertId ? `Alert ID ${escapeHtml(alertId)}` : "No alert selected"}</div>
       </div>
     `;
-    document.getElementById("alert-profile-back").onclick = () => setView("alerts");
+    document.getElementById("alert-profile-back").onclick = () =>
+      setView("alerts");
     return;
   }
 
@@ -1239,7 +1363,8 @@ function renderFilters() {
         <div class="muted">${techId ? `Technician ID ${escapeHtml(techId)}` : "No technician selected"}</div>
       </div>
     `;
-    document.getElementById("technician-profile-back").onclick = () => setView("technicians");
+    document.getElementById("technician-profile-back").onclick = () =>
+      setView("technicians");
   }
 }
 
@@ -1278,13 +1403,27 @@ async function loadHome() {
 }
 
 const WMO_LABELS = {
-  0: "Clear", 1: "Mostly Clear", 2: "Partly Cloudy", 3: "Overcast",
-  45: "Foggy", 48: "Icy Fog",
-  51: "Light Drizzle", 53: "Drizzle", 55: "Heavy Drizzle",
-  61: "Light Rain", 63: "Rain", 65: "Heavy Rain",
-  71: "Light Snow", 73: "Snow", 75: "Heavy Snow",
-  80: "Showers", 81: "Heavy Showers", 82: "Downpours",
-  95: "Thunderstorm", 96: "T-Storm + Hail", 99: "Severe T-Storm",
+  0: "Clear",
+  1: "Mostly Clear",
+  2: "Partly Cloudy",
+  3: "Overcast",
+  45: "Foggy",
+  48: "Icy Fog",
+  51: "Light Drizzle",
+  53: "Drizzle",
+  55: "Heavy Drizzle",
+  61: "Light Rain",
+  63: "Rain",
+  65: "Heavy Rain",
+  71: "Light Snow",
+  73: "Snow",
+  75: "Heavy Snow",
+  80: "Showers",
+  81: "Heavy Showers",
+  82: "Downpours",
+  95: "Thunderstorm",
+  96: "T-Storm + Hail",
+  99: "Severe T-Storm",
 };
 
 function wmoLabel(code) {
@@ -1302,8 +1441,8 @@ function windLevel(mph) {
 
 function dustLevel(ugm3) {
   if (ugm3 == null) return { label: "—", color: "var(--muted)" };
-  if (ugm3 < 25)  return { label: "Low", color: "var(--ink)" };
-  if (ugm3 < 75)  return { label: "Elevated", color: "var(--gold)" };
+  if (ugm3 < 25) return { label: "Low", color: "var(--ink)" };
+  if (ugm3 < 75) return { label: "Elevated", color: "var(--gold)" };
   if (ugm3 < 200) return { label: "High", color: "#d97706" };
   return { label: "Saharan ⚠", color: "var(--danger)" };
 }
@@ -1312,9 +1451,9 @@ function pollenRisk(risk) {
   // Ambee risk text: Low, Moderate, High, Very High
   if (!risk) return { label: "—", color: "var(--muted)" };
   const r = risk.toLowerCase();
-  if (r === "low")       return { label: "Low", color: "var(--ink)" };
-  if (r === "moderate")  return { label: "Moderate", color: "var(--gold)" };
-  if (r === "high")      return { label: "High", color: "#d97706" };
+  if (r === "low") return { label: "Low", color: "var(--ink)" };
+  if (r === "moderate") return { label: "Moderate", color: "var(--gold)" };
+  if (r === "high") return { label: "High", color: "#d97706" };
   return { label: "Very High ⚠", color: "var(--danger)" };
 }
 
@@ -1335,7 +1474,8 @@ function renderPollenRows(pollen) {
   const treeLabel = pollen.tree_detail
     ? `<strong style="color:${tree.color}">${tree.label}</strong> <span class="muted weather-pollen-detail">${escapeHtml(pollen.tree_detail)}</span>`
     : `<strong style="color:${tree.color}">${tree.label}</strong>`;
-  const ragweed = pollen.ragweed_count > 0 ? ` · ragweed ${pollen.ragweed_count}` : "";
+  const ragweed =
+    pollen.ragweed_count > 0 ? ` · ragweed ${pollen.ragweed_count}` : "";
   return `
     <div class="meta-row"><span>Tree Pollen</span><div class="weather-pollen-value">${treeLabel}</div></div>
     <div class="meta-row"><span>Grass Pollen</span><strong style="color:${grass.color}">${grass.label}${pollen.grass_count > 0 ? ` (${pollen.grass_count})` : ""}</strong></div>
@@ -1345,14 +1485,19 @@ function renderPollenRows(pollen) {
 
 function renderWeatherWidget() {
   const w = state.data.weather;
-  if (!w) return `<section class="detail-card"><h3>Weather</h3><p class="muted">Weather data unavailable.</p></section>`;
+  if (!w)
+    return `<section class="detail-card"><h3>Weather</h3><p class="muted">Weather data unavailable.</p></section>`;
 
   const cur = w.current || {};
   const daily = w.daily || {};
   const waterTemp = w.estimated_water_temp_f;
 
   const _now = new Date();
-  const todayLocal = [_now.getFullYear(), String(_now.getMonth() + 1).padStart(2, "0"), String(_now.getDate()).padStart(2, "0")].join("-");
+  const todayLocal = [
+    _now.getFullYear(),
+    String(_now.getMonth() + 1).padStart(2, "0"),
+    String(_now.getDate()).padStart(2, "0"),
+  ].join("-");
   const forecastDays = (daily.time || [])
     .map((d, i) => ({
       date: d,
@@ -1366,48 +1511,76 @@ function renderWeatherWidget() {
     .slice(0, 6);
 
   const _now2 = new Date();
-  const todayLocal2 = [_now2.getFullYear(), String(_now2.getMonth() + 1).padStart(2, "0"), String(_now2.getDate()).padStart(2, "0")].join("-");
-  const envDays = (w.environmental || []).filter((d) => d.date <= todayLocal2).slice(-7);
-  const envGridHtml = envDays.length ? `
+  const todayLocal2 = [
+    _now2.getFullYear(),
+    String(_now2.getMonth() + 1).padStart(2, "0"),
+    String(_now2.getDate()).padStart(2, "0"),
+  ].join("-");
+  const envDays = (w.environmental || [])
+    .filter((d) => d.date <= todayLocal2)
+    .slice(-7);
+  const envGridHtml = envDays.length
+    ? `
     <div class="weather-history">
       <div class="weather-history-kicker">Past 7 Days · Pool Environment</div>
       <div class="weather-history-grid">
         <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div><div class="muted">Pollen</div>
-        ${envDays.map((d) => {
-          const isToday = d.date === todayLocal2;
-          const label = isToday ? "Today" : new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-          const w2 = windLevel(d.max_wind);
-          const du = dustLevel(d.max_dust);
-          const treeRisk = d.tree_risk || d.grass_risk || d.weed_risk
-            ? [d.tree_risk, d.grass_risk, d.weed_risk].filter(Boolean)
-            : null;
-          const dominantRisk = treeRisk
-            ? treeRisk.reduce((best, r) => {
-                const order = ["Low", "Moderate", "High", "Very High"];
-                return order.indexOf(r) > order.indexOf(best) ? r : best;
-              }, treeRisk[0])
-            : null;
-          const po = dominantRisk ? pollenRisk(dominantRisk) : { label: "—", color: "var(--muted)" };
-          return `<div class="weather-history-label${isToday ? " is-current" : ""}">${label}</div>
+        ${envDays
+          .map((d) => {
+            const isToday = d.date === todayLocal2;
+            const label = isToday
+              ? "Today"
+              : new Date(d.date + "T12:00:00").toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                });
+            const w2 = windLevel(d.max_wind);
+            const du = dustLevel(d.max_dust);
+            const treeRisk =
+              d.tree_risk || d.grass_risk || d.weed_risk
+                ? [d.tree_risk, d.grass_risk, d.weed_risk].filter(Boolean)
+                : null;
+            const dominantRisk = treeRisk
+              ? treeRisk.reduce((best, r) => {
+                  const order = ["Low", "Moderate", "High", "Very High"];
+                  return order.indexOf(r) > order.indexOf(best) ? r : best;
+                }, treeRisk[0])
+              : null;
+            const po = dominantRisk
+              ? pollenRisk(dominantRisk)
+              : { label: "—", color: "var(--muted)" };
+            return `<div class="weather-history-label${isToday ? " is-current" : ""}">${label}</div>
                   <div class="weather-history-value" style="color:${w2.color}">${w2.label}</div>
                   <div class="weather-history-value" style="color:${du.color}">${du.label}</div>
                   <div class="weather-history-value" style="color:${po.color}">${po.label}</div>`;
-        }).join("")}
+          })
+          .join("")}
       </div>
-    </div>` : "";
+    </div>`
+    : "";
 
-  const forecastHtml = forecastDays.map((d) => {
-    const label = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
-    const precipLine = d.precip > 0.01 ? `<div class="muted">${d.precip.toFixed(2)}"</div>` : "";
-    const wl = windLevel(d.wind);
-    const windLine = d.wind >= 15 ? `<div class="weather-forecast-wind" style="color:${wl.color};font-size:0.85em">${wl.label}</div>` : "";
-    return `<div class="weather-forecast-card">
+  const forecastHtml = forecastDays
+    .map((d) => {
+      const label = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", {
+        weekday: "short",
+      });
+      const precipLine =
+        d.precip > 0.01
+          ? `<div class="muted">${d.precip.toFixed(2)}"</div>`
+          : "";
+      const wl = windLevel(d.wind);
+      const windLine =
+        d.wind >= 15
+          ? `<div class="weather-forecast-wind" style="color:${wl.color};font-size:0.85em">${wl.label}</div>`
+          : "";
+      return `<div class="weather-forecast-card">
       <div class="weather-forecast-label">${label}</div>
       <div class="weather-pollen-detail">${wmoLabel(d.code)}</div>
       <div>${Math.round(d.max ?? 0)}° / ${Math.round(d.min ?? 0)}°</div>
       ${precipLine}${windLine}
     </div>`;
-  }).join("");
+    })
+    .join("");
 
   return `
     <section class="detail-card">
@@ -1434,14 +1607,55 @@ function renderHome() {
   const alertCounts = payload.tracked_alert_counts_by_status || [];
   const reminderCounts = payload.reminder_counts || {};
   const cards = [
-    { label: "Active Customers", value: payload.active_customer_count, target: "customers", status: "active" },
-    { label: "Active Pools", value: payload.active_pool_count, target: "customers", status: "active" },
-    { label: "Customers With Current Alerts", value: payload.customers_with_current_alerts, target: "alerts", status: "open" },
-    { label: "Critical Current Alerts", value: payload.critical_current_alert_count, target: "alerts", status: "open", severity: "critical" },
-    { label: "Trend Alerts", value: payload.chemistry_trend_alert_count, target: "alerts", category: "process" },
-    { label: "Revenue Opportunities", value: payload.revenue_opportunity_count, target: "alerts", category: "revenue" },
-    { label: "Tracked Open Reminders", value: reminderCounts.open_reminder_count, target: "reminders", status: "open" },
-    { label: "Overdue Reminders", value: reminderCounts.overdue_reminder_count, target: "reminders", overdueOnly: 1 },
+    {
+      label: "Active Customers",
+      value: payload.active_customer_count,
+      target: "customers",
+      status: "active",
+    },
+    {
+      label: "Active Pools",
+      value: payload.active_pool_count,
+      target: "customers",
+      status: "active",
+    },
+    {
+      label: "Customers With Current Alerts",
+      value: payload.customers_with_current_alerts,
+      target: "alerts",
+      status: "open",
+    },
+    {
+      label: "Critical Current Alerts",
+      value: payload.critical_current_alert_count,
+      target: "alerts",
+      status: "open",
+      severity: "critical",
+    },
+    {
+      label: "Trend Alerts",
+      value: payload.chemistry_trend_alert_count,
+      target: "alerts",
+      category: "process",
+    },
+    {
+      label: "Revenue Opportunities",
+      value: payload.revenue_opportunity_count,
+      target: "alerts",
+      category: "revenue",
+    },
+    {
+      label: "Tracked Open Reminders",
+      value: reminderCounts.open_reminder_count,
+      target: "reminders",
+      status: "open",
+    },
+    {
+      label: "Overdue Reminders",
+      value: reminderCounts.overdue_reminder_count,
+      target: "reminders",
+      overdueOnly: 1,
+    },
   ];
 
   els.mainPanel.innerHTML = `
@@ -1503,7 +1717,9 @@ function renderAlerts() {
       <h3>Alert Queue</h3>
       <p class="panel-subtitle">${escapeHtml(result.total)} tracked items in this filter set. Click any alert to open the full detail page.</p>
       <div class="item-list">
-        ${result.items.map((item) => `
+        ${result.items
+          .map(
+            (item) => `
           <article class="item-card is-clickable" data-alert-id="${item.id}">
             <div class="item-card-header">
               <div>
@@ -1524,7 +1740,9 @@ function renderAlerts() {
               <span>${formatDateTime(item.last_detected_at)}</span>
             </div>
           </article>
-        `).join("")}
+        `,
+          )
+          .join("")}
       </div>
       ${renderPaginationControls(result, "alerts")}
     </section>
@@ -1548,7 +1766,10 @@ function wireAlertRowActions(root = document) {
             actor: state.actor || "ui",
             assigned_to: state.actor || "ui",
           });
-          const payload = await api(`/api/alerts/${alertId}/notify-customer?${params.toString()}`, { method: "POST", auth: true });
+          const payload = await api(
+            `/api/alerts/${alertId}/notify-customer?${params.toString()}`,
+            { method: "POST", auth: true },
+          );
           await loadAlerts();
           if (state.selections.alertId === alertId) {
             await loadAlertDetail(alertId);
@@ -1558,9 +1779,13 @@ function wireAlertRowActions(root = document) {
         return;
       }
       const endpoint = action === "resolve" ? "resolve" : "ack";
-      const successMessage = action === "resolve" ? "Alert resolved." : "Alert acknowledged.";
+      const successMessage =
+        action === "resolve" ? "Alert resolved." : "Alert acknowledged.";
       await mutate(async () => {
-        await api(`/api/alerts/${alertId}/${endpoint}?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
+        await api(
+          `/api/alerts/${alertId}/${endpoint}?actor=${encodeURIComponent(state.actor || "ui")}`,
+          { method: "POST", auth: true },
+        );
         await loadAlerts();
         if (state.selections.alertId === alertId) {
           await loadAlertDetail(alertId);
@@ -1571,7 +1796,9 @@ function wireAlertRowActions(root = document) {
 }
 
 function weekdaySortValue(dayOfWeek) {
-  const normalized = String(dayOfWeek || "").trim().toLowerCase();
+  const normalized = String(dayOfWeek || "")
+    .trim()
+    .toLowerCase();
   const order = {
     monday: 1,
     tuesday: 2,
@@ -1592,7 +1819,11 @@ function groupAssignmentsByDay(assignments) {
     groups.get(dayLabel).push(assignment);
   });
   return Array.from(groups.entries())
-    .sort((a, b) => weekdaySortValue(a[0]) - weekdaySortValue(b[0]) || a[0].localeCompare(b[0]))
+    .sort(
+      (a, b) =>
+        weekdaySortValue(a[0]) - weekdaySortValue(b[0]) ||
+        a[0].localeCompare(b[0]),
+    )
     .map(([dayLabel, items]) => ({ dayLabel, items }));
 }
 
@@ -1612,7 +1843,9 @@ async function loadAlertProfile() {
 }
 
 function renderAlertDetail(detail) {
-  state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
+  state.config.customerCharts = mergeCustomerChartPolicy(
+    detail.chart_policy || {},
+  );
   const item = detail.item;
   const metadata = item.metadata_json || {};
   const isRevenue = item.category === "revenue";
@@ -1621,12 +1854,21 @@ function renderAlertDetail(detail) {
   const _thresholdNum = numericOrNull(metadata.threshold_value);
   const thresholdCost = isRevenue
     ? currency(metadata.threshold_value)
-    : _thresholdNum !== null ? formatAxisValue(_thresholdNum, _alertReadingKey) : null;
+    : _thresholdNum !== null
+      ? formatAxisValue(_thresholdNum, _alertReadingKey)
+      : null;
   const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
-  const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
-  const assignedTechId = metadata.assigned_technician?.tech_id || metadata.assigned_technician?.technician_id;
-  const recentTechId = metadata.recent_service_technician?.tech_id || metadata.recent_service_technician?.technician_id;
-  const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
+  const recentTech =
+    metadata.recent_service_technician?.tech_name || "No recent route stop";
+  const assignedTechId =
+    metadata.assigned_technician?.tech_id ||
+    metadata.assigned_technician?.technician_id;
+  const recentTechId =
+    metadata.recent_service_technician?.tech_id ||
+    metadata.recent_service_technician?.technician_id;
+  const visitBreakdown = Array.isArray(metadata.visit_breakdown)
+    ? metadata.visit_breakdown
+    : [];
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -1677,7 +1919,11 @@ function renderAlertDetail(detail) {
       <section class="detail-card">
         <h3>Visit Breakdown</h3>
         <div class="event-list">
-          ${visitBreakdown.length ? visitBreakdown.map((visit) => `
+          ${
+            visitBreakdown.length
+              ? visitBreakdown
+                  .map(
+                    (visit) => `
             <div class="item-card">
               <div class="item-card-header">
                 <strong>${formatDateTime(visit.service_date)}</strong>
@@ -1685,15 +1931,23 @@ function renderAlertDetail(detail) {
               </div>
               <div class="muted">${escapeHtml(visit.technician_name || "No technician linked")}</div>
               <div class="chem-list">
-                ${(visit.chemicals || []).map((chem) => `
+                ${(visit.chemicals || [])
+                  .map(
+                    (chem) => `
                   <div class="chem-chip">
                     <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
                     <span class="dense">${escapeHtml(currency(chem.estimated_cost) || String(chem.estimated_cost || "—"))}</span>
                   </div>
-                `).join("")}
+                `,
+                  )
+                  .join("")}
               </div>
             </div>
-          `).join("") : `<div class="empty-state">No visit-level chemical detail linked for this alert yet.</div>`}
+          `,
+                  )
+                  .join("")
+              : `<div class="empty-state">No visit-level chemical detail linked for this alert yet.</div>`
+          }
         </div>
       </section>
       <section class="detail-card">
@@ -1709,52 +1963,86 @@ function renderAlertDetail(detail) {
     </div>
   `;
 
-  els.detailPanel.querySelector('[data-alert-action="ack"]').onclick = () => mutate(async () => {
-    await api(`/api/alerts/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadAlerts(true);
-  }, "Alert acknowledged.");
+  els.detailPanel.querySelector('[data-alert-action="ack"]').onclick = () =>
+    mutate(async () => {
+      await api(
+        `/api/alerts/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`,
+        { method: "POST", auth: true },
+      );
+      await loadAlerts(true);
+    }, "Alert acknowledged.");
 
-  els.detailPanel.querySelector('[data-alert-action="resolve"]').onclick = () => mutate(async () => {
-    await api(`/api/alerts/${item.id}/resolve?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadAlerts(true);
-  }, "Alert resolved.");
+  els.detailPanel.querySelector('[data-alert-action="resolve"]').onclick = () =>
+    mutate(async () => {
+      await api(
+        `/api/alerts/${item.id}/resolve?actor=${encodeURIComponent(state.actor || "ui")}`,
+        { method: "POST", auth: true },
+      );
+      await loadAlerts(true);
+    }, "Alert resolved.");
 
-  document.getElementById("alert-snooze-button").onclick = () => mutate(async () => {
-    const snoozedUntil = toUtcIso(document.getElementById("alert-snooze-until").value);
-    const note = document.getElementById("alert-snooze-note").value.trim();
-    await api(`/api/alerts/${item.id}/snooze?actor=${encodeURIComponent(state.actor || "ui")}&snoozed_until=${encodeURIComponent(snoozedUntil)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
-    await loadAlerts(true);
-  }, "Alert snoozed.");
+  document.getElementById("alert-snooze-button").onclick = () =>
+    mutate(async () => {
+      const snoozedUntil = toUtcIso(
+        document.getElementById("alert-snooze-until").value,
+      );
+      const note = document.getElementById("alert-snooze-note").value.trim();
+      await api(
+        `/api/alerts/${item.id}/snooze?actor=${encodeURIComponent(state.actor || "ui")}&snoozed_until=${encodeURIComponent(snoozedUntil)}&note=${encodeURIComponent(note)}`,
+        { method: "POST", auth: true },
+      );
+      await loadAlerts(true);
+    }, "Alert snoozed.");
 
-  document.getElementById("alert-reminder-button").onclick = () => mutate(async () => {
-    const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
-    const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
-    const note = document.getElementById("alert-reminder-note").value.trim();
-    await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
-    showToast("Reminder created from alert.");
-  }, "Reminder created.");
+  document.getElementById("alert-reminder-button").onclick = () =>
+    mutate(async () => {
+      const assignedTo = document
+        .getElementById("alert-reminder-assigned")
+        .value.trim();
+      const dueAt = toUtcIso(
+        document.getElementById("alert-reminder-due").value,
+      );
+      const note = document.getElementById("alert-reminder-note").value.trim();
+      await api(
+        `/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`,
+        { method: "POST", auth: true },
+      );
+      showToast("Reminder created from alert.");
+    }, "Reminder created.");
   const notifyButton = document.getElementById("alert-notify-customer-button");
   if (notifyButton) {
-    notifyButton.onclick = () => mutate(async () => {
-      const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
-      const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
-      const note = document.getElementById("alert-reminder-note").value.trim();
-      const params = new URLSearchParams({
-        actor: state.actor || "ui",
-        assigned_to: assignedTo,
-        due_at: dueAt,
-        note,
+    notifyButton.onclick = () =>
+      mutate(async () => {
+        const assignedTo = document
+          .getElementById("alert-reminder-assigned")
+          .value.trim();
+        const dueAt = toUtcIso(
+          document.getElementById("alert-reminder-due").value,
+        );
+        const note = document
+          .getElementById("alert-reminder-note")
+          .value.trim();
+        const params = new URLSearchParams({
+          actor: state.actor || "ui",
+          assigned_to: assignedTo,
+          due_at: dueAt,
+          note,
+        });
+        const payload = await api(
+          `/api/alerts/${item.id}/notify-customer?${params.toString()}`,
+          { method: "POST", auth: true },
+        );
+        await loadAlertDetail(item.id);
+        showToast(filterCleanNotifyToast(payload), 4200);
       });
-      const payload = await api(`/api/alerts/${item.id}/notify-customer?${params.toString()}`, { method: "POST", auth: true });
-      await loadAlertDetail(item.id);
-      showToast(filterCleanNotifyToast(payload), 4200);
-    });
   }
   wireNavigationTargets(els.detailPanel);
 }
 
 function renderAlertProfile(detail) {
-  state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
+  state.config.customerCharts = mergeCustomerChartPolicy(
+    detail.chart_policy || {},
+  );
   const item = detail.item;
   const metadata = item.metadata_json || {};
   const isRevenue = item.category === "revenue";
@@ -1763,12 +2051,21 @@ function renderAlertProfile(detail) {
   const _thresholdNum = numericOrNull(metadata.threshold_value);
   const thresholdCost = isRevenue
     ? currency(metadata.threshold_value)
-    : _thresholdNum !== null ? formatAxisValue(_thresholdNum, _alertReadingKey) : null;
+    : _thresholdNum !== null
+      ? formatAxisValue(_thresholdNum, _alertReadingKey)
+      : null;
   const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
-  const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
-  const assignedTechId = metadata.assigned_technician?.tech_id || metadata.assigned_technician?.technician_id;
-  const recentTechId = metadata.recent_service_technician?.tech_id || metadata.recent_service_technician?.technician_id;
-  const visitBreakdown = Array.isArray(metadata.visit_breakdown) ? metadata.visit_breakdown : [];
+  const recentTech =
+    metadata.recent_service_technician?.tech_name || "No recent route stop";
+  const assignedTechId =
+    metadata.assigned_technician?.tech_id ||
+    metadata.assigned_technician?.technician_id;
+  const recentTechId =
+    metadata.recent_service_technician?.tech_id ||
+    metadata.recent_service_technician?.technician_id;
+  const visitBreakdown = Array.isArray(metadata.visit_breakdown)
+    ? metadata.visit_breakdown
+    : [];
 
   els.viewKicker.textContent = "Alert";
   els.viewTitle.textContent = item.title;
@@ -1796,7 +2093,7 @@ function renderAlertProfile(detail) {
     </section>
     <section class="section-card">
       <h3>Related Chemistry</h3>
-      ${renderAlertCharts(detail, "profile")}
+      ${renderAlertCharts(detail)}
     </section>
     <section class="section-card">
       <h3>Alert Actions</h3>
@@ -1823,7 +2120,11 @@ function renderAlertProfile(detail) {
     <section class="section-card">
       <h3>Visit Breakdown</h3>
       <div class="event-list">
-        ${visitBreakdown.length ? visitBreakdown.map((visit) => `
+        ${
+          visitBreakdown.length
+            ? visitBreakdown
+                .map(
+                  (visit) => `
           <div class="item-card">
             <div class="item-card-header">
               <strong>${formatDateTime(visit.service_date)}</strong>
@@ -1831,15 +2132,23 @@ function renderAlertProfile(detail) {
             </div>
             <div class="muted">${escapeHtml(visit.technician_name || "No technician linked")}</div>
             <div class="chem-list">
-              ${(visit.chemicals || []).map((chem) => `
+              ${(visit.chemicals || [])
+                .map(
+                  (chem) => `
                 <div class="chem-chip">
                   <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
                   <span class="dense">${escapeHtml(currency(chem.estimated_cost) || String(chem.estimated_cost || "—"))}</span>
                 </div>
-              `).join("")}
+              `,
+                )
+                .join("")}
             </div>
           </div>
-        `).join("") : `<div class="empty-state">No visit-level chemical detail linked for this alert yet.</div>`}
+        `,
+                )
+                .join("")
+            : `<div class="empty-state">No visit-level chemical detail linked for this alert yet.</div>`
+        }
       </div>
     </section>
     <section class="section-card">
@@ -1854,46 +2163,78 @@ function renderAlertProfile(detail) {
     </section>
   `;
 
-  els.mainPanel.querySelector('[data-alert-action="ack"]').onclick = () => mutate(async () => {
-    await api(`/api/alerts/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadAlertProfile(true);
-  }, "Alert acknowledged.");
+  els.mainPanel.querySelector('[data-alert-action="ack"]').onclick = () =>
+    mutate(async () => {
+      await api(
+        `/api/alerts/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`,
+        { method: "POST", auth: true },
+      );
+      await loadAlertProfile(true);
+    }, "Alert acknowledged.");
 
-  els.mainPanel.querySelector('[data-alert-action="resolve"]').onclick = () => mutate(async () => {
-    await api(`/api/alerts/${item.id}/resolve?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadAlertProfile(true);
-  }, "Alert resolved.");
+  els.mainPanel.querySelector('[data-alert-action="resolve"]').onclick = () =>
+    mutate(async () => {
+      await api(
+        `/api/alerts/${item.id}/resolve?actor=${encodeURIComponent(state.actor || "ui")}`,
+        { method: "POST", auth: true },
+      );
+      await loadAlertProfile(true);
+    }, "Alert resolved.");
 
-  document.getElementById("alert-snooze-button").onclick = () => mutate(async () => {
-    const snoozedUntil = toUtcIso(document.getElementById("alert-snooze-until").value);
-    const note = document.getElementById("alert-snooze-note").value.trim();
-    await api(`/api/alerts/${item.id}/snooze?actor=${encodeURIComponent(state.actor || "ui")}&snoozed_until=${encodeURIComponent(snoozedUntil)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
-    await loadAlertProfile(true);
-  }, "Alert snoozed.");
+  document.getElementById("alert-snooze-button").onclick = () =>
+    mutate(async () => {
+      const snoozedUntil = toUtcIso(
+        document.getElementById("alert-snooze-until").value,
+      );
+      const note = document.getElementById("alert-snooze-note").value.trim();
+      await api(
+        `/api/alerts/${item.id}/snooze?actor=${encodeURIComponent(state.actor || "ui")}&snoozed_until=${encodeURIComponent(snoozedUntil)}&note=${encodeURIComponent(note)}`,
+        { method: "POST", auth: true },
+      );
+      await loadAlertProfile(true);
+    }, "Alert snoozed.");
 
-  document.getElementById("alert-reminder-button").onclick = () => mutate(async () => {
-    const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
-    const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
-    const note = document.getElementById("alert-reminder-note").value.trim();
-    await api(`/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`, { method: "POST", auth: true });
-    showToast("Reminder created from alert.");
-  }, "Reminder created.");
+  document.getElementById("alert-reminder-button").onclick = () =>
+    mutate(async () => {
+      const assignedTo = document
+        .getElementById("alert-reminder-assigned")
+        .value.trim();
+      const dueAt = toUtcIso(
+        document.getElementById("alert-reminder-due").value,
+      );
+      const note = document.getElementById("alert-reminder-note").value.trim();
+      await api(
+        `/api/alerts/${item.id}/reminder?actor=${encodeURIComponent(state.actor || "ui")}&assigned_to=${encodeURIComponent(assignedTo)}&due_at=${encodeURIComponent(dueAt)}&note=${encodeURIComponent(note)}`,
+        { method: "POST", auth: true },
+      );
+      showToast("Reminder created from alert.");
+    }, "Reminder created.");
   const notifyButton = document.getElementById("alert-notify-customer-button");
   if (notifyButton) {
-    notifyButton.onclick = () => mutate(async () => {
-      const assignedTo = document.getElementById("alert-reminder-assigned").value.trim();
-      const dueAt = toUtcIso(document.getElementById("alert-reminder-due").value);
-      const note = document.getElementById("alert-reminder-note").value.trim();
-      const params = new URLSearchParams({
-        actor: state.actor || "ui",
-        assigned_to: assignedTo,
-        due_at: dueAt,
-        note,
+    notifyButton.onclick = () =>
+      mutate(async () => {
+        const assignedTo = document
+          .getElementById("alert-reminder-assigned")
+          .value.trim();
+        const dueAt = toUtcIso(
+          document.getElementById("alert-reminder-due").value,
+        );
+        const note = document
+          .getElementById("alert-reminder-note")
+          .value.trim();
+        const params = new URLSearchParams({
+          actor: state.actor || "ui",
+          assigned_to: assignedTo,
+          due_at: dueAt,
+          note,
+        });
+        const payload = await api(
+          `/api/alerts/${item.id}/notify-customer?${params.toString()}`,
+          { method: "POST", auth: true },
+        );
+        await loadAlertProfile();
+        showToast(filterCleanNotifyToast(payload), 4200);
       });
-      const payload = await api(`/api/alerts/${item.id}/notify-customer?${params.toString()}`, { method: "POST", auth: true });
-      await loadAlertProfile();
-      showToast(filterCleanNotifyToast(payload), 4200);
-    });
   }
   wireNavigationTargets(els.mainPanel);
 }
@@ -1912,9 +2253,15 @@ function renderCustomers() {
       <h3>Customer List</h3>
       <p class="panel-subtitle">${escapeHtml(result.total)} customers in scope. Showing 20 at a time. Click any row to open the full customer page.</p>
       <div class="item-list">
-        ${result.items.map((item) => {
-          const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
-          return `
+        ${result.items
+          .map((item) => {
+            const name = safeName(
+              `${item.first_name || ""} ${item.last_name || ""}`.trim(),
+              item.company_name,
+              item.email,
+              `Customer ${item.id}`,
+            );
+            return `
             <article class="item-card is-clickable" data-customer-id="${item.id}">
               <div class="item-card-header">
                 <div>
@@ -1926,7 +2273,8 @@ function renderCustomers() {
               <div class="meta-row"><span>${escapeHtml(item.pool_count || 0)} pools · ${escapeHtml(item.open_alert_count || 0)} tracked alerts</span><span>${escapeHtml(item.mobile_phone || item.phone || "—")}</span></div>
             </article>
           `;
-        }).join("")}
+          })
+          .join("")}
       </div>
       ${renderPaginationControls(result, "customers")}
     </section>
@@ -1987,7 +2335,10 @@ function renderProblemPools() {
             <div>Monthly Leak</div>
             <div>Suggested Action</div>
           </div>
-          ${items.map((item) => `
+          ${
+            items
+              .map(
+                (item) => `
             <div class="payroll-table-row problem-pools-row is-clickable" data-customer-id="${escapeHtml(item.customer_id)}">
               <div>
                 <strong>${escapeHtml(item.customer_name || `Customer ${item.customer_id}`)}</strong>
@@ -2008,7 +2359,11 @@ function renderProblemPools() {
               <div>${escapeHtml(currency(item.monthly_leak) || "$0.00")}</div>
               <div>${escapeHtml(item.suggested_action || "—")}</div>
             </div>
-          `).join("") || `<div class="empty-state">No pools matched this filter set.</div>`}
+          `,
+              )
+              .join("") ||
+            `<div class="empty-state">No pools matched this filter set.</div>`
+          }
         </div>
       </div>
       ${renderPaginationControls(result, "problemPools")}
@@ -2016,59 +2371,6 @@ function renderProblemPools() {
   `;
   wireNavigationTargets(els.mainPanel);
   wirePagination(els.mainPanel);
-}
-
-async function loadCustomerDetail(customerId) {
-  const detail = await api(`/api/customers/${customerId}`);
-  const item = detail.item;
-  const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
-  const poolListHtml = detail.pools.length
-    ? detail.pools.map((pool) => {
-        const poolName = pool.name || `Pool ${pool.id}`;
-        const addrParts = [pool.address, [pool.city, pool.state].filter(Boolean).join(", ")].filter(Boolean);
-        const addr = addrParts.join(", ");
-        const active = pool.is_operationally_active !== false;
-        return `<div class="pool-list-item">
-          <span class="pool-list-name">${escapeHtml(poolName)}${!active ? ` <span class="pill-muted">Inactive</span>` : ""}</span>
-          ${addr ? `<span class="muted pool-list-addr">${escapeHtml(addr)}</span>` : ""}
-        </div>`;
-      }).join("")
-    : `<span class="muted">No pools on file.</span>`;
-  els.detailPanel.innerHTML = `
-    <div class="detail-stack">
-      <section class="detail-card">
-        <div class="detail-header">
-          <h3>${escapeHtml(name)}</h3>
-          <button class="button button-secondary" id="customer-open-profile">Open Full Profile</button>
-        </div>
-        <div class="meta-stack">
-          <div class="meta-row"><span>Status</span><strong>${escapeHtml(item.customer_status || "—")}</strong></div>
-          <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
-          <div class="meta-row"><span>Phone</span><strong>${escapeHtml(item.mobile_phone || item.phone || "—")}</strong></div>
-          <div class="meta-row"><span>Latest Chemistry Service</span><strong>${formatDateTime(detail.latest_chemistry_service_date)}</strong></div>
-          <div class="meta-row"><span>Pools</span><strong>${escapeHtml(String(detail.pools.length || 0))}</strong></div>
-        </div>
-        <div class="pool-list">${poolListHtml}</div>
-      </section>
-      <section class="detail-card">
-        <h3>Alerts</h3>
-        <div class="event-list">${detail.alerts.slice(0, 8).map((alert) => `<div class="item-card is-clickable" data-alert-id="${escapeHtml(alert.id)}"><div class="item-card-header"><strong>${escapeHtml(alert.title)}</strong>${badge(alert.status)}</div><div class="muted">${escapeHtml(alert.summary || "")}</div></div>`).join("") || `<div class="empty-state">No tracked alerts.</div>`}</div>
-      </section>
-      <section class="detail-card">
-        <h3>Reminders</h3>
-        <div class="event-list">${(detail.reminders || []).slice(0, 8).map((reminder) => `<div class="item-card is-clickable" data-reminder-id="${escapeHtml(reminder.id)}"><div class="item-card-header"><strong>${escapeHtml(reminder.title)}</strong>${badge(reminder.status)}</div><div class="muted">${reminder.due_at ? `Due ${formatDateTime(reminder.due_at)}` : "No due date"}</div></div>`).join("") || `<div class="empty-state">No reminders for this customer.</div>`}</div>
-      </section>
-    </div>
-  `;
-  const openProfileButton = document.getElementById("customer-open-profile");
-  if (openProfileButton) {
-    openProfileButton.onclick = () => {
-      state.selections.customerChartDays = customerChartPolicy().default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days;
-      state.selections.customerVisitsExpanded = false;
-      setView("customer-profile");
-    };
-  }
-  wireNavigationTargets(els.detailPanel);
 }
 
 function buildLineChart(seriesItem, options = {}) {
@@ -2080,7 +2382,9 @@ function buildLineChart(seriesItem, options = {}) {
   const layout = compact ? CHART_LAYOUT.compact : CHART_LAYOUT.standard;
   const { width, height, preserveAspectRatio } = layout;
   const margin = CHART_LAYOUT.margin;
-  const values = points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
+  const values = points
+    .map((point) => Number(point.value))
+    .filter((value) => Number.isFinite(value));
   if (!values.length) {
     return `<div class="empty-state">No numeric values to chart.</div>`;
   }
@@ -2088,48 +2392,50 @@ function buildLineChart(seriesItem, options = {}) {
   const xMax = width - margin.right;
   const yMin = margin.top;
   const yMax = height - margin.bottom;
-  const rawMin = Math.min(...values);
-  const rawMax = Math.max(...values);
   const readingKey = normalizeMetricKey(seriesItem);
-  const recommendedHigh = Number(customerChartPolicy().recommended_highs?.[readingKey]);
+  const recommendedHigh = Number(
+    customerChartPolicy().recommended_highs?.[readingKey],
+  );
   const bounds = chartBoundsForReading(readingKey, values, recommendedHigh);
   const paddedMin = bounds.min;
   const paddedMax = bounds.max;
   const valueRange = paddedMax - paddedMin || 1;
   const span = paddedMax - paddedMin;
   const stepX = points.length === 1 ? 0 : (xMax - xMin) / (points.length - 1);
-  const yTicks = Array.from({ length: 5 }, (_, index) => paddedMax - (span * index) / 4);
-  const xTickIndexes = Array.from(new Set([
-    0,
-    Math.max(0, Math.floor((points.length - 1) / 2)),
-    Math.max(0, points.length - 1),
-  ])).sort((a, b) => a - b);
+  const yTicks = Array.from(
+    { length: 5 },
+    (_, index) => paddedMax - (span * index) / 4,
+  );
+  const xTickIndexes = Array.from(
+    new Set([
+      0,
+      Math.max(0, Math.floor((points.length - 1) / 2)),
+      Math.max(0, points.length - 1),
+    ]),
+  ).sort((a, b) => a - b);
 
-  const xForIndex = (index) => (points.length === 1 ? (xMin + xMax) / 2 : xMin + stepX * index);
-  const yForValue = (value) => yMax - ((Number(value) - paddedMin) / valueRange) * (yMax - yMin);
+  const xForIndex = (index) =>
+    points.length === 1 ? (xMin + xMax) / 2 : xMin + stepX * index;
+  const yForValue = (value) =>
+    yMax - ((Number(value) - paddedMin) / valueRange) * (yMax - yMin);
 
   // Metric-specific color and fill config
   const chartConf = metricChartConfig(readingKey);
   const color = chartConf.color;
 
-  // Unique IDs per chart to avoid SVG gradient/clip conflicts when multiple charts render
-  const safeId = nextChartInstanceId(seriesItem, readingKey, compact);
-  const gradId = `cg_${safeId}`;
-  const clipId = `cc_${safeId}`;
-
   // Data line path
-  const path = points.map((point, index) => {
-    const x = xForIndex(index);
-    const y = yForValue(point.value);
-    return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-  }).join(" ");
-
-  // Area fill path — close back to the baseline
-  const areaPath = `${path} L ${xForIndex(points.length - 1).toFixed(1)} ${yMax} L ${xForIndex(0).toFixed(1)} ${yMax} Z`;
+  const path = points
+    .map((point, index) => {
+      const x = xForIndex(index);
+      const y = yForValue(point.value);
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
 
   // Safe-range band (visual guidance only — see METRIC_CHART_CONFIG)
   const safeRangeBand = (() => {
-    if (chartConf.safeMin === undefined || chartConf.safeMax === undefined) return "";
+    if (chartConf.safeMin === undefined || chartConf.safeMax === undefined)
+      return "";
     const clampedMin = Math.max(chartConf.safeMin, paddedMin);
     const clampedMax = Math.min(chartConf.safeMax, paddedMax);
     if (clampedMin >= clampedMax) return "";
@@ -2140,14 +2446,17 @@ function buildLineChart(seriesItem, options = {}) {
 
   // Regular dots (all except the latest)
   const meta = chemistrySeriesMeta(seriesItem);
-  const regularDots = points.slice(0, points.length - 1).map((point, index) => {
-    const x = xForIndex(index);
-    const y = yForValue(point.value);
-    const r = meta.sparse ? "4" : "2.5";
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${color}" stroke="white" stroke-width="1.5" fill-opacity="0.72">
+  const regularDots = points
+    .slice(0, points.length - 1)
+    .map((point, index) => {
+      const x = xForIndex(index);
+      const y = yForValue(point.value);
+      const r = meta.sparse ? "4" : "2.5";
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${color}" stroke="white" stroke-width="1.5" fill-opacity="0.72">
       <title>${escapeHtml(`${formatShortDate(point.service_date)}: ${formatAxisValue(point.value, readingKey)}`)}</title>
     </circle>`;
-  }).join("");
+    })
+    .join("");
 
   // Latest point — larger dot with halo + optional value label
   const latestPoint = points[points.length - 1];
@@ -2158,7 +2467,10 @@ function buildLineChart(seriesItem, options = {}) {
   const useLeftLabel = latestX > (xMin + xMax) / 2;
   const latestLabelX = (useLeftLabel ? latestX - 9 : latestX + 9).toFixed(1);
   const latestLabelAnchor = useLeftLabel ? "end" : "start";
-  const latestLabelY = Math.max(yMin + 10, Math.min(yMax - 4, latestY - 7)).toFixed(1);
+  const latestLabelY = Math.max(
+    yMin + 10,
+    Math.min(yMax - 4, latestY - 7),
+  ).toFixed(1);
   const showLatestLabel = !compact && points.length > 1;
   const latestDot = `
     <circle cx="${latestX.toFixed(1)}" cy="${latestY.toFixed(1)}" r="9" fill="${color}" fill-opacity="0.13" />
@@ -2171,35 +2483,29 @@ function buildLineChart(seriesItem, options = {}) {
   const metricLabel = formatMetricLabel(seriesItem);
   return `
     <svg class="chart-svg${compact ? " chart-svg-compact" : ""}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="${preserveAspectRatio}" role="img" aria-label="Chemistry trend chart">
-      <defs>
-        <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${color}" stop-opacity="${chartConf.fillOpacity ?? 0.12}"/>
-          <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-        </linearGradient>
-        <clipPath id="${clipId}">
-          <rect x="${xMin}" y="${yMin}" width="${xMax - xMin}" height="${yMax - yMin}"/>
-        </clipPath>
-      </defs>
       ${safeRangeBand}
-      ${yTicks.map((tick) => {
-        const y = yForValue(tick);
-        return `
+      ${yTicks
+        .map((tick) => {
+          const y = yForValue(tick);
+          return `
           <line x1="${xMin}" y1="${y.toFixed(1)}" x2="${xMax}" y2="${y.toFixed(1)}" class="chart-gridline" />
           <text x="${xMin - 8}" y="${(y + 4).toFixed(1)}" text-anchor="end" class="chart-tick-label">${escapeHtml(formatAxisValue(tick, readingKey))}</text>
         `;
-      }).join("")}
-      ${xTickIndexes.map((index) => {
-        const x = xForIndex(index);
-        return `
+        })
+        .join("")}
+      ${xTickIndexes
+        .map((index) => {
+          const x = xForIndex(index);
+          return `
           <line x1="${x.toFixed(1)}" y1="${yMax}" x2="${x.toFixed(1)}" y2="${(yMax + 6).toFixed(1)}" class="chart-axis" />
           <text x="${x.toFixed(1)}" y="${height - 14}" text-anchor="middle" class="chart-tick-label">${escapeHtml(formatShortDate(points[index]?.service_date))}</text>
         `;
-      }).join("")}
+        })
+        .join("")}
       <line x1="${xMin}" y1="${yMax}" x2="${xMax}" y2="${yMax}" class="chart-axis" />
       <line x1="${xMin}" y1="${yMin}" x2="${xMin}" y2="${yMax}" class="chart-axis" />
-      <text x="${margin.left - 42}" y="${(height / 2)}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(metricLabel)}</text>
-      <text x="${(width / 2)}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
-      <path d="${areaPath}" fill="url(#${gradId})" clip-path="url(#${clipId})" />
+      <text x="${margin.left - 42}" y="${height / 2}" text-anchor="middle" transform="rotate(-90 ${margin.left - 42} ${height / 2})" class="chart-axis-label">${escapeHtml(metricLabel)}</text>
+      <text x="${width / 2}" y="${height - 2}" text-anchor="middle" class="chart-axis-label">Service Date</text>
       <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
       ${regularDots}
       ${latestDot}
@@ -2210,8 +2516,17 @@ function buildLineChart(seriesItem, options = {}) {
 function groupChemistrySeries(rows) {
   const groups = new Map();
   rows.forEach((row) => {
-    const normalizedReadingKey = normalizeMetricKey({ readingKey: row.reading_key, description: row.description });
-    if (chemistrySeriesMeta({ readingKey: normalizedReadingKey, description: row.description }).hide) return;
+    const normalizedReadingKey = normalizeMetricKey({
+      readingKey: row.reading_key,
+      description: row.description,
+    });
+    if (
+      chemistrySeriesMeta({
+        readingKey: normalizedReadingKey,
+        description: row.description,
+      }).hide
+    )
+      return;
     const key = `${row.pool_id}::${normalizedReadingKey}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -2246,13 +2561,29 @@ async function loadCustomerProfile() {
     return;
   }
   const detail = await api(`/api/customers/${customerId}`);
-  state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
+  state.config.customerCharts = mergeCustomerChartPolicy(
+    detail.chart_policy || {},
+  );
   const item = detail.item;
-  const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
+  const name = safeName(
+    `${item.first_name || ""} ${item.last_name || ""}`.trim(),
+    item.company_name,
+    item.email,
+    `Customer ${item.id}`,
+  );
   const policy = customerChartPolicy();
-  const chartDays = Number(state.selections.customerChartDays || policy.default_days || DEFAULT_CUSTOMER_CHART_POLICY.default_days);
-  const rangeDays = (policy.range_days || DEFAULT_CUSTOMER_CHART_POLICY.range_days).filter((days) => Number.isFinite(Number(days)) && Number(days) > 0);
-  const series = filterSeriesByDays(groupChemistrySeries(detail.chemistry_history || []), chartDays);
+  const chartDays = Number(
+    state.selections.customerChartDays ||
+      policy.default_days ||
+      DEFAULT_CUSTOMER_CHART_POLICY.default_days,
+  );
+  const rangeDays = (
+    policy.range_days || DEFAULT_CUSTOMER_CHART_POLICY.range_days
+  ).filter((days) => Number.isFinite(Number(days)) && Number(days) > 0);
+  const series = filterSeriesByDays(
+    groupChemistrySeries(detail.chemistry_history || []),
+    chartDays,
+  );
   const multiplePools = (detail.pools || []).length > 1;
   const spend = detail.chemical_spend_summary || {};
   const visits = detail.chemical_spend_by_visit || [];
@@ -2260,20 +2591,31 @@ async function loadCustomerProfile() {
     const ts = new Date(visit.service_date).getTime();
     return Number.isFinite(ts) && ts >= Date.now() - 90 * 24 * 60 * 60 * 1000;
   });
-  const visibleVisits = state.selections.customerVisitsExpanded ? visits90d : visits90d.slice(0, 4);
+  const visibleVisits = state.selections.customerVisitsExpanded
+    ? visits90d
+    : visits90d.slice(0, 4);
   const visitCosts90d = visits90d
     .map((visit) => Number(visit.visit_estimated_cost))
     .filter((value) => Number.isFinite(value));
   const avgVisitCost90d = visitCosts90d.length
-    ? visitCosts90d.reduce((sum, value) => sum + value, 0) / visitCosts90d.length
+    ? visitCosts90d.reduce((sum, value) => sum + value, 0) /
+      visitCosts90d.length
     : null;
-  const latestVisitCost = visits.length ? Number(visits[0].visit_estimated_cost) : null;
+  const latestVisitCost = visits.length
+    ? Number(visits[0].visit_estimated_cost)
+    : null;
   const assignedTechnicians = detail.assigned_technicians || [];
   const assignedTechLabel = assignedTechnicians.length
-    ? assignedTechnicians.map((tech) => {
-        const cadence = [tech.day_of_week, tech.frequency].filter(Boolean).join(" · ");
-        return cadence ? `${tech.technician_name} (${cadence})` : tech.technician_name;
-      }).join(", ")
+    ? assignedTechnicians
+        .map((tech) => {
+          const cadence = [tech.day_of_week, tech.frequency]
+            .filter(Boolean)
+            .join(" · ");
+          return cadence
+            ? `${tech.technician_name} (${cadence})`
+            : tech.technician_name;
+        })
+        .join(", ")
     : "No current technician assignment";
 
   // Pool lookup helpers — used for multi-pool section headers
@@ -2282,12 +2624,18 @@ async function loadCustomerProfile() {
     const pool = poolsById.get(poolId);
     if (!pool) return { name: `Pool ${poolId}`, addr: "" };
     const name = pool.name || `Pool ${pool.id}`;
-    const addrParts = [pool.address, [pool.city, pool.state].filter(Boolean).join(", ")].filter(Boolean);
+    const addrParts = [
+      pool.address,
+      [pool.city, pool.state].filter(Boolean).join(", "),
+    ].filter(Boolean);
     return { name, addr: addrParts.join(", ") };
   };
   const renderPoolSectionHeader = (poolId, fallbackName) => {
     const info = _poolInfo(poolId);
-    const label = (info.name && info.name !== `Pool ${poolId}`) ? info.name : (fallbackName || info.name);
+    const label =
+      info.name && info.name !== `Pool ${poolId}`
+        ? info.name
+        : fallbackName || info.name;
     return `<div class="pool-section-header">
       <h4>${escapeHtml(label)}</h4>
       ${info.addr ? `<span class="muted">${escapeHtml(info.addr)}</span>` : ""}
@@ -2297,32 +2645,36 @@ async function loadCustomerProfile() {
     return renderMetricChartCard(seriesItem, { cardClass: "chart-card-large" });
   };
   // Group chemistry series by pool for multi-pool rendering
-  const chartPoolGroups = !multiplePools ? null : (() => {
-    const byPool = new Map();
-    series.forEach((s) => {
-      if (!byPool.has(s.poolId)) byPool.set(s.poolId, []);
-      byPool.get(s.poolId).push(s);
-    });
-    return Array.from(byPool.entries()).map(([poolId, poolSeries]) => ({
-      poolId,
-      poolName: poolSeries[0]?.poolName || `Pool ${poolId}`,
-      series: poolSeries,
-    }));
-  })();
+  const chartPoolGroups = !multiplePools
+    ? null
+    : (() => {
+        const byPool = new Map();
+        series.forEach((s) => {
+          if (!byPool.has(s.poolId)) byPool.set(s.poolId, []);
+          byPool.get(s.poolId).push(s);
+        });
+        return Array.from(byPool.entries()).map(([poolId, poolSeries]) => ({
+          poolId,
+          poolName: poolSeries[0]?.poolName || `Pool ${poolId}`,
+          series: poolSeries,
+        }));
+      })();
   // For multi-pool always show all 90d visits (grouped by pool; no collapse needed)
   const displayVisits = multiplePools ? visits90d : visibleVisits;
-  const visitsByPool = !multiplePools ? null : (() => {
-    const byPool = new Map();
-    displayVisits.forEach((v) => {
-      if (!byPool.has(v.pool_id)) byPool.set(v.pool_id, []);
-      byPool.get(v.pool_id).push(v);
-    });
-    return Array.from(byPool.entries()).map(([poolId, poolVisits]) => ({
-      poolId,
-      poolName: poolVisits[0]?.pool_name || `Pool ${poolId}`,
-      visits: poolVisits,
-    }));
-  })();
+  const visitsByPool = !multiplePools
+    ? null
+    : (() => {
+        const byPool = new Map();
+        displayVisits.forEach((v) => {
+          if (!byPool.has(v.pool_id)) byPool.set(v.pool_id, []);
+          byPool.get(v.pool_id).push(v);
+        });
+        return Array.from(byPool.entries()).map(([poolId, poolVisits]) => ({
+          poolId,
+          poolName: poolVisits[0]?.pool_name || `Pool ${poolId}`,
+          visits: poolVisits,
+        }));
+      })();
 
   els.viewKicker.textContent = "Customer";
   els.viewTitle.textContent = `${name}`;
@@ -2348,15 +2700,20 @@ async function loadCustomerProfile() {
               ${rangeDays.map((days) => `<button class="button button-secondary${chartDays === days ? " is-active-filter" : ""}" data-chart-range="${days}">${days >= 365 ? "12 Mo" : days >= 180 ? "6 Mo" : days >= 90 ? "3 Mo" : "30 D"}</button>`).join("")}
             </div>
           </div>
-          ${multiplePools && chartPoolGroups
-            ? chartPoolGroups.map((group) => `
+          ${
+            multiplePools && chartPoolGroups
+              ? chartPoolGroups
+                  .map(
+                    (group) => `
                 <div class="pool-section">
                   ${renderPoolSectionHeader(group.poolId, group.poolName)}
                   <div class="chart-grid chart-grid-wide">
                     ${group.series.length ? group.series.map(renderChartCard).join("") : `<div class="empty-state">No chemistry history for this pool in this date range.</div>`}
                   </div>
-                </div>`).join("")
-            : `<div class="chart-grid chart-grid-wide">
+                </div>`,
+                  )
+                  .join("")
+              : `<div class="chart-grid chart-grid-wide">
                 ${series.length ? series.map(renderChartCard).join("") : `<div class="empty-state">No chemistry history available in this date range.</div>`}
               </div>`
           }
@@ -2375,30 +2732,50 @@ async function loadCustomerProfile() {
             </div>
             ${!multiplePools && visits90d.length > 4 ? `<button class="button button-secondary" id="customer-visits-toggle">${state.selections.customerVisitsExpanded ? "Show Last 4 Visits" : "Show 90 Day History"}</button>` : ""}
           </div>
-          ${multiplePools && visitsByPool
-            ? visitsByPool.map((group) => `
+          ${
+            multiplePools && visitsByPool
+              ? visitsByPool
+                  .map(
+                    (group) => `
                 <div class="pool-section">
                   ${renderPoolSectionHeader(group.poolId, group.poolName)}
                   <div class="event-list">
-                    ${group.visits.length ? group.visits.map((visit) => `
+                    ${
+                      group.visits.length
+                        ? group.visits
+                            .map(
+                              (visit) => `
                       <div class="item-card">
                         <div class="item-card-header">
                           <strong>${escapeHtml(formatDateTime(visit.service_date))}</strong>
                           <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
                         </div>
                         <div class="chem-list">
-                          ${(visit.chemicals || []).map((chem) => `
+                          ${(visit.chemicals || [])
+                            .map(
+                              (chem) => `
                             <div class="chem-chip">
                               <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
                               <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
-                            </div>`).join("")}
+                            </div>`,
+                            )
+                            .join("")}
                         </div>
-                      </div>`).join("")
-                    : `<div class="empty-state">No chemical spend data for this pool in the last 90 days.</div>`}
+                      </div>`,
+                            )
+                            .join("")
+                        : `<div class="empty-state">No chemical spend data for this pool in the last 90 days.</div>`
+                    }
                   </div>
-                </div>`).join("")
-            : `<div class="event-list">
-                ${visibleVisits.length ? visibleVisits.map((visit) => `
+                </div>`,
+                  )
+                  .join("")
+              : `<div class="event-list">
+                ${
+                  visibleVisits.length
+                    ? visibleVisits
+                        .map(
+                          (visit) => `
                   <div class="item-card">
                     <div class="item-card-header">
                       <strong>${escapeHtml(visit.pool_name || `Pool ${visit.pool_id}`)}</strong>
@@ -2406,14 +2783,21 @@ async function loadCustomerProfile() {
                     </div>
                     <div class="muted">${formatDateTime(visit.service_date)}</div>
                     <div class="chem-list">
-                      ${(visit.chemicals || []).map((chem) => `
+                      ${(visit.chemicals || [])
+                        .map(
+                          (chem) => `
                         <div class="chem-chip">
                           <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
                           <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
-                        </div>`).join("")}
+                        </div>`,
+                        )
+                        .join("")}
                     </div>
-                  </div>`).join("")
-                : `<div class="empty-state">No chemical spend history available for this customer in the last 90 days.</div>`}
+                  </div>`,
+                        )
+                        .join("")
+                    : `<div class="empty-state">No chemical spend history available for this customer in the last 90 days.</div>`
+                }
               </div>`
           }
         </section>
@@ -2448,7 +2832,8 @@ async function loadCustomerProfile() {
   const visitToggle = document.getElementById("customer-visits-toggle");
   if (visitToggle) {
     visitToggle.onclick = async () => {
-      state.selections.customerVisitsExpanded = !state.selections.customerVisitsExpanded;
+      state.selections.customerVisitsExpanded =
+        !state.selections.customerVisitsExpanded;
       await loadCustomerProfile();
     };
   }
@@ -2468,12 +2853,19 @@ function renderTechnicians() {
       <h3>Technician Coverage</h3>
       <p class="panel-subtitle">${escapeHtml(result.total)} operators in this filter set. Current assignment view is the default.</p>
       <div class="stat-grid">
-        ${Object.entries(result.summary || {}).map(([key, value]) => `<article class="stat-card"><span class="muted">${escapeHtml(key.replaceAll("_", " "))}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}
+        ${Object.entries(result.summary || {})
+          .map(
+            ([key, value]) =>
+              `<article class="stat-card"><span class="muted">${escapeHtml(key.replaceAll("_", " "))}</span><strong>${escapeHtml(value)}</strong></article>`,
+          )
+          .join("")}
       </div>
     </section>
     <section class="section-card">
       <div class="item-list">
-        ${result.items.map((item) => `
+        ${result.items
+          .map(
+            (item) => `
           <article class="item-card is-clickable" data-tech-id="${escapeHtml(item.tech_id)}">
             <div class="item-card-header">
               <div>
@@ -2484,7 +2876,9 @@ function renderTechnicians() {
             </div>
             <div class="meta-row"><span>${escapeHtml(item.customer_count)} customers · ${escapeHtml(item.route_stop_count_30d)} route stops / 30d</span><span>${formatDateTime(item.latest_service_date)}</span></div>
           </article>
-        `).join("")}
+        `,
+          )
+          .join("")}
       </div>
     </section>
   `;
@@ -2545,7 +2939,10 @@ function renderLabor() {
             <div>Total</div>
             <div>Notes</div>
           </div>
-          ${items.map((item) => `
+          ${
+            items
+              .map(
+                (item) => `
             <div class="payroll-table-row${item.is_salary ? " is-muted" : ""}">
               <div>
                 <strong>${escapeHtml(item.tech_name || item.tech_id || "Unknown Tech")}</strong>
@@ -2560,60 +2957,15 @@ function renderLabor() {
               <div><strong>${escapeHtml(currency(item.total_pay) || "$0.00")}</strong></div>
               <div>${escapeHtml(item.notes || "")}</div>
             </div>
-          `).join("") || `<div class="empty-state">No labor activity found in this date range.</div>`}
+          `,
+              )
+              .join("") ||
+            `<div class="empty-state">No labor activity found in this date range.</div>`
+          }
         </div>
       </div>
     </section>
   `;
-}
-
-async function loadTechnicianDetail(techId) {
-  const detail = await api(`/api/technicians/${encodeURIComponent(techId)}`);
-  const item = detail.item;
-  const spend = detail.chemical_spend_summary || {};
-  const assignments = detail.service_locations || [];
-  const assignmentGroups = groupAssignmentsByDay(assignments);
-  els.detailPanel.innerHTML = `
-    <div class="detail-stack">
-      <section class="detail-card">
-        <div class="detail-header">
-          <h3>${escapeHtml(item.tech_name)}</h3>
-          <button class="button button-secondary" id="technician-open-profile">Open Full Profile</button>
-        </div>
-        <div class="meta-stack">
-          <div class="meta-row"><span>Role</span><strong>${escapeHtml(item.role_type || "—")}</strong></div>
-          <div class="meta-row"><span>Email</span><strong>${escapeHtml(item.email || "—")}</strong></div>
-          <div class="meta-row"><span>Current Assignments</span><strong>${escapeHtml(item.service_location_count)}</strong></div>
-          <div class="meta-row"><span>Recent Route Activity</span><strong>${escapeHtml(item.route_stop_count_30d)}</strong></div>
-          <div class="meta-row"><span>Spend This Month</span><strong>${escapeHtml(currency(spend.cost_month_to_date) || "$0.00")}</strong></div>
-          <div class="meta-row"><span>Spend Last 30 Days</span><strong>${escapeHtml(currency(spend.cost_30d) || "$0.00")}</strong></div>
-        </div>
-      </section>
-      <section class="detail-card">
-        <h3>Current Assignments</h3>
-        <div class="event-list">${assignmentGroups.map((group) => `
-          <section class="day-group">
-            <div class="day-group-header">${escapeHtml(group.dayLabel)}</div>
-            <div class="event-list">
-              ${group.items.map((location) => {
-                const place = [location.city, location.state].filter(Boolean).join(", ");
-                const route = [location.frequency, location.sequence != null ? `Stop ${location.sequence}` : ""].filter(Boolean).join(" · ");
-                return `<div class="item-card">
-                  <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
-                  <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
-                  <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${route ? ` · ${escapeHtml(route)}` : ""}</div>
-                </div>`;
-              }).join("")}
-            </div>
-          </section>
-        `).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
-      </section>
-    </div>
-  `;
-  const openProfileButton = document.getElementById("technician-open-profile");
-  if (openProfileButton) {
-    openProfileButton.onclick = () => setView("technician-profile");
-  }
 }
 
 async function loadTechnicianProfile() {
@@ -2684,18 +3036,29 @@ function renderTechnicianProfile(detail) {
       <aside class="profile-side">
         <section class="section-card">
           <h3>Weekly Schedule</h3>
-          <div class="event-list">${assignmentGroups.map((group) => `
+          <div class="event-list">${
+            assignmentGroups
+              .map(
+                (group) => `
             <section class="day-group">
               <div class="day-group-header">
                 <span>${escapeHtml(group.dayLabel)}</span>
                 <span class="day-group-count">${escapeHtml(group.items.length)} pools</span>
               </div>
               <div class="event-list">
-                ${group.items.map((location) => {
-                  const place = [location.city, location.state].filter(Boolean).join(", ");
-                  const customerId = location.customer_id != null ? String(location.customer_id) : "";
-                  const pools = Array.isArray(location.pools) ? location.pools : [];
-                  return `<div class="item-card assignment-card${customerId ? " is-clickable" : ""}"${customerId ? ` data-customer-id="${escapeHtml(customerId)}"` : ""}>
+                ${group.items
+                  .map((location) => {
+                    const place = [location.city, location.state]
+                      .filter(Boolean)
+                      .join(", ");
+                    const customerId =
+                      location.customer_id != null
+                        ? String(location.customer_id)
+                        : "";
+                    const pools = Array.isArray(location.pools)
+                      ? location.pools
+                      : [];
+                    return `<div class="item-card assignment-card${customerId ? " is-clickable" : ""}"${customerId ? ` data-customer-id="${escapeHtml(customerId)}"` : ""}>
                     <div class="item-card-header">
                       <strong>${escapeHtml(location.customer_name || location.source_customer_id || "Customer")}</strong>
                       <span class="dense">${escapeHtml(pools.length ? `${pools.length} pool${pools.length === 1 ? "" : "s"}` : "No pools")}</span>
@@ -2703,18 +3066,31 @@ function renderTechnicianProfile(detail) {
                     <div class="muted">${escapeHtml(location.address || location.source_location_id || "Location")}${place ? ` · ${escapeHtml(place)}` : ""}</div>
                     <div class="muted">${escapeHtml(location.customer_status || (location.is_operationally_active ? "active" : "—"))}${location.frequency ? ` · ${escapeHtml(location.frequency)}` : ""}</div>
                     <div class="chem-list">
-                      ${pools.length ? pools.map((pool) => `
+                      ${
+                        pools.length
+                          ? pools
+                              .map(
+                                (pool) => `
                         <div class="chem-chip">
                           <span>${escapeHtml(pool.pool_name || `Pool ${pool.pool_id}`)}</span>
                           <span class="dense">${escapeHtml(currency(pool.spend_30d) || "$0.00")} / 30d · ${escapeHtml(currency(pool.spend_month_to_date) || "$0.00")} MTD</span>
                         </div>
-                      `).join("") : `<div class="muted">No pool spend history linked yet.</div>`}
+                      `,
+                              )
+                              .join("")
+                          : `<div class="muted">No pool spend history linked yet.</div>`
+                      }
                     </div>
                   </div>`;
-                }).join("")}
+                  })
+                  .join("")}
               </div>
             </section>
-          `).join("") || `<div class="empty-state">No current assignments.</div>`}</div>
+          `,
+              )
+              .join("") ||
+            `<div class="empty-state">No current assignments.</div>`
+          }</div>
         </section>
       </aside>
     </div>
@@ -2726,9 +3102,11 @@ function renderTechnicianProfile(detail) {
 async function loadReminders() {
   const result = await api(`/api/reminders${qs(filters.reminders)}`);
   state.data.reminders = result;
-  if (!state.selections.reminderId && result.items[0]) state.selections.reminderId = result.items[0].id;
+  if (!state.selections.reminderId && result.items[0])
+    state.selections.reminderId = result.items[0].id;
   renderReminders();
-  if (state.selections.reminderId) await loadReminderDetail(state.selections.reminderId);
+  if (state.selections.reminderId)
+    await loadReminderDetail(state.selections.reminderId);
 }
 
 function renderReminders() {
@@ -2737,12 +3115,19 @@ function renderReminders() {
     <section class="section-card">
       <h3>Reminder Queue</h3>
       <div class="stat-grid">
-        ${Object.entries(result.summary || {}).map(([key, value]) => `<article class="stat-card"><span class="muted">${escapeHtml(key.replaceAll("_", " "))}</span><strong>${escapeHtml(value)}</strong></article>`).join("")}
+        ${Object.entries(result.summary || {})
+          .map(
+            ([key, value]) =>
+              `<article class="stat-card"><span class="muted">${escapeHtml(key.replaceAll("_", " "))}</span><strong>${escapeHtml(value)}</strong></article>`,
+          )
+          .join("")}
       </div>
     </section>
     <section class="section-card">
       <div class="item-list">
-        ${result.items.map((item) => `
+        ${result.items
+          .map(
+            (item) => `
           <article class="item-card ${state.selections.reminderId === item.id ? "is-selected" : ""}" data-reminder-id="${item.id}">
             <div class="item-card-header">
               <div>
@@ -2753,7 +3138,9 @@ function renderReminders() {
             </div>
             <div class="meta-row"><span>${escapeHtml(item.assigned_to || "Unassigned")}</span><span>${item.due_at ? `Due ${formatDateTime(item.due_at)}` : "No due date"}</span></div>
           </article>
-        `).join("")}
+        `,
+          )
+          .join("")}
       </div>
     </section>
   `;
@@ -2821,42 +3208,66 @@ async function loadReminderDetail(reminderId) {
     </div>
   `;
 
-  els.detailPanel.querySelector('[data-reminder-action="ack"]').onclick = () => mutate(async () => {
-    await api(`/api/reminders/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadReminders(true);
-  }, "Reminder acknowledged.");
+  els.detailPanel.querySelector('[data-reminder-action="ack"]').onclick = () =>
+    mutate(async () => {
+      await api(
+        `/api/reminders/${item.id}/ack?actor=${encodeURIComponent(state.actor || "ui")}`,
+        { method: "POST", auth: true },
+      );
+      await loadReminders(true);
+    }, "Reminder acknowledged.");
 
-  els.detailPanel.querySelector('[data-reminder-action="complete"]').onclick = () => mutate(async () => {
-    await api(`/api/reminders/${item.id}/complete?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadReminders(true);
-  }, "Reminder completed.");
+  els.detailPanel.querySelector('[data-reminder-action="complete"]').onclick =
+    () =>
+      mutate(async () => {
+        await api(
+          `/api/reminders/${item.id}/complete?actor=${encodeURIComponent(state.actor || "ui")}`,
+          { method: "POST", auth: true },
+        );
+        await loadReminders(true);
+      }, "Reminder completed.");
 
-  els.detailPanel.querySelector('[data-reminder-action="cancel"]').onclick = () => mutate(async () => {
-    await api(`/api/reminders/${item.id}/cancel?actor=${encodeURIComponent(state.actor || "ui")}`, { method: "POST", auth: true });
-    await loadReminders(true);
-  }, "Reminder canceled.");
+  els.detailPanel.querySelector('[data-reminder-action="cancel"]').onclick =
+    () =>
+      mutate(async () => {
+        await api(
+          `/api/reminders/${item.id}/cancel?actor=${encodeURIComponent(state.actor || "ui")}`,
+          { method: "POST", auth: true },
+        );
+        await loadReminders(true);
+      }, "Reminder canceled.");
 
-  document.getElementById("reminder-update-button").onclick = () => mutate(async () => {
-    const params = new URLSearchParams({
-      actor: state.actor || "ui",
-      assigned_to: document.getElementById("reminder-assigned").value.trim(),
-      due_at: toUtcIso(document.getElementById("reminder-due").value),
-      title: document.getElementById("reminder-title").value.trim(),
-      note: document.getElementById("reminder-note").value.trim(),
-    });
-    await api(`/api/reminders/${item.id}/update?${params.toString()}`, { method: "POST", auth: true });
-    await loadReminders(true);
-  }, "Reminder updated.");
+  document.getElementById("reminder-update-button").onclick = () =>
+    mutate(async () => {
+      const params = new URLSearchParams({
+        actor: state.actor || "ui",
+        assigned_to: document.getElementById("reminder-assigned").value.trim(),
+        due_at: toUtcIso(document.getElementById("reminder-due").value),
+        title: document.getElementById("reminder-title").value.trim(),
+        note: document.getElementById("reminder-note").value.trim(),
+      });
+      await api(`/api/reminders/${item.id}/update?${params.toString()}`, {
+        method: "POST",
+        auth: true,
+      });
+      await loadReminders(true);
+    }, "Reminder updated.");
 
-  document.getElementById("reminder-snooze-button").onclick = () => mutate(async () => {
-    const params = new URLSearchParams({
-      actor: state.actor || "ui",
-      snoozed_until: toUtcIso(document.getElementById("reminder-snooze-until").value),
-      note: document.getElementById("reminder-snooze-note").value.trim(),
-    });
-    await api(`/api/reminders/${item.id}/snooze?${params.toString()}`, { method: "POST", auth: true });
-    await loadReminders(true);
-  }, "Reminder snoozed.");
+  document.getElementById("reminder-snooze-button").onclick = () =>
+    mutate(async () => {
+      const params = new URLSearchParams({
+        actor: state.actor || "ui",
+        snoozed_until: toUtcIso(
+          document.getElementById("reminder-snooze-until").value,
+        ),
+        note: document.getElementById("reminder-snooze-note").value.trim(),
+      });
+      await api(`/api/reminders/${item.id}/snooze?${params.toString()}`, {
+        method: "POST",
+        auth: true,
+      });
+      await loadReminders(true);
+    }, "Reminder snoozed.");
 }
 
 async function mutate(run, successMessage) {
@@ -2871,10 +3282,6 @@ async function mutate(run, successMessage) {
   }
 }
 
-function itemCard(title, meta, footer) {
-  return `<article class="item-card"><div class="item-card-header"><strong>${escapeHtml(title)}</strong><div>${meta}</div></div><div class="muted">${footer}</div></article>`;
-}
-
 // ─── Settings / Alert Config ──────────────────────────────────────────────────
 
 const SETTINGS_TABLE_LABELS = {
@@ -2884,52 +3291,113 @@ const SETTINGS_TABLE_LABELS = {
 };
 
 const SETTINGS_TABLE_DESC = {
-  alert_rule_config: "Point-in-time threshold rules. Alert fires when the latest reading crosses the threshold.",
-  trend_rule_config: "Pattern detection over multiple readings. Alert fires when a trend is detected across a window.",
-  revenue_rule_config: "Business opportunity detection. Surfaces upsell and service needs.",
+  alert_rule_config:
+    "Point-in-time threshold rules. Alert fires when the latest reading crosses the threshold.",
+  trend_rule_config:
+    "Pattern detection over multiple readings. Alert fires when a trend is detected across a window.",
+  revenue_rule_config:
+    "Business opportunity detection. Surfaces upsell and service needs.",
 };
 
 // Fields shown in the rule list row (compact summary)
 const SETTINGS_ROW_FIELDS = {
-  alert_rule_config: ["reading_key", "comparator", "threshold_value", "severity"],
-  trend_rule_config: ["reading_key", "trend_type", "threshold_value", "severity"],
-  revenue_rule_config: ["opportunity_type", "source_type", "threshold_value", "severity"],
+  alert_rule_config: [
+    "reading_key",
+    "comparator",
+    "threshold_value",
+    "severity",
+  ],
+  trend_rule_config: [
+    "reading_key",
+    "trend_type",
+    "threshold_value",
+    "severity",
+  ],
+  revenue_rule_config: [
+    "opportunity_type",
+    "source_type",
+    "threshold_value",
+    "severity",
+  ],
 };
 
 // All editable fields per table with labels and types
 const SETTINGS_EDIT_FIELDS = {
   alert_rule_config: [
     { key: "threshold_value", label: "Threshold Value", type: "number" },
-    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    {
+      key: "severity",
+      label: "Severity",
+      type: "select",
+      options: ["critical", "warning", "info"],
+    },
     { key: "severity_rank", label: "Severity Rank", type: "number" },
     { key: "enabled", label: "Enabled", type: "boolean" },
-    { key: "season_start_month", label: "Season Start Month (1–12, blank = all year)", type: "number" },
-    { key: "season_end_month", label: "Season End Month (1–12, blank = all year)", type: "number" },
+    {
+      key: "season_start_month",
+      label: "Season Start Month (1–12, blank = all year)",
+      type: "number",
+    },
+    {
+      key: "season_end_month",
+      label: "Season End Month (1–12, blank = all year)",
+      type: "number",
+    },
     { key: "description", label: "Description", type: "text" },
   ],
   trend_rule_config: [
     { key: "threshold_value", label: "Threshold Value", type: "number" },
-    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    {
+      key: "severity",
+      label: "Severity",
+      type: "select",
+      options: ["critical", "warning", "info"],
+    },
     { key: "severity_rank", label: "Severity Rank", type: "number" },
     { key: "enabled", label: "Enabled", type: "boolean" },
     { key: "sample_size", label: "Sample Size (# readings)", type: "number" },
     { key: "min_bad_count", label: "Min Bad Count", type: "number" },
     { key: "window_days", label: "Window Days", type: "number" },
     { key: "delta_threshold", label: "Delta Threshold", type: "number" },
-    { key: "baseline_delta_threshold", label: "Baseline Delta Threshold", type: "number" },
-    { key: "season_start_month", label: "Season Start Month (1–12, blank = all year)", type: "number" },
-    { key: "season_end_month", label: "Season End Month (1–12, blank = all year)", type: "number" },
+    {
+      key: "baseline_delta_threshold",
+      label: "Baseline Delta Threshold",
+      type: "number",
+    },
+    {
+      key: "season_start_month",
+      label: "Season Start Month (1–12, blank = all year)",
+      type: "number",
+    },
+    {
+      key: "season_end_month",
+      label: "Season End Month (1–12, blank = all year)",
+      type: "number",
+    },
     { key: "description", label: "Description", type: "text" },
   ],
   revenue_rule_config: [
     { key: "threshold_value", label: "Threshold Value", type: "number" },
-    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    {
+      key: "severity",
+      label: "Severity",
+      type: "select",
+      options: ["critical", "warning", "info"],
+    },
     { key: "severity_rank", label: "Severity Rank", type: "number" },
     { key: "enabled", label: "Enabled", type: "boolean" },
     { key: "repeat_count", label: "Repeat Count", type: "number" },
     { key: "window_days", label: "Window Days", type: "number" },
-    { key: "season_start_month", label: "Season Start Month (1–12, blank = all year)", type: "number" },
-    { key: "season_end_month", label: "Season End Month (1–12, blank = all year)", type: "number" },
+    {
+      key: "season_start_month",
+      label: "Season Start Month (1–12, blank = all year)",
+      type: "number",
+    },
+    {
+      key: "season_end_month",
+      label: "Season End Month (1–12, blank = all year)",
+      type: "number",
+    },
     { key: "description", label: "Description", type: "text" },
   ],
 };
@@ -2945,26 +3413,59 @@ const SETTINGS_IDENTITY_FIELDS = {
 const SETTINGS_CREATE_REQUIRED = {
   alert_rule_config: [
     { key: "rule_code", label: "Rule Code (unique identifier)", type: "text" },
-    { key: "reading_key", label: "Reading Key (e.g. ph, cya, free_chlorine)", type: "text" },
+    {
+      key: "reading_key",
+      label: "Reading Key (e.g. ph, cya, free_chlorine)",
+      type: "text",
+    },
     { key: "comparator", label: "Comparator (lt, lte, gt, gte)", type: "text" },
-    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    {
+      key: "severity",
+      label: "Severity",
+      type: "select",
+      options: ["critical", "warning", "info"],
+    },
     { key: "severity_rank", label: "Severity Rank", type: "number" },
     { key: "threshold_value", label: "Threshold Value", type: "number" },
   ],
   trend_rule_config: [
     { key: "rule_code", label: "Rule Code (unique identifier)", type: "text" },
     { key: "reading_key", label: "Reading Key", type: "text" },
-    { key: "trend_type", label: "Trend Type (bad_readings_last_n, delta_over_days, etc.)", type: "text" },
+    {
+      key: "trend_type",
+      label: "Trend Type (bad_readings_last_n, delta_over_days, etc.)",
+      type: "text",
+    },
     { key: "comparator", label: "Comparator (lt, lte, gt, gte)", type: "text" },
-    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    {
+      key: "severity",
+      label: "Severity",
+      type: "select",
+      options: ["critical", "warning", "info"],
+    },
     { key: "severity_rank", label: "Severity Rank", type: "number" },
     { key: "threshold_value", label: "Threshold Value", type: "number" },
   ],
   revenue_rule_config: [
     { key: "rule_code", label: "Rule Code (unique identifier)", type: "text" },
-    { key: "opportunity_type", label: "Opportunity Type (drain_refill, filter_clean, chemical_cost_review)", type: "text" },
-    { key: "source_type", label: "Source Type (reading_repeat, trend_reference, latest_reading, etc.)", type: "text" },
-    { key: "severity", label: "Severity", type: "select", options: ["critical", "warning", "info"] },
+    {
+      key: "opportunity_type",
+      label:
+        "Opportunity Type (drain_refill, filter_clean, chemical_cost_review)",
+      type: "text",
+    },
+    {
+      key: "source_type",
+      label:
+        "Source Type (reading_repeat, trend_reference, latest_reading, etc.)",
+      type: "text",
+    },
+    {
+      key: "severity",
+      label: "Severity",
+      type: "select",
+      options: ["critical", "warning", "info"],
+    },
     { key: "severity_rank", label: "Severity Rank", type: "number" },
   ],
 };
@@ -2985,10 +3486,11 @@ function renderSettings() {
     return;
   }
 
-  els.mainPanel.innerHTML = Object.entries(SETTINGS_TABLE_LABELS).map(([table, label]) => {
-    const rules = _settingsData[table] || [];
-    const rowFields = SETTINGS_ROW_FIELDS[table];
-    return `
+  els.mainPanel.innerHTML = Object.entries(SETTINGS_TABLE_LABELS)
+    .map(([table, label]) => {
+      const rules = _settingsData[table] || [];
+      const rowFields = SETTINGS_ROW_FIELDS[table];
+      return `
       <section class="section-card settings-section">
         <div class="settings-section-header">
           <h3 class="settings-section-title">${label}</h3>
@@ -2999,7 +3501,9 @@ function renderSettings() {
         <div class="settings-grid">
           <div class="muted settings-grid-header">Rule</div>
           ${rowFields.map((f) => `<div class="muted settings-grid-header">${f.replace(/_/g, " ")}</div>`).join("")}
-          ${rules.map((rule) => `
+          ${rules
+            .map(
+              (rule) => `
             <div class="settings-rule-cell">
               <span class="pill settings-toggle ${rule.enabled ? "pill-info" : "is-disabled"}"
                 title="Toggle enabled"
@@ -3010,17 +3514,22 @@ function renderSettings() {
               <span class="settings-rule-name">${escapeHtml(rule.rule_code)}</span>
               ${rule.description ? `<span class="muted settings-rule-description">· ${escapeHtml(rule.description)}</span>` : ""}
             </div>
-            ${rowFields.map((f) => {
-              const v = rule[f];
-              const display = v === null || v === undefined ? "—" : String(v);
-              const isSeverity = f === "severity";
-              return `<div class="settings-grid-value"${isSeverity ? ` style="color:${severityColor(v)}"` : ""}><strong>${escapeHtml(display)}</strong></div>`;
-            }).join("")}
-          `).join("")}
+            ${rowFields
+              .map((f) => {
+                const v = rule[f];
+                const display = v === null || v === undefined ? "—" : String(v);
+                const isSeverity = f === "severity";
+                return `<div class="settings-grid-value"${isSeverity ? ` style="color:${severityColor(v)}"` : ""}><strong>${escapeHtml(display)}</strong></div>`;
+              })
+              .join("")}
+          `,
+            )
+            .join("")}
         </div>
       </section>
     `;
-  }).join("");
+    })
+    .join("");
 
   // Toggle buttons
   els.mainPanel.querySelectorAll("[data-settings-toggle]").forEach((btn) => {
@@ -3029,13 +3538,19 @@ function renderSettings() {
       const table = btn.dataset.settingsToggle;
       const ruleCode = btn.dataset.settingsRule;
       const currentlyEnabled = btn.dataset.settingsEnabled === "true";
-      await withSaving(async () => {
-        await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(ruleCode)}/update`, {
-          method: "POST",
-          body: JSON.stringify({ enabled: !currentlyEnabled }),
-        });
-        await loadSettings(true);
-      }, currentlyEnabled ? "Rule disabled" : "Rule enabled");
+      await withSaving(
+        async () => {
+          await api(
+            `/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(ruleCode)}/update`,
+            {
+              method: "POST",
+              body: JSON.stringify({ enabled: !currentlyEnabled }),
+            },
+          );
+          await loadSettings(true);
+        },
+        currentlyEnabled ? "Rule disabled" : "Rule enabled",
+      );
     };
   });
 
@@ -3044,7 +3559,9 @@ function renderSettings() {
     btn.onclick = () => {
       const table = btn.dataset.settingsEdit;
       const ruleCode = btn.dataset.settingsRule;
-      const rule = (_settingsData[table] || []).find((r) => r.rule_code === ruleCode);
+      const rule = (_settingsData[table] || []).find(
+        (r) => r.rule_code === ruleCode,
+      );
       if (rule) openSettingsEditModal(table, rule);
     };
   });
@@ -3191,20 +3708,27 @@ function openSettingsEditModal(table, rule) {
     if (id === "settings-modal-close" || id === "settings-modal-cancel") {
       closeModal();
     } else if (id === "settings-delete-btn") {
-      if (!confirm(`Delete rule "${rule.rule_code}"? This cannot be undone.`)) return;
+      if (!confirm(`Delete rule "${rule.rule_code}"? This cannot be undone.`))
+        return;
       closeModal();
       await withSaving(async () => {
-        await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/delete`, { method: "POST" });
+        await api(
+          `/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/delete`,
+          { method: "POST" },
+        );
         await loadSettings(true);
       }, `Rule "${rule.rule_code}" deleted`);
     } else if (id === "settings-save-btn") {
       const updates = readSettingsForm(fieldsBox, editFields);
       closeModal();
       await withSaving(async () => {
-        await api(`/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/update`, {
-          method: "POST",
-          body: JSON.stringify(updates),
-        });
+        await api(
+          `/api/config/alerts/${encodeURIComponent(table)}/${encodeURIComponent(rule.rule_code)}/update`,
+          {
+            method: "POST",
+            body: JSON.stringify(updates),
+          },
+        );
         await loadSettings(true);
       }, "Rule saved");
     }
@@ -3217,7 +3741,10 @@ function openSettingsCreateModal(table) {
 
   const requiredFields = SETTINGS_CREATE_REQUIRED[table] || [];
   const editFields = SETTINGS_EDIT_FIELDS[table] || [];
-  const allFields = [...requiredFields, ...editFields.filter((f) => !requiredFields.find((r) => r.key === f.key))];
+  const allFields = [
+    ...requiredFields,
+    ...editFields.filter((f) => !requiredFields.find((r) => r.key === f.key)),
+  ];
 
   const modal = document.createElement("div");
   modal.id = "settings-modal";
@@ -3238,7 +3765,9 @@ function openSettingsCreateModal(table) {
   document.body.appendChild(modal);
 
   const fieldsBox = document.getElementById("settings-fields-box");
-  allFields.forEach((fieldDef) => fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, null)));
+  allFields.forEach((fieldDef) =>
+    fieldsBox.appendChild(buildSettingsFieldEl(fieldDef, null)),
+  );
 
   const closeModal = () => modal.remove();
 

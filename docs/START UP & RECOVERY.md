@@ -157,6 +157,40 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+## 3a. Frontend Local Checks
+
+The dashboard frontend now has a minimal local tooling setup for JS linting,
+format checking, and smoke validation.
+
+Run from a WSL shell in the repo:
+
+```bash
+cd ~/ntpp-sentinel
+source "$HOME/.nvm/nvm.sh"
+npm install
+npm run check
+```
+
+Available scripts:
+
+- `npm run lint`
+- `npm run format:check`
+- `npm run format:write`
+- `npm run test`
+- `npm run check`
+
+What these cover today:
+
+- ESLint for `web-frontend/app.js` and supporting scripts
+- Prettier format validation
+- a lightweight frontend smoke check for expected SPA files, selectors, and core render/init hooks
+
+What they do not cover yet:
+
+- browser rendering correctness
+- responsive layout verification
+- visual regression testing
+
 Filter-clean notify/reminder workflow:
 
 - use the dashboard `Notify Customer` action on filter-clean alerts when you want Sentinel to text the customer and create the quote-follow-up reminder

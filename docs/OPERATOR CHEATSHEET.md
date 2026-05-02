@@ -79,6 +79,15 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+## Frontend Checks
+
+```bash
+cd ~/ntpp-sentinel
+source "$HOME/.nvm/nvm.sh"
+npm install
+npm run check
+```
+
 ## Skimmer Download + Import
 
 ```bash

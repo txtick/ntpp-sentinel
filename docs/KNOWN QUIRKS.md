@@ -111,6 +111,13 @@ Examples:
 - If the browser keeps an older cached `app.js` after a deploy, a newly added nav item can appear in HTML while clicks silently fail because the old JS does not know that view exists yet.
 - Frontend static assets now send no-cache headers to reduce HTML/JS version mismatches after deploys.
 
+## Frontend Tooling / WSL
+
+- Local frontend checks now live in repo-level `package.json` scripts (`lint`, `format:check`, `test`, `check`).
+- In this WSL environment, `node`/`npm` may not be available in noninteractive shells until `nvm` is loaded manually with `source "$HOME/.nvm/nvm.sh"`.
+- If `npm`-based checks fail with "command not found" in a fresh shell, load `nvm` first rather than assuming the repo is broken.
+- The frontend smoke test is intentionally lightweight: it validates expected SPA files/selectors/hooks, but it does not replace a real browser check for responsive layout or chart rendering.
+
 ## Labor / Skimmer Route Cache
 
 - Skimmer daily route API responses are cached in-process for 24 hours per calendar day.
