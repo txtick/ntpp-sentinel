@@ -1944,14 +1944,18 @@ async function loadCustomerDetail(customerId) {
   const detail = await api(`/api/customers/${customerId}`);
   const item = detail.item;
   const name = safeName(`${item.first_name || ""} ${item.last_name || ""}`.trim(), item.company_name, item.email, `Customer ${item.id}`);
-  const poolsSummary = detail.pools.length
-    ? detail.pools
-        .map((pool) => {
-          const location = [pool.city, pool.state].filter(Boolean).join(", ");
-          return `${pool.name || `Pool ${pool.id}`}${location ? ` · ${location}` : ""}`;
-        })
-        .join(" | ")
-    : "No pools on file.";
+  const poolListHtml = detail.pools.length
+    ? detail.pools.map((pool) => {
+        const poolName = pool.name || `Pool ${pool.id}`;
+        const addrParts = [pool.address, [pool.city, pool.state].filter(Boolean).join(", ")].filter(Boolean);
+        const addr = addrParts.join(", ");
+        const active = pool.is_operationally_active !== false;
+        return `<div class="pool-list-item">
+          <span class="pool-list-name">${escapeHtml(poolName)}${!active ? ` <span class="pill-muted">Inactive</span>` : ""}</span>
+          ${addr ? `<span class="muted pool-list-addr">${escapeHtml(addr)}</span>` : ""}
+        </div>`;
+      }).join("")
+    : `<span class="muted">No pools on file.</span>`;
   els.detailPanel.innerHTML = `
     <div class="detail-stack">
       <section class="detail-card">
@@ -1966,7 +1970,7 @@ async function loadCustomerDetail(customerId) {
           <div class="meta-row"><span>Latest Chemistry Service</span><strong>${formatDateTime(detail.latest_chemistry_service_date)}</strong></div>
           <div class="meta-row"><span>Pools</span><strong>${escapeHtml(String(detail.pools.length || 0))}</strong></div>
         </div>
-        <p class="muted">${escapeHtml(poolsSummary)}</p>
+        <div class="pool-list">${poolListHtml}</div>
       </section>
       <section class="detail-card">
         <h3>Alerts</h3>
@@ -2138,6 +2142,66 @@ async function loadCustomerProfile() {
       }).join(", ")
     : "No current technician assignment";
 
+  // Pool lookup helpers — used for multi-pool section headers
+  const poolsById = new Map((detail.pools || []).map((p) => [p.id, p]));
+  const _poolInfo = (poolId) => {
+    const pool = poolsById.get(poolId);
+    if (!pool) return { name: `Pool ${poolId}`, addr: "" };
+    const name = pool.name || `Pool ${pool.id}`;
+    const addrParts = [pool.address, [pool.city, pool.state].filter(Boolean).join(", ")].filter(Boolean);
+    return { name, addr: addrParts.join(", ") };
+  };
+  const renderPoolSectionHeader = (poolId, fallbackName) => {
+    const info = _poolInfo(poolId);
+    const label = (info.name && info.name !== `Pool ${poolId}`) ? info.name : (fallbackName || info.name);
+    return `<div class="pool-section-header">
+      <h4>${escapeHtml(label)}</h4>
+      ${info.addr ? `<span class="muted">${escapeHtml(info.addr)}</span>` : ""}
+    </div>`;
+  };
+  const renderChartCard = (seriesItem) => {
+    const meta = chemistrySeriesMeta(seriesItem);
+    if (meta.hide) return "";
+    const latest = seriesItem.points[seriesItem.points.length - 1];
+    const values = seriesItem.points.map((p) => Number(p.value)).filter((v) => Number.isFinite(v));
+    return `
+      <article class="chart-card chart-card-large">
+        <div><h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4></div>
+        ${buildLineChart(seriesItem)}
+        <div class="chart-caption">
+          <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
+          <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
+        </div>
+      </article>`;
+  };
+  // Group chemistry series by pool for multi-pool rendering
+  const chartPoolGroups = !multiplePools ? null : (() => {
+    const byPool = new Map();
+    series.forEach((s) => {
+      if (!byPool.has(s.poolId)) byPool.set(s.poolId, []);
+      byPool.get(s.poolId).push(s);
+    });
+    return Array.from(byPool.entries()).map(([poolId, poolSeries]) => ({
+      poolId,
+      poolName: poolSeries[0]?.poolName || `Pool ${poolId}`,
+      series: poolSeries,
+    }));
+  })();
+  // For multi-pool always show all 90d visits (grouped by pool; no collapse needed)
+  const displayVisits = multiplePools ? visits90d : visibleVisits;
+  const visitsByPool = !multiplePools ? null : (() => {
+    const byPool = new Map();
+    displayVisits.forEach((v) => {
+      if (!byPool.has(v.pool_id)) byPool.set(v.pool_id, []);
+      byPool.get(v.pool_id).push(v);
+    });
+    return Array.from(byPool.entries()).map(([poolId, poolVisits]) => ({
+      poolId,
+      poolName: poolVisits[0]?.pool_name || `Pool ${poolId}`,
+      visits: poolVisits,
+    }));
+  })();
+
   els.viewKicker.textContent = "Customer";
   els.viewTitle.textContent = `${name}`;
 
@@ -2162,27 +2226,18 @@ async function loadCustomerProfile() {
               ${rangeDays.map((days) => `<button class="button button-secondary${chartDays === days ? " is-active-filter" : ""}" data-chart-range="${days}">${days >= 365 ? "12 Mo" : days >= 180 ? "6 Mo" : days >= 90 ? "3 Mo" : "30 D"}</button>`).join("")}
             </div>
           </div>
-          <div class="chart-grid chart-grid-wide">
-            ${series.length ? series.map((seriesItem) => {
-              const meta = chemistrySeriesMeta(seriesItem);
-              const latest = seriesItem.points[seriesItem.points.length - 1];
-              const values = seriesItem.points.map((point) => Number(point.value)).filter((value) => Number.isFinite(value));
-              if (meta.hide) return "";
-              return `
-                <article class="chart-card chart-card-large">
-                  <div>
-                    <h4>${escapeHtml(formatMetricLabel(seriesItem))}</h4>
-                    ${multiplePools && seriesItem.poolName && seriesItem.poolName !== "Pool" ? `<div class="muted">${escapeHtml(seriesItem.poolName)}</div>` : ""}
+          ${multiplePools && chartPoolGroups
+            ? chartPoolGroups.map((group) => `
+                <div class="pool-section">
+                  ${renderPoolSectionHeader(group.poolId, group.poolName)}
+                  <div class="chart-grid chart-grid-wide">
+                    ${group.series.length ? group.series.map(renderChartCard).join("") : `<div class="empty-state">No chemistry history for this pool in this date range.</div>`}
                   </div>
-                    ${buildLineChart(seriesItem)}
-                  <div class="chart-caption">
-                    <span>Latest ${escapeHtml(formatAxisValue(latest?.value, seriesItem.readingKey))}${meta.unitLabel ? ` ${escapeHtml(meta.unitLabel)}` : ""}</span>
-                    <span>Min ${escapeHtml(formatAxisValue(values.length ? Math.min(...values) : "—", seriesItem.readingKey))} · Max ${escapeHtml(formatAxisValue(values.length ? Math.max(...values) : "—", seriesItem.readingKey))}</span>
-                  </div>
-                </article>
-              `;
-            }).join("") : `<div class="empty-state">No chemistry history available in this date range.</div>`}
-          </div>
+                </div>`).join("")
+            : `<div class="chart-grid chart-grid-wide">
+                ${series.length ? series.map(renderChartCard).join("") : `<div class="empty-state">No chemistry history available in this date range.</div>`}
+              </div>`
+          }
         </section>
         <section class="section-card">
           <h3>Reminders</h3>
@@ -2194,29 +2249,51 @@ async function loadCustomerProfile() {
           <div class="detail-header">
             <div>
               <h3>Tracked Chemical Spend</h3>
-              <p class="panel-subtitle">Showing the last 4 visits by default. Expand to see the full last 90 days.</p>
+              <p class="panel-subtitle">${multiplePools ? "Last 90 days, grouped by pool." : "Showing the last 4 visits by default. Expand to see the full last 90 days."}</p>
             </div>
-            ${visits90d.length > 4 ? `<button class="button button-secondary" id="customer-visits-toggle">${state.selections.customerVisitsExpanded ? "Show Last 4 Visits" : "Show 90 Day History"}</button>` : ""}
+            ${!multiplePools && visits90d.length > 4 ? `<button class="button button-secondary" id="customer-visits-toggle">${state.selections.customerVisitsExpanded ? "Show Last 4 Visits" : "Show 90 Day History"}</button>` : ""}
           </div>
-          <div class="event-list">
-            ${visibleVisits.length ? visibleVisits.map((visit) => `
-              <div class="item-card">
-                <div class="item-card-header">
-                  <strong>${escapeHtml(visit.pool_name || `Pool ${visit.pool_id}`)}</strong>
-                  <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
-                </div>
-                <div class="muted">${formatDateTime(visit.service_date)}</div>
-                <div class="chem-list">
-                  ${(visit.chemicals || []).map((chem) => `
-                    <div class="chem-chip">
-                      <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
-                      <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
+          ${multiplePools && visitsByPool
+            ? visitsByPool.map((group) => `
+                <div class="pool-section">
+                  ${renderPoolSectionHeader(group.poolId, group.poolName)}
+                  <div class="event-list">
+                    ${group.visits.length ? group.visits.map((visit) => `
+                      <div class="item-card">
+                        <div class="item-card-header">
+                          <strong>${escapeHtml(formatDateTime(visit.service_date))}</strong>
+                          <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
+                        </div>
+                        <div class="chem-list">
+                          ${(visit.chemicals || []).map((chem) => `
+                            <div class="chem-chip">
+                              <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
+                              <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
+                            </div>`).join("")}
+                        </div>
+                      </div>`).join("")
+                    : `<div class="empty-state">No chemical spend data for this pool in the last 90 days.</div>`}
+                  </div>
+                </div>`).join("")
+            : `<div class="event-list">
+                ${visibleVisits.length ? visibleVisits.map((visit) => `
+                  <div class="item-card">
+                    <div class="item-card-header">
+                      <strong>${escapeHtml(visit.pool_name || `Pool ${visit.pool_id}`)}</strong>
+                      <span class="dense">${escapeHtml(currency(visit.visit_estimated_cost) || "$0.00")}</span>
                     </div>
-                  `).join("")}
-                </div>
-              </div>
-            `).join("") : `<div class="empty-state">No chemical spend history available for this customer in the last 90 days.</div>`}
-          </div>
+                    <div class="muted">${formatDateTime(visit.service_date)}</div>
+                    <div class="chem-list">
+                      ${(visit.chemicals || []).map((chem) => `
+                        <div class="chem-chip">
+                          <span>${escapeHtml(chem.description || chem.dosage_key || "Chemical")}${chem.quantity != null ? ` · ${escapeHtml(String(chem.quantity))} ${escapeHtml(chem.unit_of_measure || "")}` : ""}</span>
+                          <span class="dense">${escapeHtml(currency(chem.estimated_cost) || "$0.00")}</span>
+                        </div>`).join("")}
+                    </div>
+                  </div>`).join("")
+                : `<div class="empty-state">No chemical spend history available for this customer in the last 90 days.</div>`}
+              </div>`
+          }
         </section>
       </div>
       <aside class="profile-side">
