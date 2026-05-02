@@ -1264,11 +1264,11 @@ function renderPollenRows(pollen) {
   const grass = pollenRisk(pollen.grass_risk);
   const weed = pollenRisk(pollen.weed_risk);
   const treeLabel = pollen.tree_detail
-    ? `<strong style="color:${tree.color}">${tree.label}</strong> <span class="muted" style="font-size:0.85em">${escapeHtml(pollen.tree_detail)}</span>`
+    ? `<strong style="color:${tree.color}">${tree.label}</strong> <span class="muted weather-pollen-detail">${escapeHtml(pollen.tree_detail)}</span>`
     : `<strong style="color:${tree.color}">${tree.label}</strong>`;
   const ragweed = pollen.ragweed_count > 0 ? ` · ragweed ${pollen.ragweed_count}` : "";
   return `
-    <div class="meta-row"><span>Tree Pollen</span><div style="text-align:right">${treeLabel}</div></div>
+    <div class="meta-row"><span>Tree Pollen</span><div class="weather-pollen-value">${treeLabel}</div></div>
     <div class="meta-row"><span>Grass Pollen</span><strong style="color:${grass.color}">${grass.label}${pollen.grass_count > 0 ? ` (${pollen.grass_count})` : ""}</strong></div>
     <div class="meta-row"><span>Weed / Ragweed</span><strong style="color:${weed.color}">${weed.label}${ragweed}</strong></div>
   `;
@@ -1300,9 +1300,9 @@ function renderWeatherWidget() {
   const todayLocal2 = [_now2.getFullYear(), String(_now2.getMonth() + 1).padStart(2, "0"), String(_now2.getDate()).padStart(2, "0")].join("-");
   const envDays = (w.environmental || []).filter((d) => d.date <= todayLocal2).slice(-7);
   const envGridHtml = envDays.length ? `
-    <div style="margin-top:14px">
-      <div class="muted" style="font-size:0.75em;margin-bottom:6px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase">Past 7 Days · Pool Environment</div>
-      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:3px 10px;align-items:center;font-size:0.78em">
+    <div class="weather-history">
+      <div class="weather-history-kicker">Past 7 Days · Pool Environment</div>
+      <div class="weather-history-grid">
         <div class="muted">Date</div><div class="muted">Wind</div><div class="muted">Dust</div><div class="muted">Pollen</div>
         ${envDays.map((d) => {
           const isToday = d.date === todayLocal2;
@@ -1319,11 +1319,10 @@ function renderWeatherWidget() {
               }, treeRisk[0])
             : null;
           const po = dominantRisk ? pollenRisk(dominantRisk) : { label: "—", color: "var(--muted)" };
-          const rowStyle = isToday ? "font-weight:600" : "";
-          return `<div style="${rowStyle};color:var(--ink)">${label}</div>
-                  <div style="color:${w2.color}">${w2.label}</div>
-                  <div style="color:${du.color}">${du.label}</div>
-                  <div style="color:${po.color}">${po.label}</div>`;
+          return `<div class="weather-history-label${isToday ? " is-current" : ""}">${label}</div>
+                  <div class="weather-history-value" style="color:${w2.color}">${w2.label}</div>
+                  <div class="weather-history-value" style="color:${du.color}">${du.label}</div>
+                  <div class="weather-history-value" style="color:${po.color}">${po.label}</div>`;
         }).join("")}
       </div>
     </div>` : "";
@@ -1332,10 +1331,10 @@ function renderWeatherWidget() {
     const label = new Date(d.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
     const precipLine = d.precip > 0.01 ? `<div class="muted">${d.precip.toFixed(2)}"</div>` : "";
     const wl = windLevel(d.wind);
-    const windLine = d.wind >= 15 ? `<div style="color:${wl.color};font-size:0.85em">${wl.label}</div>` : "";
-    return `<div style="background:var(--bg-strong);border-radius:8px;padding:6px 4px;line-height:1.4">
-      <div style="font-weight:600">${label}</div>
-      <div style="font-size:0.85em">${wmoLabel(d.code)}</div>
+    const windLine = d.wind >= 15 ? `<div class="weather-forecast-wind" style="color:${wl.color};font-size:0.85em">${wl.label}</div>` : "";
+    return `<div class="weather-forecast-card">
+      <div class="weather-forecast-label">${label}</div>
+      <div class="weather-pollen-detail">${wmoLabel(d.code)}</div>
       <div>${Math.round(d.max ?? 0)}° / ${Math.round(d.min ?? 0)}°</div>
       ${precipLine}${windLine}
     </div>`;
@@ -1343,7 +1342,7 @@ function renderWeatherWidget() {
 
   return `
     <section class="detail-card">
-      <h3>Weather <span class="muted" style="font-weight:400;font-size:0.8em">· North TX</span></h3>
+      <h3>Weather <span class="detail-title-muted">· North TX</span></h3>
       <div class="meta-stack">
         <div class="meta-row"><span>Now</span><strong>${Math.round(cur.temperature_2m ?? 0)}°F · ${wmoLabel(cur.weather_code)}</strong></div>
         <div class="meta-row"><span>Feels Like</span><strong>${Math.round(cur.apparent_temperature ?? 0)}°F</strong></div>
@@ -1354,7 +1353,7 @@ function renderWeatherWidget() {
         ${renderPollenRows(w.current_pollen)}
       </div>
       ${envGridHtml}
-      <div style="margin-top:12px;display:grid;grid-template-columns:repeat(6,1fr);gap:5px;text-align:center;font-size:0.78em">
+      <div class="weather-forecast-grid">
         ${forecastHtml}
       </div>
     </section>
@@ -1547,8 +1546,13 @@ function renderAlertDetail(detail) {
   state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
   const item = detail.item;
   const metadata = item.metadata_json || {};
-  const observedCost = currency(metadata.observed_count);
-  const thresholdCost = currency(metadata.threshold_value);
+  const isRevenue = item.category === "revenue";
+  const _alertReadingKey = metadata.reading_key || "";
+  const observedCost = isRevenue ? currency(metadata.observed_count) : null;
+  const _thresholdNum = numericOrNull(metadata.threshold_value);
+  const thresholdCost = isRevenue
+    ? currency(metadata.threshold_value)
+    : _thresholdNum !== null ? formatAxisValue(_thresholdNum, _alertReadingKey) : null;
   const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
   const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
   const assignedTechId = metadata.assigned_technician?.tech_id || metadata.assigned_technician?.technician_id;
@@ -1684,8 +1688,13 @@ function renderAlertProfile(detail) {
   state.config.customerCharts = mergeCustomerChartPolicy(detail.chart_policy || {});
   const item = detail.item;
   const metadata = item.metadata_json || {};
-  const observedCost = currency(metadata.observed_count);
-  const thresholdCost = currency(metadata.threshold_value);
+  const isRevenue = item.category === "revenue";
+  const _alertReadingKey = metadata.reading_key || "";
+  const observedCost = isRevenue ? currency(metadata.observed_count) : null;
+  const _thresholdNum = numericOrNull(metadata.threshold_value);
+  const thresholdCost = isRevenue
+    ? currency(metadata.threshold_value)
+    : _thresholdNum !== null ? formatAxisValue(_thresholdNum, _alertReadingKey) : null;
   const assignedTech = metadata.assigned_technician?.tech_name || "Unassigned";
   const recentTech = metadata.recent_service_technician?.tech_name || "No recent route stop";
   const assignedTechId = metadata.assigned_technician?.tech_id || metadata.assigned_technician?.technician_id;
@@ -2867,32 +2876,32 @@ function renderSettings() {
     const rules = _settingsData[table] || [];
     const rowFields = SETTINGS_ROW_FIELDS[table];
     return `
-      <section class="section-card" style="margin-bottom:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <h3 style="margin:0">${label}</h3>
-          <button class="button button-secondary" style="font-size:0.8em;padding:4px 10px"
+      <section class="section-card settings-section">
+        <div class="settings-section-header">
+          <h3 class="settings-section-title">${label}</h3>
+          <button class="button button-secondary settings-action-button"
             data-settings-create="${table}">+ New Rule</button>
         </div>
-        <p class="panel-subtitle" style="margin-bottom:10px">${SETTINGS_TABLE_DESC[table]}</p>
-        <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:4px 12px;align-items:center;font-size:0.82em">
-          <div class="muted" style="font-weight:600">Rule</div>
-          ${rowFields.map((f) => `<div class="muted" style="font-weight:600;text-align:right">${f.replace(/_/g, " ")}</div>`).join("")}
+        <p class="panel-subtitle settings-description">${SETTINGS_TABLE_DESC[table]}</p>
+        <div class="settings-grid">
+          <div class="muted settings-grid-header">Rule</div>
+          ${rowFields.map((f) => `<div class="muted settings-grid-header">${f.replace(/_/g, " ")}</div>`).join("")}
           ${rules.map((rule) => `
-            <div style="display:flex;align-items:center;gap:8px">
-              <span class="pill ${rule.enabled ? "pill-info" : ""}" style="${rule.enabled ? "" : "background:var(--bg-strong);color:var(--muted)"}"
-                title="Toggle enabled" style="cursor:pointer;font-size:0.75em;padding:1px 6px"
+            <div class="settings-rule-cell">
+              <span class="pill settings-toggle ${rule.enabled ? "pill-info" : "is-disabled"}"
+                title="Toggle enabled"
                 data-settings-toggle="${table}" data-settings-rule="${escapeHtml(rule.rule_code)}"
                 data-settings-enabled="${rule.enabled}">${rule.enabled ? "ON" : "OFF"}</span>
-              <button class="button button-secondary" style="font-size:0.78em;padding:2px 8px"
+              <button class="button button-secondary settings-inline-button"
                 data-settings-edit="${table}" data-settings-rule="${escapeHtml(rule.rule_code)}">Edit</button>
-              <span style="font-weight:500">${escapeHtml(rule.rule_code)}</span>
-              ${rule.description ? `<span class="muted" style="font-size:0.9em">· ${escapeHtml(rule.description)}</span>` : ""}
+              <span class="settings-rule-name">${escapeHtml(rule.rule_code)}</span>
+              ${rule.description ? `<span class="muted settings-rule-description">· ${escapeHtml(rule.description)}</span>` : ""}
             </div>
             ${rowFields.map((f) => {
               const v = rule[f];
               const display = v === null || v === undefined ? "—" : String(v);
               const isSeverity = f === "severity";
-              return `<div style="text-align:right;${isSeverity ? `color:${severityColor(v)}` : ""}"><strong>${escapeHtml(display)}</strong></div>`;
+              return `<div class="settings-grid-value"${isSeverity ? ` style="color:${severityColor(v)}"` : ""}><strong>${escapeHtml(display)}</strong></div>`;
             }).join("")}
           `).join("")}
         </div>
@@ -2943,11 +2952,11 @@ function buildSettingsFieldEl(fieldDef, value) {
   const { key, label, type, options } = fieldDef;
   const id = `sf-${key}`;
   const wrapper = document.createElement("div");
-  wrapper.style.marginBottom = "10px";
+  wrapper.className = "settings-field";
 
   if (type === "boolean") {
     const lbl = document.createElement("label");
-    lbl.style.cssText = "display:flex;align-items:center;gap:8px";
+    lbl.className = "settings-checkbox";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.id = id;
@@ -2964,7 +2973,7 @@ function buildSettingsFieldEl(fieldDef, value) {
   const lbl = document.createElement("label");
   lbl.htmlFor = id;
   lbl.textContent = label;
-  lbl.style.cssText = "display:block;font-size:0.85em;margin-bottom:3px;color:var(--muted)";
+  lbl.className = "settings-label";
   wrapper.appendChild(lbl);
 
   if (type === "select") {
@@ -2972,7 +2981,6 @@ function buildSettingsFieldEl(fieldDef, value) {
     sel.id = id;
     sel.name = key;
     sel.className = "filter-input";
-    sel.style.width = "100%";
     (options || []).forEach((o) => {
       const opt = document.createElement("option");
       opt.value = o;
@@ -2989,7 +2997,6 @@ function buildSettingsFieldEl(fieldDef, value) {
   inp.id = id;
   inp.name = key;
   inp.className = "filter-input";
-  inp.style.width = "100%";
   if (type === "number") inp.step = "any";
   if (value !== null && value !== undefined) inp.value = value;
   wrapper.appendChild(inp);
@@ -3024,18 +3031,18 @@ function openSettingsEditModal(table, rule) {
   // Build modal shell via innerHTML (no inputs here — safe)
   const modal = document.createElement("div");
   modal.id = "settings-modal";
-  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
+  modal.className = "settings-modal-backdrop";
   modal.innerHTML = `
-    <div style="background:var(--bg);border-radius:12px;padding:24px;max-width:500px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h3 style="margin:0">Edit Rule</h3>
-        <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
+    <div class="settings-modal">
+      <div class="settings-modal-header">
+        <h3 class="settings-modal-title">Edit Rule</h3>
+        <button id="settings-modal-close" class="button button-secondary settings-modal-close">✕</button>
       </div>
-      <div id="settings-identity-box" style="background:var(--bg-strong);border-radius:8px;padding:12px;margin-bottom:16px"></div>
+      <div id="settings-identity-box" class="settings-identity-box"></div>
       <div id="settings-fields-box"></div>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:space-between">
-        <button type="button" id="settings-delete-btn" class="button button-secondary" style="color:var(--critical)">Delete Rule</button>
-        <div style="display:flex;gap:8px">
+      <div class="settings-modal-actions">
+        <button type="button" id="settings-delete-btn" class="button button-secondary settings-delete-button">Delete Rule</button>
+        <div class="settings-modal-actions-right">
           <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
           <button type="button" id="settings-save-btn" class="button button-primary">Save Changes</button>
         </div>
@@ -3048,7 +3055,7 @@ function openSettingsEditModal(table, rule) {
   const identityBox = document.getElementById("settings-identity-box");
   identityFields.forEach((f) => {
     const div = document.createElement("div");
-    div.style.cssText = "margin-bottom:6px;font-size:0.85em";
+    div.className = "settings-identity-row";
     div.innerHTML = `<span class="muted">${f.replace(/_/g, " ")}: </span><strong>${escapeHtml(String(rule[f] ?? "—"))}</strong>`;
     identityBox.appendChild(div);
   });
@@ -3101,15 +3108,15 @@ function openSettingsCreateModal(table) {
 
   const modal = document.createElement("div");
   modal.id = "settings-modal";
-  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px";
+  modal.className = "settings-modal-backdrop";
   modal.innerHTML = `
-    <div style="background:var(--bg);border-radius:12px;padding:24px;max-width:500px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h3 style="margin:0">New ${escapeHtml(SETTINGS_TABLE_LABELS[table])} Rule</h3>
-        <button id="settings-modal-close" class="button button-secondary" style="padding:4px 10px">✕</button>
+    <div class="settings-modal">
+      <div class="settings-modal-header">
+        <h3 class="settings-modal-title">New ${escapeHtml(SETTINGS_TABLE_LABELS[table])} Rule</h3>
+        <button id="settings-modal-close" class="button button-secondary settings-modal-close">✕</button>
       </div>
       <div id="settings-fields-box"></div>
-      <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <div class="settings-modal-actions settings-modal-actions-right">
         <button type="button" id="settings-modal-cancel" class="button button-secondary">Cancel</button>
         <button type="button" id="settings-create-btn" class="button button-primary">Create Rule</button>
       </div>
