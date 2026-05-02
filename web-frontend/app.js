@@ -1566,13 +1566,13 @@ function renderWeatherWidget() {
       });
       const precipLine =
         d.precip > 0.01
-          ? `<div class="muted">${d.precip.toFixed(2)}"</div>`
-          : "";
+          ? `<div class="weather-forecast-meta muted">${d.precip.toFixed(2)}"</div>`
+          : `<div class="weather-forecast-meta weather-forecast-meta-placeholder">0.00"</div>`;
       const wl = windLevel(d.wind);
       const windLine =
         d.wind >= 15
-          ? `<div class="weather-forecast-wind" style="color:${wl.color};font-size:0.85em">${wl.label}</div>`
-          : "";
+          ? `<div class="weather-forecast-meta weather-forecast-wind" style="color:${wl.color}">${wl.label}</div>`
+          : `<div class="weather-forecast-meta weather-forecast-meta-placeholder">0 mph</div>`;
       return `<div class="weather-forecast-card">
       <div class="weather-forecast-label">${label}</div>
       <div class="weather-forecast-condition">${wmoLabel(d.code)}</div>

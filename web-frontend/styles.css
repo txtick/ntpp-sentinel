@@ -688,7 +688,7 @@ textarea {
 
 .weather-history-grid {
   display: grid;
-  grid-template-columns: auto 1fr 1fr 1fr;
+  grid-template-columns: minmax(56px, auto) repeat(3, minmax(58px, 1fr));
   gap: 6px 12px;
   align-items: center;
   font-size: 0.78em;
@@ -710,6 +710,11 @@ textarea {
   font-weight: 600;
 }
 
+.weather-history-head:not(:first-child),
+.weather-history-value {
+  justify-self: end;
+}
+
 .weather-forecast-grid {
   margin-top: 12px;
   display: grid;
@@ -721,6 +726,7 @@ textarea {
 
 .weather-forecast-card {
   display: grid;
+  grid-template-rows: auto auto auto auto auto;
   gap: 3px;
   min-height: 104px;
   padding: 8px 6px;
@@ -741,6 +747,14 @@ textarea {
 
 .weather-forecast-temps {
   font-weight: 600;
+}
+
+.weather-forecast-meta {
+  min-height: 1.2em;
+}
+
+.weather-forecast-meta-placeholder {
+  visibility: hidden;
 }
 
 .settings-section {
