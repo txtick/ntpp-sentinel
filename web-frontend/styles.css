@@ -241,6 +241,12 @@ textarea {
   font-weight: 600;
 }
 
+.auth-card .button {
+  width: 100%;
+  justify-content: center;
+  min-height: 40px;
+}
+
 .subtitle,
 .muted,
 .empty-state,
