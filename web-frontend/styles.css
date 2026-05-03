@@ -222,11 +222,13 @@ textarea {
 .auth-card {
   display: grid;
   gap: 8px;
+  min-width: 0;
   padding: 12px;
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--navy-border);
   margin-top: 4px;
+  overflow: hidden;
 }
 
 .rail .auth-card,
@@ -244,6 +246,7 @@ textarea {
 .auth-card .button {
   display: flex;
   width: 100%;
+  max-width: 100%;
   justify-content: center;
   align-items: center;
   min-height: 40px;
@@ -251,6 +254,17 @@ textarea {
   padding: 10px 14px;
   line-height: 1.2;
   text-align: center;
+  overflow: hidden;
+}
+
+.auth-card .muted,
+.auth-card a,
+.auth-card button {
+  min-width: 0;
+}
+
+#session-summary {
+  overflow-wrap: anywhere;
 }
 
 .subtitle,
