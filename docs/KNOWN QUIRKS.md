@@ -89,6 +89,7 @@ Examples:
 - This means homepage stat cards reflect the last dashboard refresh run, not a real-time scan. This is intentional — re-running the full analytics on every page load caused 60+ second load times.
 - If summary counts look stale, the fix is to trigger a dashboard refresh (`POST /jobs/dashboard/refresh`), not to query the views directly.
 - If a customer's imported Skimmer tags change in a way that affects alert suppression, already-open tracked alerts will not disappear until the next dashboard refresh recalculates the backend-owned alert set.
+- Customer-tag-driven alert suppression depends on the nightly Skimmer import preserving `Customer.Tags` into `sk_customer.raw_json` and then `customers.raw_json`. If that import path drops `Tags`, dashboard suppression logic like `filter-sand` and `no-sentinel-alerts` will silently fail even when the tag exists in Skimmer.
 
 ## Problem Pools Report
 

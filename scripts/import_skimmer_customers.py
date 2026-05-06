@@ -1023,7 +1023,7 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
     chunk_count = 0
     for rows in _iter_sqlite_rows(
         sqlite_conn,
-        "SELECT id, FirstName, LastName, CompanyName, PrimaryEmail, MobilePhone, MobilePhone2, BillingAddress, BillingCity, BillingState, BillingZip, IsInactive, IsLead FROM Customer",
+        "SELECT id, FirstName, LastName, CompanyName, PrimaryEmail, MobilePhone, MobilePhone2, BillingAddress, BillingCity, BillingState, BillingZip, IsInactive, IsLead, Tags FROM Customer",
     ):
         chunk_started_at = time.perf_counter()
         identity_rows = []
