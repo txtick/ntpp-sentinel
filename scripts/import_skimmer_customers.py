@@ -29,6 +29,66 @@ def row_json(row):
     return json.dumps({k: row[k] for k in row.keys()})
 
 
+def _normalize_tag_payload(value):
+    if value is None:
+        return []
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = value
+    if isinstance(parsed, list):
+        results = []
+        seen = set()
+        for item in parsed:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("Name") or "").strip()
+            else:
+                name = str(item).strip()
+            if not name:
+                continue
+            name_lc = name.lower()
+            if name_lc in seen:
+                continue
+            seen.add(name_lc)
+            results.append({"name": name})
+        return results
+    if isinstance(parsed, dict):
+        name = str(parsed.get("name") or parsed.get("Name") or "").strip()
+        return [{"name": name}] if name else []
+    text = str(parsed).strip()
+    return [{"name": text}] if text else []
+
+
+def _load_customer_tag_map(sqlite_conn):
+    cur = sqlite_conn.cursor()
+    cur.execute(
+        """
+        SELECT
+            ct.CustomerId,
+            t.Name
+        FROM CustomerTag ct
+        LEFT JOIN Tag t ON t.id = ct.TagId
+        WHERE COALESCE(ct.Deleted, 0) = 0
+          AND COALESCE(t.Deleted, 0) = 0
+          AND t.Name IS NOT NULL
+          AND trim(t.Name) <> ''
+        ORDER BY ct.CustomerId, t.Name
+        """
+    )
+    tag_map = {}
+    for row in cur.fetchall():
+        customer_id = row["CustomerId"]
+        name = str(row["Name"] or "").strip()
+        if not customer_id or not name:
+            continue
+        bucket = tag_map.setdefault(customer_id, [])
+        if name.lower() not in {item["name"].lower() for item in bucket}:
+            bucket.append({"name": name})
+    return tag_map
+
+
 def log(msg: str) -> None:
     print(f"[skimmer-import] {msg}")
 
@@ -78,7 +138,10 @@ def update_import_run(conn, run_id, success, error_message=None, table_counts=No
 
 def upsert_customer(conn, row, source_system="skimmer", cur=None):
     source_customer_id = row["id"]
-    raw_json = row_json(row)
+    if isinstance(row, dict):
+        raw_json = json.dumps(row)
+    else:
+        raw_json = row_json(row)
     owns_cursor = cur is None
     if owns_cursor:
         cur = conn.cursor()
@@ -1021,6 +1084,7 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
     identity_count = 0
     started_at = time.perf_counter()
     chunk_count = 0
+    customer_tag_map = _load_customer_tag_map(sqlite_conn)
     for rows in _iter_sqlite_rows(
         sqlite_conn,
         "SELECT id, FirstName, LastName, CompanyName, PrimaryEmail, MobilePhone, MobilePhone2, BillingAddress, BillingCity, BillingState, BillingZip, IsInactive, IsLead, Tags FROM Customer",
@@ -1029,7 +1093,18 @@ def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
         identity_rows = []
         with pg_conn.cursor() as customer_cur:
             for row in rows:
-                sk_customer_id = upsert_customer(pg_conn, row, source_system=source_system, cur=customer_cur)
+                payload = {k: row[k] for k in row.keys()}
+                merged_tags = _normalize_tag_payload(payload.get("Tags"))
+                for item in customer_tag_map.get(str(payload.get("id") or ""), []):
+                    name = str(item.get("name") or "").strip()
+                    if not name:
+                        continue
+                    if name.lower() in {existing["name"].lower() for existing in merged_tags}:
+                        continue
+                    merged_tags.append({"name": name})
+                if merged_tags:
+                    payload["Tags"] = merged_tags
+                sk_customer_id = upsert_customer(pg_conn, payload, source_system=source_system, cur=customer_cur)
                 imported += 1
                 for source_id, identity_type in (
                     (row_get(row, "id"), "customer_id"),

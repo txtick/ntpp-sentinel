@@ -163,6 +163,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                         FROM jsonb_array_elements(
                             CASE
                                 WHEN jsonb_typeof(customer_raw_json->'tags') = 'array' THEN customer_raw_json->'tags'
+                                WHEN jsonb_typeof(customer_raw_json->'Tags') = 'array' THEN customer_raw_json->'Tags'
                                 ELSE '[]'::jsonb
                             END
                         ) AS tag
