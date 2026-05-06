@@ -88,6 +88,7 @@ Examples:
 - `dashboard_summary_v` reads alert counts from `alert_instances`, not from the live analytics views (`current_chemistry_alerts_v`, `chemistry_trend_alerts_v`, `revenue_opportunities_v`).
 - This means homepage stat cards reflect the last dashboard refresh run, not a real-time scan. This is intentional — re-running the full analytics on every page load caused 60+ second load times.
 - If summary counts look stale, the fix is to trigger a dashboard refresh (`POST /jobs/dashboard/refresh`), not to query the views directly.
+- If a customer's imported Skimmer tags change in a way that affects alert suppression, already-open tracked alerts will not disappear until the next dashboard refresh recalculates the backend-owned alert set.
 
 ## Problem Pools Report
 

@@ -780,6 +780,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                  AND cfg.reading_key = r.reading_key
                  AND r.service_date >= NOW() - make_interval(days => COALESCE(cfg.window_days, 60))
                 JOIN customers c ON c.id = r.customer_id
+                LEFT JOIN filter_clean_eligible_pools fcep
+                  ON fcep.pool_id = r.pool_id
                 WHERE c.is_operationally_active = TRUE
                   AND customer_alert_eligible(
                       c.id,
@@ -795,6 +797,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                   )
                 GROUP BY cfg.rule_code, cfg.opportunity_type, r.customer_id, r.pool_id, r.reading_key, cfg.repeat_count
                 HAVING COUNT(*) >= COALESCE(MAX(cfg.repeat_count), 2)
+                   AND (cfg.opportunity_type <> 'filter_clean' OR MAX(fcep.pool_id) IS NOT NULL)
             ),
             trend_reference AS (
                 SELECT
