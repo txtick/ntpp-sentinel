@@ -5,3 +5,4 @@ python-dateutil==2.9.0.post0
 httpx>=0.24
 itsdangerous>=2.2
 psycopg[binary]
+pdfplumber>=0.11

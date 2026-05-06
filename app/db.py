@@ -129,6 +129,97 @@ def ensure_schema() -> None:
         """
     )
 
+    # Chemical invoice ingestion
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chemical_invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pdf_sha256 TEXT NOT NULL UNIQUE,
+            vendor_name TEXT NOT NULL,
+            branch_location TEXT,
+            invoice_number TEXT,
+            invoice_date TEXT,
+            account_number TEXT,
+            po_number TEXT,
+            ordered_by TEXT,
+            invoice_total REAL,
+            subtotal REAL,
+            tax REAL,
+            fees REAL DEFAULT 0.0,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            reconciliation_json TEXT,
+            extraction_mode TEXT,
+            ingested_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            reviewed_by TEXT,
+            pdf_path TEXT,
+            UNIQUE(vendor_name, invoice_number)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chemical_invoice_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER NOT NULL REFERENCES chemical_invoices(id),
+            line_number INTEGER,
+            item_code TEXT,
+            raw_description TEXT NOT NULL,
+            normalized_product_name TEXT,
+            category TEXT,
+            cost_type TEXT,
+            quantity REAL,
+            unit TEXT,
+            default_unit TEXT,
+            unit_price REAL,
+            extended_price REAL,
+            confidence REAL,
+            alias_id INTEGER
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chemical_product_aliases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vendor_name TEXT,
+            item_code TEXT,
+            raw_description_pattern TEXT NOT NULL,
+            normalized_product_name TEXT,
+            category TEXT,
+            cost_type TEXT,
+            default_unit TEXT,
+            package_size TEXT,
+            mapping_status TEXT NOT NULL DEFAULT 'NEEDS_REVIEW',
+            confidence REAL DEFAULT 0.0,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            times_seen INTEGER NOT NULL DEFAULT 1,
+            approved_by TEXT,
+            approved_at TEXT,
+            UNIQUE(vendor_name, item_code)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chemical_invoice_extraction_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER REFERENCES chemical_invoices(id),
+            pdf_sha256 TEXT,
+            extraction_mode TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            success INTEGER NOT NULL DEFAULT 0,
+            error_message TEXT,
+            raw_output TEXT
+        )
+        """
+    )
+
     _ensure_indexes(conn)
     _backfill_issue_display_ids(conn)
     conn.commit()
@@ -281,6 +372,97 @@ def init_db() -> None:
         created_ts REAL NOT NULL,
         updated_ts REAL NOT NULL,
         completed_ts REAL
+      )
+    """
+    )
+
+    # Chemical invoice ingestion
+    cur.execute(
+        """
+      CREATE TABLE IF NOT EXISTS chemical_invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pdf_sha256 TEXT NOT NULL UNIQUE,
+        vendor_name TEXT NOT NULL,
+        branch_location TEXT,
+        invoice_number TEXT,
+        invoice_date TEXT,
+        account_number TEXT,
+        po_number TEXT,
+        ordered_by TEXT,
+        invoice_total REAL,
+        subtotal REAL,
+        tax REAL,
+        fees REAL DEFAULT 0.0,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        reconciliation_json TEXT,
+        extraction_mode TEXT,
+        ingested_at TEXT NOT NULL,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        pdf_path TEXT,
+        UNIQUE(vendor_name, invoice_number)
+      )
+    """
+    )
+
+    cur.execute(
+        """
+      CREATE TABLE IF NOT EXISTS chemical_invoice_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER NOT NULL REFERENCES chemical_invoices(id),
+        line_number INTEGER,
+        item_code TEXT,
+        raw_description TEXT NOT NULL,
+        normalized_product_name TEXT,
+        category TEXT,
+        cost_type TEXT,
+        quantity REAL,
+        unit TEXT,
+        default_unit TEXT,
+        unit_price REAL,
+        extended_price REAL,
+        confidence REAL,
+        alias_id INTEGER
+      )
+    """
+    )
+
+    cur.execute(
+        """
+      CREATE TABLE IF NOT EXISTS chemical_product_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        vendor_name TEXT,
+        item_code TEXT,
+        raw_description_pattern TEXT NOT NULL,
+        normalized_product_name TEXT,
+        category TEXT,
+        cost_type TEXT,
+        default_unit TEXT,
+        package_size TEXT,
+        mapping_status TEXT NOT NULL DEFAULT 'NEEDS_REVIEW',
+        confidence REAL DEFAULT 0.0,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        times_seen INTEGER NOT NULL DEFAULT 1,
+        approved_by TEXT,
+        approved_at TEXT,
+        UNIQUE(vendor_name, item_code)
+      )
+    """
+    )
+
+    cur.execute(
+        """
+      CREATE TABLE IF NOT EXISTS chemical_invoice_extraction_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER REFERENCES chemical_invoices(id),
+        pdf_sha256 TEXT,
+        extraction_mode TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        success INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        raw_output TEXT
       )
     """
     )

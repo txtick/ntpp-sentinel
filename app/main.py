@@ -87,6 +87,20 @@ from services.customer_sync import (
     customer_display_name,
     match_ghl_contact,
 )
+from services.chemical_invoices import (
+    scan_inbox_async as _chem_scan_inbox,
+    get_invoice as _chem_get_invoice,
+    list_invoices as _chem_list_invoices,
+    invoice_summary as _chem_invoice_summary,
+    mark_invoice_reviewed as _chem_mark_reviewed,
+    list_aliases as _chem_list_aliases,
+    approve_alias as _chem_approve_alias,
+    update_alias as _chem_update_alias,
+    clamp_limit_offset as _chem_clamp_limit_offset,
+    validate_invoice_status as _chem_validate_invoice_status,
+    validate_alias_status as _chem_validate_alias_status,
+    validate_summary_dates as _chem_validate_summary_dates,
+)
 
 # ==========================
 # Config
@@ -222,6 +236,15 @@ CALL_MISSED_MARKER_KEYS = [
 POLL_RESOLVER_CONCURRENCY = max(1, int(os.getenv("POLL_RESOLVER_CONCURRENCY", "8")))
 
 MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(512 * 1024)))  # 512 KB default
+
+# Chemical invoice ingestion
+CHEM_INVOICE_INBOX_DIR = os.getenv("CHEM_INVOICE_INBOX_DIR", "/data/chemical_invoices/inbox")
+CHEM_INVOICE_PROCESSED_DIR = os.getenv("CHEM_INVOICE_PROCESSED_DIR", "/data/chemical_invoices/processed")
+CHEM_INVOICE_FAILED_DIR = os.getenv("CHEM_INVOICE_FAILED_DIR", "/data/chemical_invoices/failed")
+CHEM_INVOICE_EXTRACTOR_MODE = os.getenv("CHEM_INVOICE_EXTRACTOR_MODE", "text").strip().lower()
+CHEM_INVOICE_RECONCILE_TOLERANCE = float(os.getenv("CHEM_INVOICE_RECONCILE_TOLERANCE", "0.02"))
+CHEM_INVOICE_OPENAI_MODEL = os.getenv("CHEM_INVOICE_OPENAI_MODEL", "gpt-4o-mini")
+CHEM_INVOICE_MAX_PDF_BYTES = int(os.getenv("CHEM_INVOICE_MAX_PDF_BYTES", str(25 * 1024 * 1024)))
 
 app = FastAPI(
     swagger_ui_parameters={"persistAuthorization": False},
@@ -2958,3 +2981,145 @@ async def escalations(request: Request, dry_run: int = 0, limit: int = 200):
         result["errors"] = errors
     result["marked_notified"] = len(rows) if sent_to else 0
     return result
+
+
+# ==========================
+# Chemical Invoice Endpoints
+# ==========================
+
+@app.post("/jobs/chemical_invoices/ingest_local")
+async def chemical_invoices_ingest_local(request: Request):
+    """
+    Scan CHEM_INVOICE_INBOX_DIR for PDF files, ingest each one, and move them
+    to processed/ or failed/ based on the outcome.
+    """
+    _auth_or_401(request)
+    os.makedirs(CHEM_INVOICE_INBOX_DIR, exist_ok=True)
+    result = await _chem_scan_inbox(
+        inbox_dir=CHEM_INVOICE_INBOX_DIR,
+        processed_dir=CHEM_INVOICE_PROCESSED_DIR,
+        failed_dir=CHEM_INVOICE_FAILED_DIR,
+        mode=CHEM_INVOICE_EXTRACTOR_MODE,
+        openai_api_key=OPENAI_API_KEY,
+        openai_base_url=OPENAI_BASE_URL,
+        openai_model=CHEM_INVOICE_OPENAI_MODEL,
+        reconcile_tolerance=CHEM_INVOICE_RECONCILE_TOLERANCE,
+        max_pdf_bytes=CHEM_INVOICE_MAX_PDF_BYTES,
+    )
+    result["job"] = "chemical_invoices/ingest_local"
+    result["inbox_dir"] = CHEM_INVOICE_INBOX_DIR
+    result["extractor_mode"] = CHEM_INVOICE_EXTRACTOR_MODE
+    return result
+
+
+async def _json_object_or_400(request: Request, *, allow_empty: bool) -> Dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+    if not allow_empty and not body:
+        raise HTTPException(status_code=400, detail="Request body must be a non-empty JSON object")
+    return body
+
+
+@app.get("/chemical_invoices")
+def chemical_invoices_list(
+    request: Request,
+    status: Optional[str] = None,
+    vendor: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    _auth_or_401(request)
+    try:
+        status = _chem_validate_invoice_status(status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    limit, offset = _chem_clamp_limit_offset(limit, offset)
+    invoices = _chem_list_invoices(status=status, vendor=vendor, limit=limit, offset=offset)
+    return {"invoices": invoices, "count": len(invoices)}
+
+
+@app.get("/chemical_invoices/summary")
+def chemical_invoices_summary(
+    request: Request,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    _auth_or_401(request)
+    try:
+        start_date, end_date = _chem_validate_summary_dates(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _chem_invoice_summary(start_date=start_date, end_date=end_date)
+
+
+@app.get("/chemical_invoices/{invoice_id}")
+def chemical_invoices_get(request: Request, invoice_id: int):
+    _auth_or_401(request)
+    inv = _chem_get_invoice(invoice_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return inv
+
+
+@app.post("/chemical_invoices/{invoice_id}/mark_reviewed")
+async def chemical_invoices_mark_reviewed(request: Request, invoice_id: int):
+    _auth_or_401(request)
+    body = await _json_object_or_400(request, allow_empty=True)
+    reviewed_by = str(body.get("reviewed_by", "")).strip() or None
+    ok = _chem_mark_reviewed(invoice_id, reviewed_by=reviewed_by)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    return {"ok": True, "invoice_id": invoice_id, "status": "REVIEWED", "reviewed_by": reviewed_by}
+
+
+@app.get("/chemical_products/aliases")
+def chemical_aliases_list(
+    request: Request,
+    status: Optional[str] = None,
+    vendor: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    _auth_or_401(request)
+    try:
+        status = _chem_validate_alias_status(status)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    limit, offset = _chem_clamp_limit_offset(limit, offset)
+    aliases = _chem_list_aliases(status=status, vendor=vendor, limit=limit, offset=offset)
+    return {"aliases": aliases, "count": len(aliases)}
+
+
+@app.post("/chemical_products/aliases/{alias_id}/approve")
+async def chemical_aliases_approve(request: Request, alias_id: int):
+    _auth_or_401(request)
+    try:
+        body = await _json_object_or_400(request, allow_empty=True)
+    except HTTPException:
+        raise
+    approved_by = str(body.get("approved_by", "")).strip() or None
+    updates = {k: v for k, v in body.items() if k not in ("approved_by",)}
+    try:
+        ok = _chem_approve_alias(alias_id, approved_by=approved_by, updates=updates or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alias not found")
+    return {"ok": True, "alias_id": alias_id, "mapping_status": "APPROVED"}
+
+
+@app.post("/chemical_products/aliases/{alias_id}/update")
+async def chemical_aliases_update(request: Request, alias_id: int):
+    _auth_or_401(request)
+    body = await _json_object_or_400(request, allow_empty=False)
+    try:
+        ok = _chem_update_alias(alias_id, updates=body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alias not found or no valid fields provided")
+    return {"ok": True, "alias_id": alias_id}
