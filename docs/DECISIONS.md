@@ -27,6 +27,8 @@ Keep entries short, but do not skip them.
   - Reason: this matches how payroll is actually entered.
 - Filter-clean pay is rolled into the final `Commission` amount shown for Gusto.
   - Reason: user wants one commission number to enter instead of separate overtime-like entries.
+- Labor filter-clean counts use the completed Skimmer work order's assigned tech (`AccountId` / `sk_work_order.source_account_id`), not a same-day route-stop match.
+  - Reason: filter-clean work orders can exist without matching a normal route stop row, and route-stop joins undercount payroll work.
 - Payroll week is `Sunday -> Saturday`.
 
 ## AI / SLA

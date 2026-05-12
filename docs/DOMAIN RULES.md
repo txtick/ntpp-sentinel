@@ -15,7 +15,7 @@ This document captures business behavior that should remain stable unless intent
 - Payroll week is `Sunday -> Saturday`.
 - For this app, `pool`, `stop`, and Skimmer `cleaning` are treated interchangeably for technician payroll.
 - Current-week cleaning counts must follow the live Skimmer route API so the Labor page matches Skimmer's Labor report.
-- Filter-clean counts/pay come from Skimmer work orders imported into Sentinel.
+- Filter-clean counts/pay come from completed Skimmer work orders imported into Sentinel, assigned to the tech on the work order (`AccountId` / `sk_work_order.source_account_id`).
 - Pay rules:
   - `$16` per stop/pool
   - `$25` per filter clean

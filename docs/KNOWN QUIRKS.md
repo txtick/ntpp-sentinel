@@ -34,6 +34,7 @@ Examples:
 
 - Do not trust normalized stop counts alone to match Skimmer's Labor report for the current week.
 - Current-week labor cleanings must be validated against the live Skimmer route API when something looks off.
+- Labor filter-clean counts should use completed Skimmer work orders by work-order tech (`AccountId` / `sk_work_order.source_account_id`), not route-stop joins. Some completed filter-clean work orders do not line up with a normal same-day route stop, which can undercount techs on payroll.
 
 ## AI / Trace
 
@@ -55,6 +56,7 @@ Examples:
 - **Production pollen fetches currently use Ambee latest-only data**, not a true historical API. The dashboard history fills from one stored row per day in `pollen_daily_log`.
 - **Weather cache is in-process and resets on container restart.** First load after restart hits Open-Meteo weather, Open-Meteo AQ, and Ambee pollen. Cached for `WEATHER_CACHE_TTL` seconds (default 3600).
 - **Pollen history was previously traffic-driven.** Before the dedicated `weather_pollen` cron job, blank days appeared whenever `/api/weather` was not loaded that day or the live pollen fetch failed.
+- **Current pollen now falls back to today's stored snapshot if the live Ambee call fails.** This keeps the widget populated when the cron snapshot already saved a row earlier that day, but it cannot invent data for days where every snapshot attempt failed.
 - **Pollen history must use the dashboard's local date, not Postgres `CURRENT_DATE`.** If the DB session is on UTC during the evening, a same-night pollen snapshot can land under tomorrow's date and leave the widget's `Today` row blank.
 - **`WEATHER_LAT` / `WEATHER_LON`** env vars control coordinates (default 33.15, -96.82 = Frisco/McKinney area).
 - `/api/weather` is on `web-backend` and requires dashboard auth. Weather data is fetched server-side and cached; the frontend does not call external APIs directly.

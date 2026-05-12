@@ -157,6 +157,11 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+Notes:
+
+- The dedicated `weather_pollen` cron now runs four times daily (`6:15am`, `10:15am`, `2:15pm`, `6:15pm` local) to reduce blank pollen-history days from transient Ambee failures.
+- If the live Ambee request fails during a dashboard load, the widget now falls back to today's stored pollen row when one was already captured earlier that day.
+
 ## 3a. Frontend Local Checks
 
 The dashboard frontend now has a minimal local tooling setup for JS linting,

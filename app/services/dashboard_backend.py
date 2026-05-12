@@ -3870,18 +3870,14 @@ def get_labor_payroll(
                     SELECT
                         tl.tech_id,
                         COUNT(DISTINCT w.id) AS filter_clean_count
-                    FROM technician_route_stops s
-                    JOIN tech_lookup tl ON tl.technician_id = s.technician_id
-                    JOIN sk_work_order w
-                      ON w.source_system = s.source_system
-                     AND w.source_service_location_id = s.source_service_location_id
-                     AND w.service_date::date = s.service_date::date
+                    FROM sk_work_order w
+                    JOIN tech_lookup tl
+                      ON tl.tech_id = w.source_account_id
                     LEFT JOIN sk_work_order_type wt
                       ON wt.source_system = w.source_system
                      AND wt.source_work_order_type_id = w.source_work_order_type_id
-                    WHERE s.technician_id IS NOT NULL
-                      AND s.is_skipped = FALSE
-                      AND s.service_date::date BETWEEN %s AND %s
+                    WHERE w.source_system = 'skimmer'
+                      AND w.service_date::date BETWEEN %s AND %s
                       AND COALESCE(w.is_deleted, FALSE) = FALSE
                       AND w.complete_time IS NOT NULL
                       AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'

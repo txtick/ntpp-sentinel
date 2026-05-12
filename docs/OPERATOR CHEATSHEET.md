@@ -79,6 +79,8 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+- Scheduled pollen snapshots run at `6:15am`, `10:15am`, `2:15pm`, and `6:15pm` local.
+
 ## Frontend Checks
 
 ```bash

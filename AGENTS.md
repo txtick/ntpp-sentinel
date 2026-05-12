@@ -3,6 +3,7 @@
 Read this file first at the start of a new chat.
 
 After any compaction or in any fresh chat, reread this file and the linked core docs before making changes or proposing new logic.
+Before running environment-specific commands, reread `docs/START UP & RECOVERY.md` and `docs/OPERATOR CHEATSHEET.md`; production runs on the `sentinel` DigitalOcean droplet at `/opt/ntpp-sentinel`, not on this local workspace.
 
 This repository runs North Texas Pool Pros' internal Sentinel platform. This file is the fastest way to recover the business rules and operating assumptions that are easy to lose after compaction.
 

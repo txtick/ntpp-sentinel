@@ -3,6 +3,7 @@ import os
 import secrets
 import time
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -124,6 +125,7 @@ AMBEE_API_KEY = os.getenv("AMBEE_API_KEY", "").strip()
 _weather_cache: dict = {}
 _weather_cache_ts: float = 0.0
 WEATHER_CACHE_TTL = 3600  # 1 hour
+TIMEZONE_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
 
 def _fetch_current_pollen() -> dict:
@@ -169,6 +171,42 @@ def _fetch_current_pollen() -> dict:
         "ragweed_count": (species.get("Weed") or {}).get("Ragweed"),
         "updated_at": entry.get("updatedAt"),
     }
+
+
+def _local_weather_date_str() -> str:
+    import datetime as _dt
+
+    return _dt.datetime.now(ZoneInfo(TIMEZONE_NAME)).date().isoformat()
+
+
+def _stored_pollen_to_current(entry: dict) -> dict:
+    if not entry:
+        return {}
+    return {
+        "tree_risk": entry.get("tree_risk"),
+        "grass_risk": entry.get("grass_risk"),
+        "weed_risk": entry.get("weed_risk"),
+        "tree_count": entry.get("tree_count"),
+        "grass_count": entry.get("grass_count"),
+        "weed_count": entry.get("weed_count"),
+        "tree_detail": entry.get("tree_detail"),
+        "ragweed_count": entry.get("ragweed_count"),
+        "updated_at": entry.get("updated_at"),
+    }
+
+
+def _fetch_current_pollen_with_retry(attempts: int = 3, delay_seconds: float = 1.0) -> dict:
+    last_exc = None
+    for attempt in range(max(1, int(attempts))):
+        try:
+            return _fetch_current_pollen()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max(1, int(attempts)) - 1:
+                time.sleep(max(0.0, float(delay_seconds)))
+    if last_exc is not None:
+        raise last_exc
+    return {}
 
 
 @app.on_event("startup")
@@ -547,7 +585,7 @@ def job_weather_pollen_snapshot(request: Request):
     if not AMBEE_API_KEY:
         return {"ok": False, "saved": False, "reason": "AMBEE_API_KEY not configured"}
     try:
-        current_pollen = _fetch_current_pollen()
+        current_pollen = _fetch_current_pollen_with_retry()
         if not current_pollen:
             return {"ok": False, "saved": False, "reason": "No pollen data returned"}
         upsert_pollen_daily_log(current_pollen)
@@ -785,19 +823,22 @@ def api_weather(request: Request):
         _logger.warning(f"Open-Meteo air quality fetch failed: {exc}")
 
     # Fetch current pollen from Ambee (free plan: latest only, no historical)
+    pollen_log = get_pollen_daily_log(days=7)
+    today_pollen = _stored_pollen_to_current(pollen_log.get(_local_weather_date_str(), {}))
     current_pollen: dict = {}
     if AMBEE_API_KEY:
         try:
-            current_pollen = _fetch_current_pollen()
+            current_pollen = _fetch_current_pollen_with_retry()
             # Persist today's reading so we can show pollen history
             upsert_pollen_daily_log(current_pollen)
         except Exception as exc:
             _logger.warning(f"Ambee pollen fetch failed: {exc}")
+    if not current_pollen:
+        current_pollen = today_pollen
 
     daily = data.get("daily", {})
 
-    # Load stored pollen history (builds up one day at a time as the widget is loaded)
-    pollen_log = get_pollen_daily_log(days=7)
+    # Load stored pollen history for the last 7 days.
 
     # Build past-7-days environmental summary (oldest → today)
     daily_times = daily.get("time", [])
