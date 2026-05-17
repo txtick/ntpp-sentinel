@@ -156,18 +156,36 @@ def _fetch_current_pollen() -> dict:
     if not AMBEE_API_KEY:
         return {}
 
+    import urllib.error as _urllib_error
+    import urllib.parse as _urllib_parse
     import urllib.request as _urllib_req
 
+    params = _urllib_parse.urlencode({"lat": WEATHER_LAT, "lng": WEATHER_LON})
     a_req = _urllib_req.Request(
-        f"https://api.ambeedata.com/latest/pollen/by-lat-lng?lat={WEATHER_LAT}&lng={WEATHER_LON}",
+        f"https://api.ambeedata.com/latest/pollen/by-lat-lng?{params}",
         headers={
             "x-api-key": AMBEE_API_KEY,
             "Accept": "application/json",
+            "Content-Type": "application/json",
             "User-Agent": "NTPP-Sentinel/1.0",
         },
     )
-    with _urllib_req.urlopen(a_req, timeout=10) as resp:
-        a_data = json.loads(resp.read())
+    try:
+        with _urllib_req.urlopen(a_req, timeout=10) as resp:
+            a_data = json.loads(resp.read())
+    except _urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:500]
+        _logger.warning(
+            "Ambee pollen HTTP error status=%s key_present=%s key_len=%s body=%s",
+            exc.code,
+            bool(AMBEE_API_KEY),
+            len(AMBEE_API_KEY or ""),
+            body,
+        )
+        raise
+    except _urllib_error.URLError as exc:
+        _logger.warning("Ambee pollen request failed: %s", exc)
+        raise
 
     entry = (a_data.get("data") or [{}])[0]
     risk = entry.get("Risk", {})

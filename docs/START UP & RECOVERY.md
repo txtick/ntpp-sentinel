@@ -161,6 +161,19 @@ Notes:
 
 - The dedicated `weather_pollen` cron now runs four times daily (`6:15am`, `10:15am`, `2:15pm`, `6:15pm` local) to reduce blank pollen-history days from transient Ambee failures.
 - If the live Ambee request fails during a dashboard load, the widget now falls back to today's stored pollen row when one was already captured earlier that day.
+- If Ambee returns `401 Unauthorized`, verify the key inside `web-backend` and direct Ambee auth before rotating anything:
+
+```bash
+docker compose exec -T web-backend sh -lc '
+  echo "AMBEE_API_KEY chars: ${#AMBEE_API_KEY}"
+  curl -sS -i \
+    "https://api.ambeedata.com/latest/pollen/by-lat-lng?lat=${WEATHER_LAT:-33.15}&lng=${WEATHER_LON:--96.82}" \
+    -H "x-api-key: $AMBEE_API_KEY" \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    | sed -n "1,20p"
+'
+```
 
 ## 3a. Frontend Local Checks
 

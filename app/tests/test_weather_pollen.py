@@ -94,6 +94,48 @@ def test_fetch_current_pollen_with_retry_succeeds_after_retries(monkeypatch):
     assert attempts["count"] == 3
 
 
+def test_fetch_current_pollen_sends_documented_ambee_headers(monkeypatch):
+    captured = {}
+
+    def _fake_ambee_urlopen(req, timeout=10):
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.header_items())
+        return _FakeResponse(
+            {
+                "data": [
+                    {
+                        "Risk": {
+                            "tree_pollen": "Low",
+                            "grass_pollen": "Moderate",
+                            "weed_pollen": "High",
+                        },
+                        "Count": {
+                            "tree_pollen": 1,
+                            "grass_pollen": 2,
+                            "weed_pollen": 3,
+                        },
+                        "Species": {"Tree": {"Oak": 1}, "Weed": {"Ragweed": 3}},
+                        "updatedAt": "2026-05-16T12:00:00Z",
+                    }
+                ]
+            }
+        )
+
+    import urllib.request as _urllib_req
+
+    monkeypatch.setattr(wb, "AMBEE_API_KEY", "test-ambee-key")
+    monkeypatch.setattr(_urllib_req, "urlopen", _fake_ambee_urlopen)
+
+    result = wb._fetch_current_pollen()
+
+    assert "latest/pollen/by-lat-lng" in captured["url"]
+    assert captured["headers"]["X-api-key"] == "test-ambee-key"
+    assert captured["headers"]["Accept"] == "application/json"
+    assert captured["headers"]["Content-type"] == "application/json"
+    assert result["tree_risk"] == "Low"
+    assert result["ragweed_count"] == 3
+
+
 def test_api_weather_uses_todays_stored_pollen_when_live_fetch_fails(monkeypatch):
     monkeypatch.setattr(wb, "_dashboard_read_auth_or_401", lambda _request: None)
     monkeypatch.setattr(wb, "_weather_cache", {})
@@ -128,4 +170,3 @@ def test_api_weather_uses_todays_stored_pollen_when_live_fetch_fails(monkeypatch
     assert result["current_pollen"]["tree_risk"] == "Moderate"
     assert result["current_pollen"]["tree_detail"] == "Oak 12"
     assert result["environmental"][-1]["tree_risk"] == "Moderate"
-

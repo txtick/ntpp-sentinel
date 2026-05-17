@@ -65,6 +65,7 @@ Examples:
 - **Pollen history must use the dashboard's local date, not Postgres `CURRENT_DATE`.** If the DB session is on UTC during the evening, a same-night pollen snapshot can land under tomorrow's date and leave the widget's `Today` row blank.
 - **`WEATHER_LAT` / `WEATHER_LON`** env vars control coordinates (default 33.15, -96.82 = Frisco/McKinney area).
 - `/api/weather` is on `web-backend` and requires dashboard auth. Weather data is fetched server-side and cached; the frontend does not call external APIs directly.
+- Ambee pollen auth uses the `x-api-key` header plus JSON request headers. If Ambee returns 401 while the dashboard key looks active, first verify the `web-backend` container has the current `AMBEE_API_KEY` and has been restarted after any `.env` change.
 
 ## Python urllib + Cloudflare + GHL
 

@@ -81,6 +81,21 @@ docker compose exec -T web-backend curl -s -X POST \
 
 - Scheduled pollen snapshots run at `6:15am`, `10:15am`, `2:15pm`, and `6:15pm` local.
 
+## Ambee Pollen Auth Check
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend sh -lc '
+  echo "AMBEE_API_KEY chars: ${#AMBEE_API_KEY}"
+  curl -sS -i \
+    "https://api.ambeedata.com/latest/pollen/by-lat-lng?lat=${WEATHER_LAT:-33.15}&lng=${WEATHER_LON:--96.82}" \
+    -H "x-api-key: $AMBEE_API_KEY" \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    | sed -n "1,20p"
+'
+```
+
 ## Frontend Checks
 
 ```bash
