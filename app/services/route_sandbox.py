@@ -978,14 +978,21 @@ def validate_scenario(scenario_id: int) -> Dict[str, Any]:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} is missing a technician."})
             if stop.get("day_of_week") not in valid_days:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} has invalid day: {stop.get('day_of_week') or 'blank'}."})
+            # Track by (location, tech/day group) — same location in different techs is valid
+            # (e.g. maintenance tech + repair tech both visiting the same pool)
             seen_locations.setdefault(loc, []).append(key)
 
-    # Duplicate location across route groups
+    # Flag a location only if it appears TWICE within the same tech/day group
+    # (a genuine scheduling mistake). Cross-tech duplicates are intentional —
+    # e.g. one tech does weekly maintenance and another handles repairs at the same pool.
     for loc, groups in seen_locations.items():
-        if loc and len(groups) > 1:
+        if not loc:
+            continue
+        same_group_dupes = [g for g in set(groups) if groups.count(g) > 1]
+        if same_group_dupes:
             all_errors.append({
-                "group": "global",
-                "message": f"Service location {loc} appears in multiple route groups: {', '.join(groups)}",
+                "group": same_group_dupes[0],
+                "message": f"Service location appears more than once in the same route group: {', '.join(same_group_dupes)}",
             })
 
     return {
@@ -1034,17 +1041,15 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
     current = list_current_route_pools(source_system)
     scenario_detail = get_scenario(scenario_id)
 
-    # Build current lookup by location_id → {account_id, day, stop_order, rank, ...}
+    # Build current lookup keyed by (location_id, account_id) so that the same pool
+    # appearing under different techs (e.g. maintenance + repair) is tracked separately.
     # rank = 1-based position within tech/day group sorted by stop_order.
-    # We compare rank (relative position) rather than raw stop_order numbers so
-    # that a scenario created from Skimmer data with order=10,20,30 doesn't appear
-    # "reordered" vs the scenario's sequential 1,2,3 numbering.
-    current_map: Dict[str, Dict[str, Any]] = {}
+    current_map: Dict[tuple, Dict[str, Any]] = {}
     for group in current["route_groups"]:
         stops_sorted = sorted(group["stops"], key=lambda s: s.get("stop_order") or 9999)
         for rank, stop in enumerate(stops_sorted, 1):
-            loc = stop["source_service_location_id"]
-            current_map[loc] = {
+            key = (stop["source_service_location_id"], stop["source_account_id"])
+            current_map[key] = {
                 "source_route_assignment_id": stop.get("source_route_assignment_id"),
                 "source_account_id": stop["source_account_id"],
                 "tech_name": stop.get("tech_name"),
@@ -1055,13 +1060,13 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
                 "address": stop.get("address"),
             }
 
-    # Build scenario lookup with ranks
-    scenario_map: Dict[str, Dict[str, Any]] = {}
+    # Build scenario lookup with ranks (same composite key)
+    scenario_map: Dict[tuple, Dict[str, Any]] = {}
     for group in scenario_detail["route_groups"]:
         stops_sorted = sorted(group["stops"], key=lambda s: s.get("stop_order") or 9999)
         for rank, stop in enumerate(stops_sorted, 1):
-            loc = stop["source_service_location_id"]
-            scenario_map[loc] = {
+            key = (stop["source_service_location_id"], stop["source_account_id"])
+            scenario_map[key] = {
                 "source_account_id": stop["source_account_id"],
                 "tech_name": stop.get("tech_name"),
                 "day_of_week": stop["day_of_week"],
@@ -1080,12 +1085,13 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
     unchanged_count = 0
 
     for loc in sorted(all_locations):
+        loc_id = loc[0] if isinstance(loc, tuple) else loc
         cur = current_map.get(loc)
         prp = scenario_map.get(loc)
         if cur is None and prp is not None:
-            added.append({**prp, "source_service_location_id": loc, "change_type": "added"})
+            added.append({**prp, "source_service_location_id": loc_id, "change_type": "added"})
         elif cur is not None and prp is None:
-            removed.append({**cur, "source_service_location_id": loc, "change_type": "removed"})
+            removed.append({**cur, "source_service_location_id": loc_id, "change_type": "removed"})
         elif cur and prp:
             tech_changed = cur["source_account_id"] != prp["source_account_id"]
             day_changed = cur["day_of_week"] != prp["day_of_week"]
@@ -1096,7 +1102,7 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
             rank_changed = cur["rank"] != prp["rank"]
             if tech_changed or day_changed:
                 changes.append({
-                    "source_service_location_id": loc,
+                    "source_service_location_id": loc_id,
                     "customer_name": cur.get("customer_name") or prp.get("customer_name"),
                     "address": cur.get("address") or prp.get("address"),
                     "change_type": "moved",
@@ -1112,7 +1118,7 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
                 })
             elif rank_changed:
                 reordered.append({
-                    "source_service_location_id": loc,
+                    "source_service_location_id": loc_id,
                     "customer_name": cur.get("customer_name"),
                     "address": cur.get("address"),
                     "change_type": "reordered",
