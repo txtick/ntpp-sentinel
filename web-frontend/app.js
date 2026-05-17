@@ -3906,7 +3906,11 @@ function sandboxFilterGroups(groups) {
 // ── Map ───────────────────────────────────────────────────────────────────────
 
 function sandboxInitMap() {
-  if (sandbox.map) return;
+  if (sandbox.map) {
+    // Already initialized; invalidate in case the container was re-inserted
+    setTimeout(() => sandbox.map.invalidateSize(), 50);
+    return;
+  }
   const mapEl = document.getElementById("sandbox-map-container");
   if (!mapEl || typeof L === "undefined") return;
   sandbox.map = L.map(mapEl, { zoomControl: true }).setView([32.9, -97.0], 10);
@@ -3914,6 +3918,8 @@ function sandboxInitMap() {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(sandbox.map);
+  // Let the browser finish layout before Leaflet measures the container
+  setTimeout(() => sandbox.map.invalidateSize(), 50);
 }
 
 function sandboxMapIcon(color, order, isChanged) {
@@ -4554,9 +4560,8 @@ async function loadRouteSandbox(force = false) {
           <div id="sandbox-route-list" class="sandbox-route-list"></div>
         </div>
         <div class="sandbox-center">
-          <div id="sandbox-main-content" class="sandbox-main-content">
-            <div id="sandbox-map-container" class="sandbox-map-container"></div>
-          </div>
+          <div id="sandbox-map-container" class="sandbox-map-container"></div>
+          <div id="sandbox-main-content" class="sandbox-main-content"></div>
         </div>
         <div id="sandbox-detail-drawer" class="sandbox-detail-drawer" hidden></div>
       </div>
