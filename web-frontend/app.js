@@ -5156,11 +5156,13 @@ function _loadGoogleMapsScript(browserKey) {
     });
   }
   return new Promise((resolve, reject) => {
+    // Dummy callback suppresses the "can't load Google Maps" dialog that appears
+    // when the Maps JS API is loaded without rendering an actual map element.
+    window.__gmapPlacesReady = resolve;
     const s = document.createElement("script");
     s.id = "gmap-places-script";
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(browserKey)}&libraries=places&loading=async`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(browserKey)}&libraries=places&callback=__gmapPlacesReady`;
     s.async = true;
-    s.onload = resolve;
     s.onerror = () => reject(new Error("Failed to load Google Maps API"));
     document.head.appendChild(s);
   });
