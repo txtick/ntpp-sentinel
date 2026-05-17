@@ -180,6 +180,8 @@ To use Google Pollen instead, set these in `/opt/ntpp-sentinel/.env` and restart
 ```bash
 POLLEN_PROVIDER=google
 GOOGLE_POLLEN_API_KEY=your_google_maps_pollen_key
+# Optional Google forecast-day storage. Google supports up to 5 days.
+# GOOGLE_POLLEN_FORECAST_DAYS=5
 # Optional dashboard-load timeout tuning, in seconds:
 # WEATHER_API_TIMEOUT=4
 # WEATHER_AQ_TIMEOUT=3
@@ -201,6 +203,8 @@ docker compose exec -T web-backend sh -lc '
     | sed -n "1,20p"
 '
 ```
+
+With `POLLEN_PROVIDER=google`, the scheduled pollen snapshot stores today's Google pollen forecast plus the next configured forecast dates in `pollen_daily_log`. This avoids relying on dashboard traffic to create pollen history.
 
 ## 3a. Frontend Local Checks
 

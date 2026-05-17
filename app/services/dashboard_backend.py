@@ -1360,6 +1360,9 @@ def ensure_web_backend_schema() -> None:
                 )
                 """
             )
+            cur.execute("ALTER TABLE pollen_daily_log ADD COLUMN IF NOT EXISTS provider TEXT")
+            cur.execute("ALTER TABLE pollen_daily_log ADD COLUMN IF NOT EXISTS ragweed_count NUMERIC")
+            cur.execute("ALTER TABLE pollen_daily_log ADD COLUMN IF NOT EXISTS raw_json JSONB NOT NULL DEFAULT '{}'::jsonb")
         conn.commit()
 
 
@@ -4523,11 +4526,11 @@ def update_alert_instance_status(
     return {"ok": True, "item": updated}
 
 
-def upsert_pollen_daily_log(pollen: dict) -> None:
-    """Store today's Ambee pollen reading. Called after each successful Ambee fetch."""
+def upsert_pollen_daily_log(pollen: dict, log_date=None) -> None:
+    """Store one pollen reading for a local dashboard date."""
     if not DATABASE_URL or not pollen:
         return
-    log_date = _now_tz().date()
+    log_date = log_date or pollen.get("log_date") or pollen.get("forecast_date") or _now_tz().date()
     try:
         with pg() as conn:
             with conn.cursor() as cur:
@@ -4535,9 +4538,10 @@ def upsert_pollen_daily_log(pollen: dict) -> None:
                     """
                     INSERT INTO pollen_daily_log
                         (log_date, tree_risk, grass_risk, weed_risk,
-                         tree_count, grass_count, weed_count, tree_detail, updated_at)
+                         tree_count, grass_count, weed_count, tree_detail,
+                         provider, ragweed_count, raw_json, updated_at)
                     VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
                     ON CONFLICT (log_date) DO UPDATE SET
                         tree_risk   = EXCLUDED.tree_risk,
                         grass_risk  = EXCLUDED.grass_risk,
@@ -4546,6 +4550,9 @@ def upsert_pollen_daily_log(pollen: dict) -> None:
                         grass_count = EXCLUDED.grass_count,
                         weed_count  = EXCLUDED.weed_count,
                         tree_detail = EXCLUDED.tree_detail,
+                        provider    = EXCLUDED.provider,
+                        ragweed_count = EXCLUDED.ragweed_count,
+                        raw_json    = EXCLUDED.raw_json,
                         updated_at  = EXCLUDED.updated_at
                     """,
                     (
@@ -4557,11 +4564,25 @@ def upsert_pollen_daily_log(pollen: dict) -> None:
                         pollen.get("grass_count"),
                         pollen.get("weed_count"),
                         pollen.get("tree_detail"),
+                        pollen.get("provider"),
+                        pollen.get("ragweed_count"),
+                        _json_dumps(pollen.get("raw_json") or {}),
                     ),
                 )
             conn.commit()
     except Exception as exc:
         _logger.warning(f"pollen_daily_log upsert failed: {exc}")
+
+
+def upsert_pollen_daily_logs(entries: list[dict]) -> int:
+    """Store multiple dated pollen readings and return the saved row count."""
+    saved = 0
+    for entry in entries or []:
+        if not entry:
+            continue
+        upsert_pollen_daily_log(entry)
+        saved += 1
+    return saved
 
 
 def get_pollen_daily_log(days: int = 7) -> dict:
@@ -4575,7 +4596,8 @@ def get_pollen_daily_log(days: int = 7) -> dict:
                 cur.execute(
                     """
                     SELECT log_date::text, tree_risk, grass_risk, weed_risk,
-                           tree_count, grass_count, weed_count, tree_detail
+                           tree_count, grass_count, weed_count, tree_detail,
+                           provider, ragweed_count, updated_at
                     FROM pollen_daily_log
                     WHERE log_date >= %s
                     ORDER BY log_date
@@ -4593,7 +4615,8 @@ def get_pollen_daily_log(days: int = 7) -> dict:
                 result[d] = {
                     "tree_risk": row[1], "grass_risk": row[2], "weed_risk": row[3],
                     "tree_count": row[4], "grass_count": row[5], "weed_count": row[6],
-                    "tree_detail": row[7],
+                    "tree_detail": row[7], "provider": row[8], "ragweed_count": row[9],
+                    "updated_at": row[10],
                 }
         return result
     except Exception as exc:

@@ -58,6 +58,7 @@ from services.dashboard_backend import (
     list_refresh_runs,
     get_avg_water_temp,
     upsert_pollen_daily_log,
+    upsert_pollen_daily_logs,
     get_pollen_daily_log,
     notify_filter_clean_customer,
     refresh_alert_instances,
@@ -164,6 +165,7 @@ def _env_float(name: str, default: float) -> float:
 WEATHER_API_TIMEOUT = _env_float("WEATHER_API_TIMEOUT", 4.0)
 WEATHER_AQ_TIMEOUT = _env_float("WEATHER_AQ_TIMEOUT", 3.0)
 POLLEN_API_TIMEOUT = _env_float("POLLEN_API_TIMEOUT", 4.0)
+GOOGLE_POLLEN_FORECAST_DAYS = max(1, min(5, int(_env_float("GOOGLE_POLLEN_FORECAST_DAYS", 5))))
 
 
 class AmbeePollenAuthError(RuntimeError):
@@ -269,10 +271,53 @@ def _google_pollen_value(info: dict) -> Optional[int]:
         return None
 
 
-def _fetch_current_google_pollen() -> dict:
-    """Fetch today's Google Pollen forecast for the configured coordinates."""
+def _google_pollen_date(daily: dict) -> Optional[str]:
+    date_info = daily.get("date") or {}
+    if date_info.get("year") and date_info.get("month") and date_info.get("day"):
+        return f"{int(date_info['year']):04d}-{int(date_info['month']):02d}-{int(date_info['day']):02d}"
+    return None
+
+
+def _google_daily_pollen_to_current(daily: dict) -> dict:
+    type_info = {str(item.get("code") or "").upper(): item for item in daily.get("pollenTypeInfo") or []}
+    plant_info = daily.get("plantInfo") or []
+    tree_plants = [
+        item
+        for item in plant_info
+        if (item.get("plantDescription") or {}).get("type") == "TREE" or str(item.get("code") or "").upper() in {"ALDER", "ASH", "BIRCH", "COTTONWOOD", "ELM", "JUNIPER", "MAPLE", "OAK", "PINE"}
+    ]
+    top_trees = sorted(
+        [
+            (item.get("displayName") or item.get("code"), _google_pollen_value(item) or 0)
+            for item in tree_plants
+            if item.get("displayName") or item.get("code")
+        ],
+        key=lambda pair: pair[1],
+        reverse=True,
+    )[:3]
+    tree_detail = ", ".join(f"{name} {value}" for name, value in top_trees if value > 0)
+    ragweed = next((item for item in plant_info if str(item.get("code") or "").upper() == "RAGWEED"), {})
+
+    return {
+        "log_date": _google_pollen_date(daily),
+        "tree_risk": _google_pollen_category(type_info.get("TREE", {})),
+        "grass_risk": _google_pollen_category(type_info.get("GRASS", {})),
+        "weed_risk": _google_pollen_category(type_info.get("WEED", {})),
+        "tree_count": _google_pollen_value(type_info.get("TREE", {})),
+        "grass_count": _google_pollen_value(type_info.get("GRASS", {})),
+        "weed_count": _google_pollen_value(type_info.get("WEED", {})),
+        "tree_detail": tree_detail,
+        "ragweed_count": _google_pollen_value(ragweed),
+        "updated_at": _google_pollen_date(daily),
+        "provider": "google",
+        "raw_json": daily,
+    }
+
+
+def _fetch_google_pollen_forecast(days: int = GOOGLE_POLLEN_FORECAST_DAYS) -> list[dict]:
+    """Fetch dated Google Pollen forecast entries for the configured coordinates."""
     if not GOOGLE_POLLEN_API_KEY:
-        return {}
+        return []
 
     import urllib.error as _urllib_error
     import urllib.parse as _urllib_parse
@@ -283,7 +328,7 @@ def _fetch_current_google_pollen() -> dict:
             "key": GOOGLE_POLLEN_API_KEY,
             "location.longitude": WEATHER_LON,
             "location.latitude": WEATHER_LAT,
-            "days": 1,
+            "days": max(1, min(5, int(days))),
             "plantsDescription": "false",
         }
     )
@@ -313,48 +358,32 @@ def _fetch_current_google_pollen() -> dict:
         _logger.warning("Google pollen request failed: %s", exc)
         raise
 
-    daily = (data.get("dailyInfo") or [{}])[0]
-    type_info = {str(item.get("code") or "").upper(): item for item in daily.get("pollenTypeInfo") or []}
-    plant_info = daily.get("plantInfo") or []
+    daily_info = data.get("dailyInfo") or []
     _logger.info(
         "Google pollen response parsed daily_info=%s pollen_types=%s plants=%s",
-        len(data.get("dailyInfo") or []),
-        sorted(type_info.keys()),
-        len(plant_info),
+        len(daily_info),
+        sorted({str(item.get("code") or "").upper() for daily in daily_info for item in daily.get("pollenTypeInfo") or []}),
+        sum(len(daily.get("plantInfo") or []) for daily in daily_info),
     )
-    tree_plants = [
-        item
-        for item in plant_info
-        if (item.get("plantDescription") or {}).get("type") == "TREE" or str(item.get("code") or "").upper() in {"ALDER", "ASH", "BIRCH", "COTTONWOOD", "ELM", "JUNIPER", "MAPLE", "OAK", "PINE"}
-    ]
-    top_trees = sorted(
-        [
-            (item.get("displayName") or item.get("code"), _google_pollen_value(item) or 0)
-            for item in tree_plants
-            if item.get("displayName") or item.get("code")
-        ],
-        key=lambda pair: pair[1],
-        reverse=True,
-    )[:3]
-    tree_detail = ", ".join(f"{name} {value}" for name, value in top_trees if value > 0)
-    ragweed = next((item for item in plant_info if str(item.get("code") or "").upper() == "RAGWEED"), {})
-    date_info = daily.get("date") or {}
-    updated_at = None
-    if date_info.get("year") and date_info.get("month") and date_info.get("day"):
-        updated_at = f"{int(date_info['year']):04d}-{int(date_info['month']):02d}-{int(date_info['day']):02d}"
+    return [entry for entry in (_google_daily_pollen_to_current(daily) for daily in daily_info) if entry.get("log_date")]
 
-    return {
-        "tree_risk": _google_pollen_category(type_info.get("TREE", {})),
-        "grass_risk": _google_pollen_category(type_info.get("GRASS", {})),
-        "weed_risk": _google_pollen_category(type_info.get("WEED", {})),
-        "tree_count": _google_pollen_value(type_info.get("TREE", {})),
-        "grass_count": _google_pollen_value(type_info.get("GRASS", {})),
-        "weed_count": _google_pollen_value(type_info.get("WEED", {})),
-        "tree_detail": tree_detail,
-        "ragweed_count": _google_pollen_value(ragweed),
-        "updated_at": updated_at,
-        "provider": "google",
-    }
+
+def _fetch_current_google_pollen() -> dict:
+    """Fetch today's Google Pollen forecast for the configured coordinates."""
+    forecast = _fetch_google_pollen_forecast(days=1)
+    return forecast[0] if forecast else {}
+
+
+def _fetch_pollen_forecast_entries() -> list[dict]:
+    provider = _configured_pollen_provider()
+    if provider in {"off", "disabled"}:
+        return []
+    if provider == "google":
+        return _fetch_google_pollen_forecast(days=GOOGLE_POLLEN_FORECAST_DAYS)
+    current = _fetch_current_ambee_pollen()
+    if current:
+        current["log_date"] = _local_weather_date_str()
+    return [current] if current else []
 
 
 def _fetch_current_pollen() -> dict:
@@ -783,19 +812,20 @@ def job_weather_pollen_snapshot(request: Request):
     if provider in {"off", "disabled"}:
         return {"ok": False, "saved": False, "reason": "No pollen provider is configured"}
     try:
-        current_pollen = _fetch_current_pollen_with_retry()
-        if not current_pollen:
+        entries = _fetch_pollen_forecast_entries()
+        if not entries:
             return {"ok": False, "saved": False, "reason": "No pollen data returned"}
-        upsert_pollen_daily_log(current_pollen)
+        saved_count = upsert_pollen_daily_logs(entries)
         # Force the next /api/weather request to rebuild from fresh DB + API data.
         _weather_cache = {}
         _weather_cache_ts = 0.0
         return {
             "ok": True,
             "saved": True,
-            "provider": current_pollen.get("provider") or provider,
-            "log_date": __import__("datetime").date.today().isoformat(),
-            "current_pollen": current_pollen,
+            "provider": entries[0].get("provider") or provider,
+            "saved_count": saved_count,
+            "log_dates": [entry.get("log_date") for entry in entries if entry.get("log_date")],
+            "current_pollen": entries[0],
         }
     except Exception as exc:
         _logger.warning("weather pollen snapshot failed: %s", exc)
@@ -1030,6 +1060,7 @@ def api_weather(request: Request):
             current_pollen = _fetch_current_pollen_with_retry(attempts=1, delay_seconds=0)
             # Persist today's reading so we can show pollen history
             upsert_pollen_daily_log(current_pollen)
+            pollen_log[current_pollen.get("log_date") or _local_weather_date_str()] = current_pollen
         except Exception as exc:
             _logger.warning("%s pollen fetch failed: %s", pollen_provider, exc)
     if not current_pollen:

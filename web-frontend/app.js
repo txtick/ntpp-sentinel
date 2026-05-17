@@ -4911,11 +4911,9 @@ async function loadRouteTechSettings(_force = false) {
   const profiles = result.items || [];
 
   els.mainPanel.innerHTML = `
-    <div class="sandbox-shell" style="max-width:900px;margin:0 auto;padding:24px">
-      <h3 style="margin-bottom:16px">Tech Route Settings</h3>
-      <p class="muted" style="margin-bottom:24px">
-        Configure home/start/end locations for each technician. These are used to calculate commute
-        distance and first/last stop metrics in the Route Sandbox.
+    <div style="max-width:860px;padding:4px 0 24px">
+      <p class="muted" style="margin:0 0 20px">
+        Configure home/start/end locations for each technician. Used for commute distance and first/last stop metrics in the Route Sandbox.
       </p>
       <div id="tech-profiles-list">
         ${knownTechs.length === 0 ? `<div class="empty-state">No technicians found in Skimmer import data.</div>` : ""}

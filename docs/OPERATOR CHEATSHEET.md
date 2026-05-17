@@ -103,6 +103,8 @@ Set these in `/opt/ntpp-sentinel/.env`, then restart `web-backend`:
 ```bash
 POLLEN_PROVIDER=google
 GOOGLE_POLLEN_API_KEY=your_google_maps_pollen_key
+# Optional Google forecast-day storage. Google supports up to 5 days.
+# GOOGLE_POLLEN_FORECAST_DAYS=5
 # Optional dashboard-load timeout tuning, in seconds:
 # WEATHER_API_TIMEOUT=4
 # WEATHER_AQ_TIMEOUT=3

@@ -222,6 +222,76 @@ def test_fetch_current_pollen_maps_google_out_of_season_to_none(monkeypatch):
     assert result["grass_risk"] == "Low"
 
 
+def test_fetch_google_pollen_forecast_returns_dated_entries(monkeypatch):
+    captured = {}
+
+    def _fake_google_urlopen(req, timeout=10):
+        captured["url"] = req.full_url
+        return _FakeResponse(
+            {
+                "dailyInfo": [
+                    {
+                        "date": {"year": 2026, "month": 5, "day": 17},
+                        "pollenTypeInfo": [
+                            {"code": "TREE", "indexInfo": {"category": "Moderate", "value": 3}},
+                        ],
+                        "plantInfo": [],
+                    },
+                    {
+                        "date": {"year": 2026, "month": 5, "day": 18},
+                        "pollenTypeInfo": [
+                            {"code": "TREE", "indexInfo": {"category": "High", "value": 4}},
+                            {"code": "GRASS", "indexInfo": {"category": "Low", "value": 1}},
+                        ],
+                        "plantInfo": [],
+                    },
+                ]
+            }
+        )
+
+    import urllib.request as _urllib_req
+
+    monkeypatch.setattr(wb, "GOOGLE_POLLEN_API_KEY", "test-google-key")
+    monkeypatch.setattr(wb, "POLLEN_PROVIDER", "google")
+    monkeypatch.setattr(_urllib_req, "urlopen", _fake_google_urlopen)
+
+    result = wb._fetch_pollen_forecast_entries()
+
+    assert "days=5" in captured["url"]
+    assert [entry["log_date"] for entry in result] == ["2026-05-17", "2026-05-18"]
+    assert result[0]["tree_risk"] == "Moderate"
+    assert result[1]["tree_risk"] == "High"
+    assert result[1]["grass_count"] == 1
+
+
+def test_pollen_snapshot_saves_google_forecast_dates(monkeypatch):
+    saved = {}
+
+    forecast_entries = [
+        {"log_date": "2026-05-17", "tree_risk": "Moderate", "provider": "google"},
+        {"log_date": "2026-05-18", "tree_risk": "High", "provider": "google"},
+    ]
+
+    def _fake_upsert(entries):
+        saved["entries"] = list(entries)
+        return len(entries)
+
+    monkeypatch.setattr(wb, "_auth_or_401", lambda _request: None)
+    monkeypatch.setattr(wb, "POLLEN_PROVIDER", "google")
+    monkeypatch.setattr(wb, "_fetch_pollen_forecast_entries", lambda: forecast_entries)
+    monkeypatch.setattr(wb, "upsert_pollen_daily_logs", _fake_upsert)
+    monkeypatch.setattr(wb, "_weather_cache", {"old": True})
+    monkeypatch.setattr(wb, "_weather_cache_ts", 123.0)
+
+    result = wb.job_weather_pollen_snapshot(object())
+
+    assert result["saved"] is True
+    assert result["saved_count"] == 2
+    assert result["log_dates"] == ["2026-05-17", "2026-05-18"]
+    assert saved["entries"] == forecast_entries
+    assert wb._weather_cache == {}
+
+
 def test_fetch_current_pollen_with_retry_does_not_retry_ambee_auth_errors(monkeypatch):
     attempts = {"count": 0}
 
