@@ -3882,6 +3882,7 @@ const sandbox = {
   showHomeMarkers: false,
   mapsStatus: null, // { server_maps_configured, browser_maps_configured, ... }
   estimates: {}, // keyed by "techId/day"
+  activeGroupKey: null, // "techId/day" of the currently selected route group
   optimizePreview: null,
   showDrivingRoute: false,
 };
@@ -4378,9 +4379,11 @@ function renderSandboxRouteList(groups) {
       `
         : "";
 
+      const isActiveGroup = sandbox.activeGroupKey === estKey;
       return `
-      <div class="sandbox-group" data-tech="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
-        <div class="sandbox-group-header">
+      <div class="sandbox-group${isActiveGroup ? " is-active-group" : ""}" data-tech="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
+        <div class="sandbox-group-header" style="cursor:pointer"
+             onclick="sandboxSelectGroup('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">
           <div class="sandbox-group-header-row">
             <span class="sandbox-group-dot" style="background:${color}"></span>
             <span class="sandbox-group-title">${escapeHtml(g.tech_name)} — ${escapeHtml(sandboxDayLabel(g.day_of_week))}</span>
@@ -4668,6 +4671,8 @@ function renderSandboxFilters(groups) {
     .getElementById("sandbox-day-filter")
     ?.addEventListener("change", (e) => {
       sandbox.filterDay = e.target.value;
+      sandbox.activeGroupKey = null;
+      sandboxDrawPolyline(null);
       const filtered = sandboxFilterGroups(sandboxGetActiveData());
       renderSandboxFilters(filtered);
       renderSandboxRouteList(filtered);
@@ -4678,6 +4683,8 @@ function renderSandboxFilters(groups) {
     .getElementById("sandbox-tech-filter")
     ?.addEventListener("change", (e) => {
       sandbox.filterTech = e.target.value;
+      sandbox.activeGroupKey = null;
+      sandboxDrawPolyline(null);
       const filtered = sandboxFilterGroups(sandboxGetActiveData());
       renderSandboxFilters(filtered);
       renderSandboxRouteList(filtered);
@@ -4931,6 +4938,22 @@ function decodePolyline(encoded) {
   return coords;
 }
 
+function sandboxSelectGroup(techId, day) {
+  const key = `${techId}/${day}`;
+  sandbox.activeGroupKey = key;
+  // Update active styling
+  document.querySelectorAll(".sandbox-group").forEach((el) => {
+    el.classList.toggle("is-active-group", el.dataset.tech === techId && el.dataset.day === day);
+  });
+  // Draw the stored polyline for this group if one exists
+  const est = sandbox.estimates[key];
+  if (est?.polyline) {
+    sandboxDrawPolyline(est.polyline);
+  } else {
+    sandboxDrawPolyline(null);
+  }
+}
+
 function sandboxDrawPolyline(encodedPolyline) {
   if (sandbox.polylineLayer) {
     sandbox.polylineLayer.remove();
@@ -4975,8 +4998,8 @@ async function sandboxEstimateRoute(techId, day) {
     // Re-render route list to show updated estimate badge (soft, no API reload)
     const allGroups = sandboxGetActiveData();
     renderSandboxRouteList(sandboxFilterGroups(allGroups));
-    // Draw the combined route polyline returned by Google
-    if (result.polyline) sandboxDrawPolyline(result.polyline);
+    // Select this group and draw its polyline
+    sandboxSelectGroup(techId, day);
   } catch (err) {
     setStatus("Error", "critical");
     showToast(`Estimate failed: ${err.message}`, 5000);
@@ -5313,6 +5336,7 @@ window.saveTechProfile = saveTechProfile;
 window.sandboxEstimateRoute = sandboxEstimateRoute;
 window.sandboxOptimizeRoute = sandboxOptimizeRoute;
 window.sandboxApplyOptimization = sandboxApplyOptimization;
+window.sandboxSelectGroup = sandboxSelectGroup;
 
 init().catch((error) => {
   setStatus("Error", "critical");

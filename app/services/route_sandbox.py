@@ -1919,7 +1919,7 @@ def get_route_estimates(
                     last_to_end_duration_seconds,
                     service_duration_seconds, total_work_duration_seconds,
                     stop_count, request_count, cache_hit_count,
-                    warnings, is_stale, created_at
+                    warnings, is_stale, polyline, created_at
                 FROM route_estimate_runs
                 WHERE {" AND ".join(filters)}
                 ORDER BY technician_id, service_day, created_at DESC

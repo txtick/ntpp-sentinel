@@ -2122,3 +2122,10 @@ textarea {
 .pac-container {
   z-index: 99999 !important;
 }
+
+/* Active route group highlight */
+.sandbox-group.is-active-group > .sandbox-group-header {
+  background: var(--accent-faint, rgba(37, 99, 235, 0.07));
+  border-left: 3px solid var(--accent, #2563eb);
+  padding-left: 9px;
+}
