@@ -1581,12 +1581,31 @@ def calculate_route_estimate(
     end_lng = float(end_lng) if end_lng is not None else None
 
     # Build ordered sequence of points
+    # Continental US + Hawaii + Alaska bounding box (generous slack for border areas)
+    _US_LAT_MIN, _US_LAT_MAX = 15.0, 72.0
+    _US_LNG_MIN, _US_LNG_MAX = -180.0, -60.0
+    bad_coord_warnings: List[str] = []
+
+    def _validate_us_coord(lat, lng, label: str):
+        if lat is None or lng is None:
+            return lat, lng
+        if not (_US_LAT_MIN <= lat <= _US_LAT_MAX and _US_LNG_MIN <= lng <= _US_LNG_MAX):
+            bad_coord_warnings.append(
+                f"{label} has unexpected coordinates ({lat:.4f}, {lng:.4f}) — outside US bounds, skipping"
+            )
+            return None, None
+        return lat, lng
+
+    start_lat, start_lng = _validate_us_coord(start_lat, start_lng, f"Start ({start_type})")
+    end_lat, end_lng = _validate_us_coord(end_lat, end_lng, f"End ({end_type})")
+
     points: List[Dict] = []
     if start_lat is not None:
         points.append({"type": start_type, "lat": start_lat, "lng": start_lng, "pool_id": None, "duration_min": 0})
     for s in stops:
         lat = float(s["latitude"]) if s.get("latitude") is not None else None
         lng = float(s["longitude"]) if s.get("longitude") is not None else None
+        lat, lng = _validate_us_coord(lat, lng, s.get("customer_name") or s.get("source_service_location_id") or "Pool")
         points.append({
             "type": "pool",
             "lat": lat,
@@ -1610,7 +1629,7 @@ def calculate_route_estimate(
             run_id = cur.fetchone()["id"]
         conn.commit()
 
-        warnings: List[str] = []
+        warnings: List[str] = list(bad_coord_warnings)
         request_count = 0
         cache_hit_count = 0
         seg_records: List[Dict] = []

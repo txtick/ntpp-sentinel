@@ -4945,9 +4945,18 @@ function sandboxDrawPolyline(encodedPolyline) {
     opacity: 0.85,
     dashArray: null,
   }).addTo(sandbox.map);
-  sandbox.map.fitBounds(sandbox.polylineLayer.getBounds(), {
-    padding: [32, 32],
-  });
+
+  // Guard against a bad pool coordinate pulling the map to another continent.
+  // If the polyline spans more than ~10 degrees in any direction, the route
+  // has at least one clearly wrong coordinate — skip fitBounds and warn.
+  const bounds = sandbox.polylineLayer.getBounds();
+  const latSpan = bounds.getNorth() - bounds.getSouth();
+  const lngSpan = bounds.getEast() - bounds.getWest();
+  if (latSpan > 10 || lngSpan > 15) {
+    showToast("⚠ Route has a stop with bad GPS coordinates — map zoom skipped. Check the warnings in the estimate result.", 6000);
+    return;
+  }
+  sandbox.map.fitBounds(bounds, { padding: [32, 32] });
 }
 
 async function sandboxEstimateRoute(techId, day) {
@@ -5142,6 +5151,51 @@ async function loadRouteSandbox(_force = false) {
   sandboxRenderMap(sandbox.techProfiles);
 }
 
+// ── Google Places address autocomplete ────────────────────────────────────────
+
+function _loadGoogleMapsScript(browserKey) {
+  if (window.google?.maps?.places?.Autocomplete) return Promise.resolve();
+  if (document.getElementById("gmap-places-script")) {
+    return new Promise((resolve, reject) => {
+      document.getElementById("gmap-places-script").addEventListener("load", resolve);
+      document.getElementById("gmap-places-script").addEventListener("error", reject);
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.id = "gmap-places-script";
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(browserKey)}&libraries=places`;
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Failed to load Google Maps API"));
+    document.head.appendChild(s);
+  });
+}
+
+function _initAddressAutocomplete(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input || !window.google?.maps?.places?.Autocomplete) return;
+  const ac = new google.maps.places.Autocomplete(input, {
+    types: ["address"],
+    componentRestrictions: { country: "us" },
+  });
+  ac.addListener("place_changed", () => {
+    const place = ac.getPlace();
+    if (place?.geometry?.location) {
+      input.dataset.placeLat = place.geometry.location.lat();
+      input.dataset.placeLng = place.geometry.location.lng();
+    } else {
+      delete input.dataset.placeLat;
+      delete input.dataset.placeLng;
+    }
+  });
+  // Clear stored coords if user edits the field manually after a selection
+  input.addEventListener("input", () => {
+    delete input.dataset.placeLat;
+    delete input.dataset.placeLng;
+  });
+}
+
 // ── Tech settings page ─────────────────────────────────────────────────────────
 
 async function loadRouteTechSettings(_force = false) {
@@ -5205,24 +5259,50 @@ async function loadRouteTechSettings(_force = false) {
           .join("")}
       </div>
     </div>`;
+
+  // Load Places API and init autocomplete on every address input
+  const mapsStatus = sandbox.mapsStatus || await api("/api/routes/maps/status").catch(() => null);
+  const browserKey = mapsStatus?.browser_maps_api_key;
+  if (browserKey) {
+    _loadGoogleMapsScript(browserKey).then(() => {
+      knownTechs.forEach((tech) => {
+        _initAddressAutocomplete(`tp-addr-${tech.source_account_id}`);
+      });
+    }).catch(() => {});
+  }
 }
 
 async function saveTechProfile(techId) {
-  const addr = document.getElementById(`tp-addr-${techId}`)?.value.trim();
+  const addrEl = document.getElementById(`tp-addr-${techId}`);
+  const addr = addrEl?.value.trim();
   const startType = document.getElementById(`tp-start-${techId}`)?.value;
   const endType = document.getElementById(`tp-end-${techId}`)?.value;
   const incStart = document.getElementById(`tp-inc-start-${techId}`)?.checked;
   const incEnd = document.getElementById(`tp-inc-end-${techId}`)?.checked;
+
+  const body = {
+    home_address: addr || null,
+    default_start_location_type: startType || "first_stop",
+    default_end_location_type: endType || "last_stop",
+    include_start_drive_in_metrics: incStart !== false,
+    include_end_drive_in_metrics: incEnd !== false,
+  };
+
+  // If Places autocomplete captured coordinates, include them so the backend
+  // doesn't need to re-geocode on the server.
+  if (addrEl?.dataset.placeLat && addrEl?.dataset.placeLng) {
+    body.home_latitude = parseFloat(addrEl.dataset.placeLat);
+    body.home_longitude = parseFloat(addrEl.dataset.placeLng);
+  } else if (!addr) {
+    // Address cleared — clear stored coordinates too
+    body.home_latitude = null;
+    body.home_longitude = null;
+  }
+
   await withSaving(async () => {
     await api(`/api/routes/technician-profiles/${encodeURIComponent(techId)}`, {
       method: "POST",
-      body: JSON.stringify({
-        home_address: addr || null,
-        default_start_location_type: startType || "first_stop",
-        default_end_location_type: endType || "last_stop",
-        include_start_drive_in_metrics: incStart !== false,
-        include_end_drive_in_metrics: incEnd !== false,
-      }),
+      body: JSON.stringify(body),
     });
   }, "Tech profile saved");
 }
