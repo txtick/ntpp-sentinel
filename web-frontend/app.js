@@ -3926,21 +3926,26 @@ function sandboxFilterGroups(groups) {
 // ── Map ───────────────────────────────────────────────────────────────────────
 
 function sandboxInitMap() {
-  if (sandbox.map) {
-    // Already initialized; invalidate in case the container was re-inserted
-    setTimeout(() => sandbox.map.invalidateSize(), 50);
-    return;
-  }
   const mapEl = document.getElementById("sandbox-map-container");
   if (!mapEl || typeof L === "undefined") return;
+
+  // Destroy any prior map — its container was removed when innerHTML was replaced
+  if (sandbox.map) {
+    sandbox.map.remove();
+    sandbox.map = null;
+  }
+
   sandbox.map = L.map(mapEl, { zoomControl: true }).setView([32.9, -97.0], 10);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution:
       '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(sandbox.map);
-  // Let the browser finish layout before Leaflet measures the container
-  setTimeout(() => sandbox.map.invalidateSize(), 50);
+
+  // Two rAF calls ensure the browser has committed layout before Leaflet measures
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => sandbox.map && sandbox.map.invalidateSize())
+  );
 }
 
 function sandboxMapIcon(color, order, isChanged) {
