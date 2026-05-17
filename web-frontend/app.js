@@ -4576,10 +4576,15 @@ function renderSandboxToolbar() {
     .getElementById("sandbox-validate-btn")
     ?.addEventListener("click", async () => {
       if (!activeId) return;
-      const result = await api(
-        `/api/routes/sandbox/scenarios/${activeId}/validate`,
-      );
-      renderSandboxValidationModal(result);
+      try {
+        const result = await api(
+          `/api/routes/sandbox/scenarios/${activeId}/validate`,
+          { method: "POST" },
+        );
+        renderSandboxValidationModal(result);
+      } catch (err) {
+        showToast(`Validation failed: ${err.message}`, 5000);
+      }
     });
 
   document
@@ -4598,6 +4603,17 @@ function renderSandboxToolbar() {
     .getElementById("sandbox-approve-btn")
     ?.addEventListener("click", async () => {
       if (!activeId) return;
+      // Run validation first so the user sees specific errors instead of a generic toast
+      try {
+        const validation = await api(
+          `/api/routes/sandbox/scenarios/${activeId}/validate`,
+          { method: "POST" },
+        );
+        if (!validation.valid) {
+          renderSandboxValidationModal(validation);
+          return;
+        }
+      } catch (_) { /* ignore — approval request below will also fail with a message */ }
       if (
         !confirm(
           "Approve this scenario? This locks the scenario for generating a manual update packet.",
