@@ -5158,7 +5158,7 @@ function _loadGoogleMapsScript(browserKey) {
   return new Promise((resolve, reject) => {
     const s = document.createElement("script");
     s.id = "gmap-places-script";
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(browserKey)}&libraries=places`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(browserKey)}&libraries=places&loading=async`;
     s.async = true;
     s.onload = resolve;
     s.onerror = () => reject(new Error("Failed to load Google Maps API"));

@@ -2117,3 +2117,8 @@ textarea {
     text-align: left;
   }
 }
+
+/* Google Places autocomplete dropdown — must sit above all page elements */
+.pac-container {
+  z-index: 99999 !important;
+}
