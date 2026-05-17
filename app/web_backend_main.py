@@ -151,6 +151,10 @@ WEATHER_CACHE_TTL = 3600  # 1 hour
 TIMEZONE_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
 
+class AmbeePollenAuthError(RuntimeError):
+    """Raised when Ambee rejects the configured key/subscription."""
+
+
 def _fetch_current_pollen() -> dict:
     """Fetch the latest Ambee pollen reading for the configured coordinates."""
     if not AMBEE_API_KEY:
@@ -182,6 +186,8 @@ def _fetch_current_pollen() -> dict:
             len(AMBEE_API_KEY or ""),
             body,
         )
+        if exc.code in (401, 403):
+            raise AmbeePollenAuthError(body or f"Ambee pollen auth failed with status {exc.code}") from exc
         raise
     except _urllib_error.URLError as exc:
         _logger.warning("Ambee pollen request failed: %s", exc)
@@ -241,6 +247,8 @@ def _fetch_current_pollen_with_retry(attempts: int = 3, delay_seconds: float = 1
     for attempt in range(max(1, int(attempts))):
         try:
             return _fetch_current_pollen()
+        except AmbeePollenAuthError:
+            raise
         except Exception as exc:
             last_exc = exc
             if attempt < max(1, int(attempts)) - 1:

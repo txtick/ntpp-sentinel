@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import urllib.error
 
 import pytest
 
@@ -17,6 +18,9 @@ class _FakeResponse:
 
     def read(self):
         return json.dumps(self._payload).encode("utf-8")
+
+    def close(self):
+        return None
 
     def __enter__(self):
         return self
@@ -134,6 +138,41 @@ def test_fetch_current_pollen_sends_documented_ambee_headers(monkeypatch):
     assert captured["headers"]["Content-type"] == "application/json"
     assert result["tree_risk"] == "Low"
     assert result["ragweed_count"] == 3
+
+
+def test_fetch_current_pollen_with_retry_does_not_retry_ambee_auth_errors(monkeypatch):
+    attempts = {"count": 0}
+
+    def _fake_fetch():
+        attempts["count"] += 1
+        raise wb.AmbeePollenAuthError('{"message":"No active subscription found"}')
+
+    monkeypatch.setattr(wb, "_fetch_current_pollen", _fake_fetch)
+    monkeypatch.setattr(wb.time, "sleep", lambda _s: None)
+
+    with pytest.raises(wb.AmbeePollenAuthError):
+        wb._fetch_current_pollen_with_retry(attempts=3, delay_seconds=0)
+
+    assert attempts["count"] == 1
+
+
+def test_fetch_current_pollen_wraps_401_as_auth_error(monkeypatch):
+    def _fake_ambee_urlopen(req, timeout=10):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            401,
+            "Unauthorized",
+            hdrs=None,
+            fp=_FakeResponse({"message": "No active subscription found"}),
+        )
+
+    import urllib.request as _urllib_req
+
+    monkeypatch.setattr(wb, "AMBEE_API_KEY", "test-ambee-key")
+    monkeypatch.setattr(_urllib_req, "urlopen", _fake_ambee_urlopen)
+
+    with pytest.raises(wb.AmbeePollenAuthError):
+        wb._fetch_current_pollen()
 
 
 def test_api_weather_uses_todays_stored_pollen_when_live_fetch_fails(monkeypatch):

@@ -66,6 +66,7 @@ Examples:
 - **`WEATHER_LAT` / `WEATHER_LON`** env vars control coordinates (default 33.15, -96.82 = Frisco/McKinney area).
 - `/api/weather` is on `web-backend` and requires dashboard auth. Weather data is fetched server-side and cached; the frontend does not call external APIs directly.
 - Ambee pollen auth uses the `x-api-key` header plus JSON request headers. If Ambee returns 401 while the dashboard key looks active, first verify the `web-backend` container has the current `AMBEE_API_KEY` and has been restarted after any `.env` change.
+- Ambee can return `401 {"message":"No active subscription found"}` even when the API key itself is active in the portal. That means the key/account is not entitled to the Pollen API product, so Sentinel cannot collect pollen until the Ambee subscription/product access is restored or replaced.
 
 ## Python urllib + Cloudflare + GHL
 

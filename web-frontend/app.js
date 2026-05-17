@@ -3927,18 +3927,22 @@ function sandboxFilterGroups(groups) {
 
 function sandboxInitMap() {
   const mapEl = document.getElementById("sandbox-map-container");
-  if (!mapEl || typeof L === "undefined") return;
+  if (!mapEl) return;
+
+  if (typeof L === "undefined") {
+    mapEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:13px">Map library failed to load — check browser console for CSP or network errors.</div>`;
+    return;
+  }
 
   // Destroy any prior map — its container was removed when innerHTML was replaced
   if (sandbox.map) {
-    sandbox.map.remove();
+    try { sandbox.map.remove(); } catch (_) {}
     sandbox.map = null;
   }
 
   sandbox.map = L.map(mapEl, { zoomControl: true }).setView([32.9, -97.0], 10);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution:
-      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    attribution: "© OpenStreetMap contributors",
     maxZoom: 19,
   }).addTo(sandbox.map);
 

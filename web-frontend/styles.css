@@ -1578,10 +1578,10 @@ textarea {
 }
 
 .sandbox-map-container {
-  /* Explicit pixel height is the only reliable way to get Leaflet tiles rendering */
   height: 440px;
   flex-shrink: 0;
   position: relative;
+  background: #e8f0f7;
 }
 
 .sandbox-main-content {
