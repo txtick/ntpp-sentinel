@@ -29,6 +29,7 @@ from services.route_sandbox import (
     get_scenario,
     list_current_route_pools,
     list_scenarios,
+    backfill_technician_home_coords,
     list_technician_profiles,
     mark_plan_item,
     mark_plan_printed,
@@ -446,6 +447,12 @@ def _startup() -> None:
         ensure_web_backend_schema()
         ensure_route_sandbox_schema()
         ensure_route_maps_schema()
+        try:
+            result = backfill_technician_home_coords()
+            if result.get("updated"):
+                _logger.info("Startup geocode backfill: %s tech(s) updated", result["updated"])
+        except Exception:
+            _logger.exception("Startup geocode backfill failed (non-fatal)")
     _check_ghl_token()
 
 

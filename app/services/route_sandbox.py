@@ -493,6 +493,19 @@ def upsert_technician_profile(technician_id: str, payload: Dict[str, Any]) -> Di
         if key in data and data[key] not in valid_start_end:
             raise HTTPException(status_code=400, detail=f"{key} must be one of: {', '.join(valid_start_end)}")
 
+    # Auto-geocode home_address when lat/lng are not provided by the caller
+    addr = data.get("home_address")
+    if addr and data.get("home_latitude") is None and data.get("home_longitude") is None:
+        try:
+            from services import google_maps
+            if google_maps.server_configured():
+                geo = google_maps.geocode(addr)
+                if geo:
+                    data["home_latitude"] = geo["lat"]
+                    data["home_longitude"] = geo["lng"]
+        except Exception:
+            _logger.exception("Geocode failed for home_address during profile save")
+
     set_clauses = [f"{k} = %s" for k in data]
     with pg() as conn:
         with conn.cursor() as cur:
@@ -509,6 +522,56 @@ def upsert_technician_profile(technician_id: str, payload: Dict[str, Any]) -> Di
             row = cur.fetchone()
         conn.commit()
     return {"ok": True, "profile": dict(row) if row else {}}
+
+
+def backfill_technician_home_coords() -> Dict[str, Any]:
+    """Geocode home_address for any profile missing lat/lng. Safe to call at startup."""
+    _require_postgres()
+    try:
+        from services import google_maps
+        if not google_maps.server_configured():
+            return {"skipped": True, "reason": "Maps not configured"}
+    except Exception:
+        return {"skipped": True, "reason": "google_maps import failed"}
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT technician_id, home_address FROM technician_route_profiles
+                WHERE home_address IS NOT NULL AND home_address <> ''
+                  AND (home_latitude IS NULL OR home_longitude IS NULL)
+                """
+            )
+            rows = cur.fetchall()
+
+        updated, failed = 0, 0
+        for row in rows:
+            tech_id = row["technician_id"]
+            addr = row["home_address"]
+            try:
+                geo = google_maps.geocode(addr)
+                if geo:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE technician_route_profiles
+                            SET home_latitude = %s, home_longitude = %s, updated_at = NOW()
+                            WHERE technician_id = %s
+                            """,
+                            (geo["lat"], geo["lng"], tech_id),
+                        )
+                    conn.commit()
+                    _logger.info("Geocoded home for tech %s → (%.4f, %.4f)", tech_id, geo["lat"], geo["lng"])
+                    updated += 1
+                else:
+                    _logger.warning("Geocode returned nothing for tech %s address: %s", tech_id, addr)
+                    failed += 1
+            except Exception:
+                _logger.exception("Geocode failed for tech %s", tech_id)
+                failed += 1
+
+    return {"updated": updated, "failed": failed}
 
 
 def get_technician_profile(technician_id: str) -> Optional[Dict[str, Any]]:
@@ -1418,6 +1481,7 @@ def get_maps_status() -> Dict[str, Any]:
     return {
         "server_maps_configured": google_maps.server_configured(),
         "browser_maps_configured": google_maps.browser_configured(),
+        "browser_maps_api_key": google_maps.browser_api_key() or None,
         "optimization_enabled": google_maps.server_configured() and google_maps.optimization_enabled(),
         "daily_request_limit": _google_maps_daily_request_limit(),
         "daily_matrix_element_limit": _google_maps_daily_matrix_element_limit(),

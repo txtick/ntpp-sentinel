@@ -4975,14 +4975,8 @@ async function sandboxEstimateRoute(techId, day) {
     // Re-render route list to show updated estimate badge (soft, no API reload)
     const allGroups = sandboxGetActiveData();
     renderSandboxRouteList(sandboxFilterGroups(allGroups));
-    // Draw the combined polyline from segments
-    if (result.segments) {
-      const joined = result.segments
-        .map((s) => s.polyline)
-        .filter(Boolean)
-        .join("");
-      if (joined) sandboxDrawPolyline(joined);
-    }
+    // Draw the combined route polyline returned by Google
+    if (result.polyline) sandboxDrawPolyline(result.polyline);
   } catch (err) {
     setStatus("Error", "critical");
     showToast(`Estimate failed: ${err.message}`, 5000);
