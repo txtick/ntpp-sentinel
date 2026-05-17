@@ -1034,10 +1034,15 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
     current = list_current_route_pools(source_system)
     scenario_detail = get_scenario(scenario_id)
 
-    # Build current lookup by location_id → (account_id, day, order)
+    # Build current lookup by location_id → {account_id, day, stop_order, rank, ...}
+    # rank = 1-based position within tech/day group sorted by stop_order.
+    # We compare rank (relative position) rather than raw stop_order numbers so
+    # that a scenario created from Skimmer data with order=10,20,30 doesn't appear
+    # "reordered" vs the scenario's sequential 1,2,3 numbering.
     current_map: Dict[str, Dict[str, Any]] = {}
     for group in current["route_groups"]:
-        for stop in group["stops"]:
+        stops_sorted = sorted(group["stops"], key=lambda s: s.get("stop_order") or 9999)
+        for rank, stop in enumerate(stops_sorted, 1):
             loc = stop["source_service_location_id"]
             current_map[loc] = {
                 "source_route_assignment_id": stop.get("source_route_assignment_id"),
@@ -1045,20 +1050,23 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
                 "tech_name": stop.get("tech_name"),
                 "day_of_week": stop["day_of_week"],
                 "stop_order": stop.get("stop_order"),
+                "rank": rank,
                 "customer_name": stop.get("customer_name"),
                 "address": stop.get("address"),
             }
 
-    # Build scenario lookup
+    # Build scenario lookup with ranks
     scenario_map: Dict[str, Dict[str, Any]] = {}
     for group in scenario_detail["route_groups"]:
-        for stop in group["stops"]:
+        stops_sorted = sorted(group["stops"], key=lambda s: s.get("stop_order") or 9999)
+        for rank, stop in enumerate(stops_sorted, 1):
             loc = stop["source_service_location_id"]
             scenario_map[loc] = {
                 "source_account_id": stop["source_account_id"],
                 "tech_name": stop.get("tech_name"),
                 "day_of_week": stop["day_of_week"],
                 "stop_order": stop.get("stop_order"),
+                "rank": rank,
                 "customer_name": stop.get("customer_name"),
                 "address": stop.get("address"),
                 "assignment_id": stop.get("id"),
@@ -1081,7 +1089,11 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
         elif cur and prp:
             tech_changed = cur["source_account_id"] != prp["source_account_id"]
             day_changed = cur["day_of_week"] != prp["day_of_week"]
-            order_changed = cur["stop_order"] != prp["stop_order"]
+            # Compare rank (relative position within group) not raw stop_order numbers —
+            # Skimmer uses sparse order values (10, 20, 30…) while the scenario uses
+            # sequential values after any drag-drop or optimization, so raw numbers
+            # always differ even when the actual stop order is identical.
+            rank_changed = cur["rank"] != prp["rank"]
             if tech_changed or day_changed:
                 changes.append({
                     "source_service_location_id": loc,
@@ -1091,14 +1103,14 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
                     "current_account_id": cur["source_account_id"],
                     "current_tech_name": cur.get("tech_name"),
                     "current_day": cur["day_of_week"],
-                    "current_order": cur.get("stop_order"),
+                    "current_order": cur.get("rank"),
                     "proposed_account_id": prp["source_account_id"],
                     "proposed_tech_name": prp.get("tech_name"),
                     "proposed_day": prp["day_of_week"],
-                    "proposed_order": prp.get("stop_order"),
+                    "proposed_order": prp.get("rank"),
                     "assignment_id": prp.get("assignment_id"),
                 })
-            elif order_changed:
+            elif rank_changed:
                 reordered.append({
                     "source_service_location_id": loc,
                     "customer_name": cur.get("customer_name"),
@@ -1107,8 +1119,8 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
                     "source_account_id": cur["source_account_id"],
                     "tech_name": cur.get("tech_name"),
                     "day_of_week": cur["day_of_week"],
-                    "current_order": cur.get("stop_order"),
-                    "proposed_order": prp.get("stop_order"),
+                    "current_order": cur.get("rank"),
+                    "proposed_order": prp.get("rank"),
                 })
             else:
                 unchanged_count += 1
