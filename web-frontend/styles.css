@@ -1540,6 +1540,15 @@ textarea {
   flex-wrap: wrap;
 }
 
+.sandbox-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
 .sandbox-body {
   display: flex;
   flex: 1;

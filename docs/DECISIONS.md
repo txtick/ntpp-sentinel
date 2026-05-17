@@ -78,6 +78,8 @@ Keep entries short, but do not skip them.
 
 - GHL is authoritative for communication history.
 - Skimmer is authoritative for service operations.
+- Route Sandbox is planning-only: it reads imported Skimmer route data, writes only Sentinel scenario/manual packet tables, and never writes route changes back to Skimmer.
+  - Reason: Skimmer route/stop assignment data is read-only for Sentinel today; operators must apply approved packets manually in Skimmer.
 - Skimmer API is the preferred live source when current-week route counts matter.
 - Nightly Skimmer DB is preferred when the API does not include the needed data.
 - Normalized Postgres is Sentinel's working analytics model, not the upstream source of truth.

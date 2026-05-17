@@ -52,6 +52,18 @@ This document captures business behavior that should remain stable unless intent
   - `monthly_leak = max(0, monthly_chemical_cost - (monthly_service_rate * 20%))`
 - Pools with missing or zero service rate stay visible on the report as `Missing Rate`, show `N/A` for percent, and are excluded from Watch/Problem/Critical totals.
 
+## Route Sandbox
+
+- Skimmer/current imported route data is the only production source of truth for routes.
+- Route Sandbox scenarios and manual update packets are Sentinel-only planning artifacts.
+- Scenario editing must only write to `route_scenarios`, `route_scenario_assignments`, `route_change_plans`, `route_change_plan_items`, and technician route profile settings.
+- Sentinel must not write route assignment or stop changes back to Skimmer.
+- Approved scenarios generate a Manual Skimmer Update Packet for humans to apply in Skimmer.
+- Manual checklist completion tracks human progress only; it must not mutate Skimmer/current route tables.
+- Technician home/start/end route settings are Sentinel-only and must not be pushed to Skimmer unless a future confirmed Skimmer field and explicit requirement exist.
+- Technician start/end mileage should report stop-to-stop miles separately from start-to-first-stop, last-stop-to-end, total with start/end, and total without start/end.
+- Start/end drive should not influence weighted route mileage unless explicitly enabled for that technician.
+
 ## Filter Clean Logic
 
 - Filter-clean opportunities are PSI/work-order based, not just raw time-since-last-clean.

@@ -1398,7 +1398,8 @@ async function loadCurrentView(force = false) {
     if (state.view === "reminders") await loadReminders(force);
     if (state.view === "settings") await loadSettings(force);
     if (state.view === "route-sandbox") await loadRouteSandbox(force);
-    if (state.view === "route-tech-settings") await loadRouteTechSettings(force);
+    if (state.view === "route-tech-settings")
+      await loadRouteTechSettings(force);
     setStatus("Live", "info");
   } catch (error) {
     setStatus("Error", "critical");
@@ -3816,8 +3817,16 @@ function openSettingsCreateModal(table) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TECH_COLORS = [
-  "#2f9be8", "#e84040", "#2ecc71", "#f39c12", "#9b59b6",
-  "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
+  "#2f9be8",
+  "#e84040",
+  "#2ecc71",
+  "#f39c12",
+  "#9b59b6",
+  "#1abc9c",
+  "#e67e22",
+  "#3498db",
+  "#e91e63",
+  "#00bcd4",
 ];
 
 const sandbox = {
@@ -3835,6 +3844,8 @@ const sandbox = {
   dragSourceId: null,
   comparisonData: null,
   planData: null,
+  techProfiles: [],
+  showHomeMarkers: false,
 };
 
 function sandboxTechColor(techId) {
@@ -3846,7 +3857,15 @@ function sandboxTechColor(techId) {
 }
 
 function sandboxDayLabel(day) {
-  const short = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
+  const short = {
+    Monday: "Mon",
+    Tuesday: "Tue",
+    Wednesday: "Wed",
+    Thursday: "Thu",
+    Friday: "Fri",
+    Saturday: "Sat",
+    Sunday: "Sun",
+  };
   return short[day] || day;
 }
 
@@ -3898,7 +3917,8 @@ function sandboxGetTechs() {
 function sandboxFilterGroups(groups) {
   return groups.filter((g) => {
     if (sandbox.filterDay && g.day_of_week !== sandbox.filterDay) return false;
-    if (sandbox.filterTech && g.source_account_id !== sandbox.filterTech) return false;
+    if (sandbox.filterTech && g.source_account_id !== sandbox.filterTech)
+      return false;
     return true;
   });
 }
@@ -3915,7 +3935,8 @@ function sandboxInitMap() {
   if (!mapEl || typeof L === "undefined") return;
   sandbox.map = L.map(mapEl, { zoomControl: true }).setView([32.9, -97.0], 10);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    attribution:
+      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 19,
   }).addTo(sandbox.map);
   // Let the browser finish layout before Leaflet measures the container
@@ -3925,10 +3946,16 @@ function sandboxInitMap() {
 function sandboxMapIcon(color, order, isChanged) {
   const border = isChanged ? "#fff" : "transparent";
   const size = order != null ? 24 : 18;
-  const html = order != null
-    ? `<div style="background:${color};color:#fff;border:2px solid ${border};width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.3)">${order}</div>`
-    : `<div style="background:${color};border:2px solid ${border};width:${size}px;height:${size}px;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`;
-  return L.divIcon({ html, className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+  const html =
+    order != null
+      ? `<div style="background:${color};color:#fff;border:2px solid ${border};width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.3)">${order}</div>`
+      : `<div style="background:${color};border:2px solid ${border};width:${size}px;height:${size}px;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`;
+  return L.divIcon({
+    html,
+    className: "",
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
 }
 
 function sandboxMapGrayIcon() {
@@ -3961,7 +3988,9 @@ function sandboxRenderMap(techProfiles) {
   const allGroups = sandboxGetActiveData();
   const activeGroups = sandboxFilterGroups(allGroups);
   const activeLocIds = new Set();
-  activeGroups.forEach((g) => g.stops.forEach((s) => activeLocIds.add(s.source_service_location_id)));
+  activeGroups.forEach((g) =>
+    g.stops.forEach((s) => activeLocIds.add(s.source_service_location_id)),
+  );
 
   const isFiltered = sandbox.filterDay || sandbox.filterTech;
 
@@ -3971,7 +4000,9 @@ function sandboxRenderMap(techProfiles) {
       if (!s.latitude || !s.longitude) return;
       if (activeLocIds.has(s.source_service_location_id) && isFiltered) return;
       if (!isFiltered) return; // will be drawn as active below
-      const m = L.marker([s.latitude, s.longitude], { icon: sandboxMapGrayIcon() })
+      const m = L.marker([s.latitude, s.longitude], {
+        icon: sandboxMapGrayIcon(),
+      })
         .addTo(sandbox.map)
         .on("click", () => sandboxSelectStop(s));
       sandbox.markers.push(m);
@@ -3981,32 +4012,55 @@ function sandboxRenderMap(techProfiles) {
   // Draw active route groups
   activeGroups.forEach((g) => {
     const color = sandboxTechColor(g.source_account_id);
-    const ordered = [...g.stops].sort((a, b) => (a.stop_order || 9999) - (b.stop_order || 9999));
+    const ordered = [...g.stops].sort(
+      (a, b) => (a.stop_order || 9999) - (b.stop_order || 9999),
+    );
     const coords = [];
 
     ordered.forEach((s, idx) => {
       if (!s.latitude || !s.longitude) return;
       const latLng = [s.latitude, s.longitude];
       coords.push(latLng);
-      const isSelected = sandbox.selectedLocationId === s.source_service_location_id;
+      const isSelected =
+        sandbox.selectedLocationId === s.source_service_location_id;
       const isChanged = s.is_changed_from_current;
-      const icon = sandboxMapIcon(isSelected ? "#fff" : color, idx + 1, isChanged);
+      const icon = sandboxMapIcon(
+        isSelected ? "#fff" : color,
+        idx + 1,
+        isChanged,
+      );
       const m = L.marker(latLng, { icon })
         .addTo(sandbox.map)
-        .bindTooltip(`${s.customer_name || "Unknown"}<br>${s.address || ""}`, { sticky: true })
+        .bindTooltip(`${s.customer_name || "Unknown"}<br>${s.address || ""}`, {
+          sticky: true,
+        })
         .on("click", () => sandboxSelectStop(s));
       sandbox.markers.push(m);
     });
 
     if (coords.length > 1) {
-      const line = L.polyline(coords, { color, weight: 2, opacity: 0.6, dashArray: "6 4" }).addTo(sandbox.map);
+      const line = L.polyline(coords, {
+        color,
+        weight: 2,
+        opacity: 0.6,
+        dashArray: "6 4",
+      }).addTo(sandbox.map);
       sandbox.routeLines.push(line);
     }
 
-    // Tech home marker if profile available
-    const profile = (techProfiles || []).find((p) => p.technician_id === g.source_account_id);
-    if (profile && profile.home_latitude && profile.home_longitude) {
-      const hm = L.marker([profile.home_latitude, profile.home_longitude], { icon: sandboxMapHomeIcon(color) })
+    // Tech home/base marker if enabled. Home addresses are not needed here.
+    const profile = (techProfiles || []).find(
+      (p) => p.technician_id === g.source_account_id,
+    );
+    if (
+      sandbox.showHomeMarkers &&
+      profile &&
+      profile.home_latitude &&
+      profile.home_longitude
+    ) {
+      const hm = L.marker([profile.home_latitude, profile.home_longitude], {
+        icon: sandboxMapHomeIcon(color),
+      })
         .addTo(sandbox.map)
         .bindTooltip(`${g.tech_name} — Home / Start`, { sticky: true });
       sandbox.markers.push(hm);
@@ -4031,23 +4085,46 @@ function renderSandboxDetailDrawer(stop) {
   // Find current assignment (from raw current data)
   let currentAssign = null;
   currentGroups.forEach((g) => {
-    const match = g.stops.find((s) => s.source_service_location_id === stop.source_service_location_id);
-    if (match) currentAssign = { tech: g.tech_name, day: g.day_of_week, order: match.stop_order };
+    const match = g.stops.find(
+      (s) => s.source_service_location_id === stop.source_service_location_id,
+    );
+    if (match)
+      currentAssign = {
+        tech: g.tech_name,
+        day: g.day_of_week,
+        order: match.stop_order,
+      };
   });
 
   // Find scenario assignment
   let proposedAssign = null;
   if (sandbox.activeScenario) {
     allGroups.forEach((g) => {
-      const match = g.stops.find((s) => s.source_service_location_id === stop.source_service_location_id);
-      if (match) proposedAssign = { tech: g.tech_name, day: g.day_of_week, order: match.stop_order, id: match.id, accountId: g.source_account_id };
+      const match = g.stops.find(
+        (s) => s.source_service_location_id === stop.source_service_location_id,
+      );
+      if (match)
+        proposedAssign = {
+          tech: g.tech_name,
+          day: g.day_of_week,
+          order: match.stop_order,
+          id: match.id,
+          accountId: g.source_account_id,
+        };
     });
   }
 
   const techsHtml = sandbox.activeScenarioId
-    ? sandboxGetTechs().map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join("")
+    ? sandboxGetTechs()
+        .map(
+          (t) =>
+            `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`,
+        )
+        .join("")
     : "";
-  const daysHtml = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((d) => `<option value="${d}">${d}</option>`).join("");
+  const daysHtml = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    .map((d) => `<option value="${d}">${d}</option>`)
+    .join("");
 
   drawer.innerHTML = `
     <div class="sandbox-detail-inner">
@@ -4065,14 +4142,20 @@ function renderSandboxDetailDrawer(stop) {
       <div class="sandbox-detail-section">
         <div class="sandbox-detail-label">Current Skimmer Route</div>
         <div>${currentAssign ? `${escapeHtml(currentAssign.tech)} / ${escapeHtml(currentAssign.day)}${currentAssign.order ? ` #${currentAssign.order}` : ""}` : "—"}</div>
-        ${sandbox.activeScenarioId ? `
+        ${
+          sandbox.activeScenarioId
+            ? `
         <div class="sandbox-detail-label">Draft Scenario</div>
         <div>${proposedAssign ? `${escapeHtml(proposedAssign.tech)} / ${escapeHtml(proposedAssign.day)}${proposedAssign.order ? ` #${proposedAssign.order}` : ""}` : "—"}
           ${stop.is_changed_from_current ? ' <span class="badge badge-warning">Changed</span>' : ""}
         </div>
-        ` : ""}
+        `
+            : ""
+        }
       </div>
-      ${sandbox.activeScenarioId && proposedAssign ? `
+      ${
+        sandbox.activeScenarioId && proposedAssign
+          ? `
       <div class="sandbox-detail-section">
         <div class="sandbox-detail-label">Move to</div>
         <div class="sandbox-move-row">
@@ -4081,7 +4164,9 @@ function renderSandboxDetailDrawer(stop) {
           <button class="button button-primary" style="height:32px" onclick="sandboxMoveStop('${escapeHtml(stop.source_service_location_id)}', ${proposedAssign.id})">Move</button>
         </div>
       </div>
-      ` : ""}
+      `
+          : ""
+      }
       ${!stop.latitude || !stop.longitude ? `<div class="sandbox-warn-badge">⚠ No GPS coordinates</div>` : ""}
     </div>
   `;
@@ -4099,10 +4184,17 @@ async function sandboxMoveStop(locationId, assignmentId) {
   const daySel = document.getElementById("move-day-sel");
   if (!techSel || !daySel || !sandbox.activeScenarioId) return;
   await withSaving(async () => {
-    await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`, {
-      method: "POST",
-      body: JSON.stringify({ assignment_id: assignmentId, source_account_id: techSel.value, day_of_week: daySel.value }),
-    });
+    await api(
+      `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          assignment_id: assignmentId,
+          source_account_id: techSel.value,
+          day_of_week: daySel.value,
+        }),
+      },
+    );
     await loadRouteSandbox(true);
     showToast("Stop moved.");
   }, "Stop moved");
@@ -4118,7 +4210,10 @@ function sandboxCloseDetail() {
 let _sandboxMapTimer = null;
 function renderSandboxMap_deferred(techProfiles) {
   clearTimeout(_sandboxMapTimer);
-  _sandboxMapTimer = setTimeout(() => sandboxRenderMap(techProfiles || []), 80);
+  _sandboxMapTimer = setTimeout(
+    () => sandboxRenderMap(techProfiles || sandbox.techProfiles || []),
+    80,
+  );
 }
 
 // ── Left panel route list ──────────────────────────────────────────────────────
@@ -4132,33 +4227,40 @@ function renderSandboxRouteList(groups) {
     return;
   }
 
-  container.innerHTML = groups.map((g) => {
-    const color = sandboxTechColor(g.source_account_id);
-    const m = g.metrics || {};
-    const warnings = g.warnings || [];
-    const ordered = [...g.stops].sort((a, b) => (a.stop_order || 9999) - (b.stop_order || 9999));
-    const stopsHtml = ordered.map((s, idx) => {
-      const isSelected = sandbox.selectedLocationId === s.source_service_location_id;
-      const isChanged = s.is_changed_from_current;
-      return `
+  container.innerHTML = groups
+    .map((g) => {
+      const color = sandboxTechColor(g.source_account_id);
+      const m = g.metrics || {};
+      const warnings = g.warnings || [];
+      const ordered = [...g.stops].sort(
+        (a, b) => (a.stop_order || 9999) - (b.stop_order || 9999),
+      );
+      const stopsHtml = ordered
+        .map((s, idx) => {
+          const isSelected =
+            sandbox.selectedLocationId === s.source_service_location_id;
+          const isChanged = s.is_changed_from_current;
+          return `
         <div class="sandbox-stop-row${isSelected ? " is-selected" : ""}${isChanged ? " is-changed" : ""}"
              data-loc="${escapeHtml(s.source_service_location_id)}"
              draggable="true"
              data-aid="${s.id || ""}"
-             onclick="sandboxSelectStop(${JSON.stringify(JSON.stringify(s)).slice(1,-1)})">
+             onclick="sandboxSelectStop(${JSON.stringify(JSON.stringify(s)).slice(1, -1)})">
           <span class="sandbox-stop-num" style="background:${color}">${idx + 1}</span>
           <span class="sandbox-stop-name">${escapeHtml(s.customer_name || "Unknown")}</span>
           <span class="sandbox-stop-addr muted">${escapeHtml(s.city || s.address || "")}</span>
           ${isChanged ? `<span class="badge badge-warning" style="font-size:10px">✎</span>` : ""}
           ${!s.latitude ? `<span class="badge badge-muted" style="font-size:10px">?GPS</span>` : ""}
         </div>`;
-    }).join("");
+        })
+        .join("");
 
-    const warningBadge = warnings.length > 0
-      ? `<span class="badge badge-warning" title="${escapeHtml(warnings.join("\n"))}">⚠ ${warnings.length}</span>`
-      : "";
+      const warningBadge =
+        warnings.length > 0
+          ? `<span class="badge badge-warning" title="${escapeHtml(warnings.join("\n"))}">⚠ ${warnings.length}</span>`
+          : "";
 
-    return `
+      return `
       <div class="sandbox-group" data-tech="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
         <div class="sandbox-group-header">
           <span class="sandbox-group-dot" style="background:${color}"></span>
@@ -4170,7 +4272,8 @@ function renderSandboxRouteList(groups) {
           ${stopsHtml}
         </div>
       </div>`;
-  }).join("");
+    })
+    .join("");
 
   wireSandboxDragDrop(container);
 }
@@ -4185,13 +4288,18 @@ function wireSandboxDragDrop(container) {
     el.addEventListener("dragend", () => el.classList.remove("is-dragging"));
   });
   container.querySelectorAll(".sandbox-stop-list").forEach((list) => {
-    list.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+    list.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+    });
     list.addEventListener("drop", async (e) => {
       e.preventDefault();
       if (!sandbox.dragSourceId || !sandbox.activeScenarioId) return;
       const account = list.dataset.account;
       const day = list.dataset.day;
-      const orderedIds = [...list.querySelectorAll(".sandbox-stop-row")].map((el) => el.dataset.aid).filter(Boolean);
+      const orderedIds = [...list.querySelectorAll(".sandbox-stop-row")]
+        .map((el) => el.dataset.aid)
+        .filter(Boolean);
       const srcIdx = orderedIds.indexOf(sandbox.dragSourceId);
       const target = e.target.closest(".sandbox-stop-row");
       if (target && target.dataset.aid !== sandbox.dragSourceId) {
@@ -4202,19 +4310,34 @@ function wireSandboxDragDrop(container) {
         }
       }
       try {
-        await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/reorder`, {
-          method: "POST",
-          body: JSON.stringify({ ordered_ids: orderedIds.map(Number) }),
-        });
+        await api(
+          `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/reorder`,
+          {
+            method: "POST",
+            body: JSON.stringify({ ordered_ids: orderedIds.map(Number) }),
+          },
+        );
         // If drop target is a different group, also move
-        const srcRow = container.querySelector(`[data-aid="${sandbox.dragSourceId}"]`);
+        const srcRow = container.querySelector(
+          `[data-aid="${sandbox.dragSourceId}"]`,
+        );
         if (srcRow) {
           const srcList = srcRow.closest(".sandbox-stop-list");
-          if (srcList && (srcList.dataset.account !== account || srcList.dataset.day !== day)) {
-            await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`, {
-              method: "POST",
-              body: JSON.stringify({ assignment_id: Number(sandbox.dragSourceId), source_account_id: account, day_of_week: day }),
-            });
+          if (
+            srcList &&
+            (srcList.dataset.account !== account || srcList.dataset.day !== day)
+          ) {
+            await api(
+              `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  assignment_id: Number(sandbox.dragSourceId),
+                  source_account_id: account,
+                  day_of_week: day,
+                }),
+              },
+            );
           }
         }
         await loadRouteSandbox(true);
@@ -4247,99 +4370,150 @@ function renderSandboxToolbar() {
       <button class="button button-secondary" id="sandbox-create-scenario-btn" title="Create scenario from current Skimmer routes">+ New Scenario</button>
     </div>
     <div class="sandbox-toolbar-right">
-      ${activeId ? `
+      <label class="sandbox-toggle"><input type="checkbox" id="sandbox-home-toggle"${sandbox.showHomeMarkers ? " checked" : ""} /> Bases</label>
+      ${
+        activeId
+          ? `
         <button class="button button-secondary" id="sandbox-duplicate-btn" title="Duplicate this scenario">Duplicate</button>
         <button class="button button-secondary" id="sandbox-validate-btn">Validate</button>
-        <button class="button button-secondary" id="sandbox-compare-btn">Compare to Current</button>
+        <button class="button button-secondary" id="sandbox-compare-btn">Compare Against Latest Skimmer Import</button>
         ${isDraft ? `<button class="button button-primary" id="sandbox-approve-btn">Approve Scenario</button>` : ""}
-        ${isApproved ? `<button class="button button-primary" id="sandbox-genplan-btn">Generate Update Packet</button>` : ""}
+        ${isApproved ? `<button class="button button-primary" id="sandbox-genplan-btn">Generate Manual Update Packet</button>` : ""}
         ${activeScenario && status !== "archived" ? `<button class="button button-secondary" id="sandbox-discard-btn" style="color:var(--color-danger)">Discard</button>` : ""}
-      ` : ""}
+      `
+          : ""
+      }
     </div>
   `;
 
-  document.getElementById("sandbox-scenario-sel")?.addEventListener("change", async (e) => {
-    sandbox.activeScenarioId = e.target.value ? Number(e.target.value) : null;
-    sandbox.activeScenario = null;
-    sandbox.comparisonData = null;
-    sandbox.planData = null;
-    await loadRouteSandbox(true);
-  });
+  document
+    .getElementById("sandbox-home-toggle")
+    ?.addEventListener("change", (e) => {
+      sandbox.showHomeMarkers = e.target.checked;
+      sandboxRenderMap(sandbox.techProfiles || []);
+    });
 
-  document.getElementById("sandbox-create-scenario-btn")?.addEventListener("click", async () => {
-    const name = prompt("Scenario name:", `Route Plan ${new Date().toLocaleDateString()}`);
-    if (!name) return;
-    await withSaving(async () => {
-      const result = await api("/api/routes/sandbox/scenarios/from-current", {
-        method: "POST",
-        body: JSON.stringify({ name, created_by: state.actor }),
-      });
-      sandbox.activeScenarioId = result.scenario.id;
+  document
+    .getElementById("sandbox-scenario-sel")
+    ?.addEventListener("change", async (e) => {
+      sandbox.activeScenarioId = e.target.value ? Number(e.target.value) : null;
       sandbox.activeScenario = null;
+      sandbox.comparisonData = null;
+      sandbox.planData = null;
       await loadRouteSandbox(true);
-    }, "Scenario created from current routes");
-  });
+    });
 
-  document.getElementById("sandbox-duplicate-btn")?.addEventListener("click", async () => {
-    if (!activeId) return;
-    const name = prompt("Name for duplicate:", `${activeScenario?.name || "Scenario"} (copy)`);
-    if (!name) return;
-    await withSaving(async () => {
-      const result = await api(`/api/routes/sandbox/scenarios/${activeId}/duplicate`, {
-        method: "POST",
-        body: JSON.stringify({ name, created_by: state.actor }),
-      });
-      sandbox.activeScenarioId = result.scenario.id;
-      sandbox.activeScenario = null;
-      await loadRouteSandbox(true);
-    }, "Scenario duplicated");
-  });
+  document
+    .getElementById("sandbox-create-scenario-btn")
+    ?.addEventListener("click", async () => {
+      const name = prompt(
+        "Scenario name:",
+        `Route Plan ${new Date().toLocaleDateString()}`,
+      );
+      if (!name) return;
+      await withSaving(async () => {
+        const result = await api("/api/routes/sandbox/scenarios/from-current", {
+          method: "POST",
+          body: JSON.stringify({ name, created_by: state.actor }),
+        });
+        sandbox.activeScenarioId = result.scenario.id;
+        sandbox.activeScenario = null;
+        await loadRouteSandbox(true);
+      }, "Scenario created from current routes");
+    });
 
-  document.getElementById("sandbox-validate-btn")?.addEventListener("click", async () => {
-    if (!activeId) return;
-    const result = await api(`/api/routes/sandbox/scenarios/${activeId}/validate`);
-    renderSandboxValidationModal(result);
-  });
+  document
+    .getElementById("sandbox-duplicate-btn")
+    ?.addEventListener("click", async () => {
+      if (!activeId) return;
+      const name = prompt(
+        "Name for duplicate:",
+        `${activeScenario?.name || "Scenario"} (copy)`,
+      );
+      if (!name) return;
+      await withSaving(async () => {
+        const result = await api(
+          `/api/routes/sandbox/scenarios/${activeId}/duplicate`,
+          {
+            method: "POST",
+            body: JSON.stringify({ name, created_by: state.actor }),
+          },
+        );
+        sandbox.activeScenarioId = result.scenario.id;
+        sandbox.activeScenario = null;
+        await loadRouteSandbox(true);
+      }, "Scenario duplicated");
+    });
 
-  document.getElementById("sandbox-compare-btn")?.addEventListener("click", async () => {
-    if (!activeId) return;
-    setStatus("Loading…", "warning");
-    sandbox.comparisonData = await api(`/api/routes/sandbox/scenarios/${activeId}/comparison`);
-    setStatus("Live", "info");
-    renderSandboxComparisonPanel();
-  });
+  document
+    .getElementById("sandbox-validate-btn")
+    ?.addEventListener("click", async () => {
+      if (!activeId) return;
+      const result = await api(
+        `/api/routes/sandbox/scenarios/${activeId}/validate`,
+      );
+      renderSandboxValidationModal(result);
+    });
 
-  document.getElementById("sandbox-approve-btn")?.addEventListener("click", async () => {
-    if (!activeId) return;
-    if (!confirm("Approve this scenario? This locks the scenario for generating a manual update packet.")) return;
-    await withSaving(async () => {
-      await api(`/api/routes/sandbox/scenarios/${activeId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "approved" }),
-      });
-      await loadRouteSandbox(true);
-    }, "Scenario approved");
-  });
+  document
+    .getElementById("sandbox-compare-btn")
+    ?.addEventListener("click", async () => {
+      if (!activeId) return;
+      setStatus("Loading…", "warning");
+      sandbox.comparisonData = await api(
+        `/api/routes/sandbox/scenarios/${activeId}/comparison`,
+      );
+      setStatus("Live", "info");
+      renderSandboxComparisonPanel();
+    });
 
-  document.getElementById("sandbox-genplan-btn")?.addEventListener("click", async () => {
-    if (!activeId) return;
-    await withSaving(async () => {
-      const result = await api(`/api/routes/sandbox/scenarios/${activeId}/change-plan`, { method: "POST" });
-      sandbox.planData = result;
-      renderSandboxPlanPanel(result);
-    }, "Update packet generated");
-  });
+  document
+    .getElementById("sandbox-approve-btn")
+    ?.addEventListener("click", async () => {
+      if (!activeId) return;
+      if (
+        !confirm(
+          "Approve this scenario? This locks the scenario for generating a manual update packet.",
+        )
+      )
+        return;
+      await withSaving(async () => {
+        await api(`/api/routes/sandbox/scenarios/${activeId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "approved" }),
+        });
+        await loadRouteSandbox(true);
+      }, "Scenario approved");
+    });
 
-  document.getElementById("sandbox-discard-btn")?.addEventListener("click", async () => {
-    if (!activeId) return;
-    if (!confirm("Archive this scenario? This cannot be undone.")) return;
-    await withSaving(async () => {
-      await api(`/api/routes/sandbox/scenarios/${activeId}/discard`, { method: "POST" });
-      sandbox.activeScenarioId = null;
-      sandbox.activeScenario = null;
-      await loadRouteSandbox(true);
-    }, "Scenario archived");
-  });
+  document
+    .getElementById("sandbox-genplan-btn")
+    ?.addEventListener("click", async () => {
+      if (!activeId) return;
+      await withSaving(async () => {
+        const result = await api(
+          `/api/routes/sandbox/scenarios/${activeId}/change-plan`,
+          { method: "POST" },
+        );
+        sandbox.planData = result;
+        renderSandboxPlanPanel(result);
+      }, "Update packet generated");
+    });
+
+  document
+    .getElementById("sandbox-discard-btn")
+    ?.addEventListener("click", async () => {
+      if (!activeId) return;
+      if (!confirm("Archive this scenario? This cannot be undone.")) return;
+      await withSaving(async () => {
+        await api(`/api/routes/sandbox/scenarios/${activeId}/discard`, {
+          method: "POST",
+        });
+        sandbox.activeScenarioId = null;
+        sandbox.activeScenario = null;
+        await loadRouteSandbox(true);
+      }, "Scenario archived");
+    });
 }
 
 // ── Filter bar rendering ───────────────────────────────────────────────────────
@@ -4366,26 +4540,31 @@ function renderSandboxFilters(groups) {
     <span class="muted" style="font-size:13px">${groups.length} route group(s)</span>
   `;
 
-  document.getElementById("sandbox-day-filter")?.addEventListener("change", (e) => {
-    sandbox.filterDay = e.target.value;
-    const filtered = sandboxFilterGroups(sandboxGetActiveData());
-    renderSandboxFilters(filtered);
-    renderSandboxRouteList(filtered);
-    sandboxRenderMap([]);
-  });
+  document
+    .getElementById("sandbox-day-filter")
+    ?.addEventListener("change", (e) => {
+      sandbox.filterDay = e.target.value;
+      const filtered = sandboxFilterGroups(sandboxGetActiveData());
+      renderSandboxFilters(filtered);
+      renderSandboxRouteList(filtered);
+      sandboxRenderMap(sandbox.techProfiles || []);
+    });
 
-  document.getElementById("sandbox-tech-filter")?.addEventListener("change", (e) => {
-    sandbox.filterTech = e.target.value;
-    const filtered = sandboxFilterGroups(sandboxGetActiveData());
-    renderSandboxFilters(filtered);
-    renderSandboxRouteList(filtered);
-    sandboxRenderMap([]);
-  });
+  document
+    .getElementById("sandbox-tech-filter")
+    ?.addEventListener("change", (e) => {
+      sandbox.filterTech = e.target.value;
+      const filtered = sandboxFilterGroups(sandboxGetActiveData());
+      renderSandboxFilters(filtered);
+      renderSandboxRouteList(filtered);
+      sandboxRenderMap(sandbox.techProfiles || []);
+    });
 }
 
 // ── Modals and panels ─────────────────────────────────────────────────────────
 
 function renderSandboxValidationModal(result) {
+  const errors = result.errors || [];
   const warnings = result.warnings || [];
   const existing = document.getElementById("sandbox-validation-modal");
   if (existing) existing.remove();
@@ -4399,23 +4578,40 @@ function renderSandboxValidationModal(result) {
         <button class="button button-secondary settings-modal-close" onclick="document.getElementById('sandbox-validation-modal').remove()">✕</button>
       </div>
       <div style="padding:16px 24px">
-        ${result.valid
-          ? `<p class="muted" style="color:var(--color-success)">✓ No warnings found. Scenario looks good.</p>`
-          : `<p class="muted">${warnings.length} warning(s) found.</p>`
+        ${
+          result.valid
+            ? `<p class="muted" style="color:var(--color-success)">No blocking errors found. Scenario can be approved.</p>`
+            : `<p class="muted">${errors.length} error(s) and ${warnings.length} warning(s) found.</p>`
         }
-        ${warnings.map((w) => `
+        ${errors
+          .map(
+            (w) => `
           <div class="sandbox-warn-item">
-            <span class="badge badge-warning">⚠</span>
+            <span class="badge badge-danger">Error</span>
             <span class="muted" style="font-size:13px"><strong>${escapeHtml(w.group)}</strong>: ${escapeHtml(w.message)}</span>
           </div>
-        `).join("")}
+        `,
+          )
+          .join("")}
+        ${warnings
+          .map(
+            (w) => `
+          <div class="sandbox-warn-item">
+            <span class="badge badge-warning">Warning</span>
+            <span class="muted" style="font-size:13px"><strong>${escapeHtml(w.group)}</strong>: ${escapeHtml(w.message)}</span>
+          </div>
+        `,
+          )
+          .join("")}
       </div>
       <div class="settings-modal-actions settings-modal-actions-right">
         <button class="button button-secondary" onclick="document.getElementById('sandbox-validation-modal').remove()">Close</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
-  modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
 }
 
 function renderSandboxComparisonPanel() {
@@ -4443,19 +4639,24 @@ function renderSandboxComparisonPanel() {
       <div class="sandbox-stat"><strong>${c.reordered_count}</strong><span>Reordered</span></div>
       <div class="sandbox-stat"><strong>${c.unchanged_count}</strong><span>Unchanged</span></div>
     </div>
-    ${allChanges.length === 0
-      ? `<div class="empty-state">No differences found between scenario and current Skimmer routes.</div>`
-      : `<table class="sandbox-diff-table">
+    ${
+      allChanges.length === 0
+        ? `<div class="empty-state">No differences found between scenario and current Skimmer routes.</div>`
+        : `<table class="sandbox-diff-table">
           <thead><tr><th>Customer</th><th>Address</th><th>Change</th><th>Current</th><th>Proposed</th></tr></thead>
           <tbody>
-          ${allChanges.map((row) => `
+          ${allChanges
+            .map(
+              (row) => `
             <tr>
               <td>${escapeHtml(row.customer_name || "—")}</td>
               <td class="muted">${escapeHtml(row.address || "—")}</td>
               <td>${sandboxChangeTypeBadge(row.change_type)}</td>
               <td class="muted">${escapeHtml(row.current_tech_name || row.tech_name || "—")} / ${escapeHtml(row.current_day || row.day_of_week || "—")}${row.current_order != null ? ` #${row.current_order}` : ""}</td>
               <td>${escapeHtml(row.proposed_tech_name || row.tech_name || "—")} / ${escapeHtml(row.proposed_day || row.day_of_week || "—")}${row.proposed_order != null ? ` #${row.proposed_order}` : ""}</td>
-            </tr>`).join("")}
+            </tr>`,
+            )
+            .join("")}
           </tbody>
         </table>`
     }`;
@@ -4464,9 +4665,10 @@ function renderSandboxComparisonPanel() {
 function renderSandboxDefaultView() {
   sandbox.comparisonData = null;
   const panel = document.getElementById("sandbox-main-content");
-  if (panel) panel.innerHTML = `<div id="sandbox-map-container" class="sandbox-map-container"></div>`;
+  if (panel)
+    panel.innerHTML = `<div id="sandbox-map-container" class="sandbox-map-container"></div>`;
   sandboxInitMap();
-  sandboxRenderMap([]);
+  sandboxRenderMap(sandbox.techProfiles || []);
 }
 
 function renderSandboxPlanPanel(result) {
@@ -4480,7 +4682,8 @@ function renderSandboxPlanPanel(result) {
     <div class="sandbox-section-header">
       <h3>Manual Skimmer Update Packet — Plan #${planId}</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="button button-secondary" onclick="window.print()">Print / Save PDF</button>
+        <button class="button button-primary" onclick="sandboxApprovePacket(${planId})">Approve Packet</button>
+        <button class="button button-secondary" onclick="sandboxPrintPacket(${planId})">Print Packet</button>
         <a class="button button-secondary" href="/api/routes/sandbox/change-plans/${planId}/export-csv" download>Export CSV</a>
         <button class="button button-secondary" onclick="renderSandboxDefaultView()">← Back to Map</button>
       </div>
@@ -4505,7 +4708,9 @@ function renderSandboxPlanPanel(result) {
       </ol>
     </div>
     <div id="sandbox-plan-items">
-      ${items.map((item) => `
+      ${items
+        .map(
+          (item) => `
         <div class="sandbox-plan-item" data-item-id="${item.id}" data-status="${escapeHtml(item.status || "pending")}">
           <div class="sandbox-plan-item-header">
             ${sandboxChangeTypeBadge(item.change_type)}
@@ -4520,21 +4725,49 @@ function renderSandboxPlanPanel(result) {
             ${escapeHtml([item.source_account_id_proposed, item.day_of_week_proposed, item.stop_order_proposed != null ? `#${item.stop_order_proposed}` : ""].filter(Boolean).join(" / ") || "—")}
           </div>
           <div class="sandbox-plan-item-actions">
-            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'completed')">✓ Done in Skimmer</button>
-            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'skipped')">Skip</button>
+            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'completed')">Mark Item Complete</button>
+            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'skipped')">Mark Skipped</button>
             <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'needs_review')">Needs Review</button>
           </div>
         </div>
-      `).join("")}
+      `,
+        )
+        .join("")}
     </div>`;
+}
+
+async function sandboxApprovePacket(planId) {
+  try {
+    await api(`/api/routes/sandbox/change-plans/${planId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ approved_by: state.actor || "dashboard" }),
+    });
+    showToast("Manual update packet approved.");
+  } catch (err) {
+    showToast(`Error: ${err.message}`, 4000);
+  }
+}
+
+async function sandboxPrintPacket(planId) {
+  try {
+    await api(`/api/routes/sandbox/change-plans/${planId}/mark-printed`, {
+      method: "POST",
+    });
+  } catch {
+    // Printing should still be available for review even if the packet has not been approved yet.
+  }
+  window.print();
 }
 
 async function sandboxMarkPlanItem(planId, itemId, status) {
   try {
-    const result = await api(`/api/routes/sandbox/change-plans/${planId}/items/${itemId}/mark`, {
-      method: "POST",
-      body: JSON.stringify({ status }),
-    });
+    await api(
+      `/api/routes/sandbox/change-plans/${planId}/items/${itemId}/mark`,
+      {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      },
+    );
     const el = document.querySelector(`[data-item-id="${itemId}"]`);
     if (el) {
       el.dataset.status = status;
@@ -4549,15 +4782,15 @@ async function sandboxMarkPlanItem(planId, itemId, status) {
 
 // ── Main load/render ───────────────────────────────────────────────────────────
 
-async function loadRouteSandbox(force = false) {
+async function loadRouteSandbox(_force = false) {
   setLayout("single");
   els.mainPanel.innerHTML = `
     <div class="sandbox-shell">
       <div id="sandbox-toolbar" class="sandbox-toolbar"></div>
       <div class="sandbox-body">
         <div class="sandbox-left">
-          <div id="sandbox-filter-bar" class="sandbox-filter-bar"></div>
-          <div id="sandbox-route-list" class="sandbox-route-list"></div>
+          <div id="sandbox-filter-bar" class="sandbox-filter-bar"><span class="muted">Loading route filters…</span></div>
+          <div id="sandbox-route-list" class="sandbox-route-list"><div class="empty-state" style="padding:16px">Loading routes…</div></div>
         </div>
         <div class="sandbox-center">
           <div id="sandbox-map-container" class="sandbox-map-container"></div>
@@ -4568,20 +4801,24 @@ async function loadRouteSandbox(force = false) {
     </div>`;
 
   // Load data in parallel
-  const [scenariosResult, currentResult] = await Promise.all([
+  const [scenariosResult, currentResult, profileResult] = await Promise.all([
     api("/api/routes/sandbox/scenarios"),
     api("/api/routes/current").catch(() => null),
+    api("/api/routes/technician-profiles").catch(() => ({ items: [] })),
   ]);
 
   sandbox.scenarios = scenariosResult.items || [];
   sandbox.currentRoutes = currentResult;
+  sandbox.techProfiles = profileResult.items || [];
   sandbox.techColorMap = {};
 
   if (sandbox.activeScenarioId) {
     try {
-      const detail = await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}`);
+      const detail = await api(
+        `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}`,
+      );
       sandbox.activeScenario = detail;
-    } catch (_) {
+    } catch {
       sandbox.activeScenarioId = null;
       sandbox.activeScenario = null;
     }
@@ -4595,16 +4832,20 @@ async function loadRouteSandbox(force = false) {
   renderSandboxRouteList(filteredGroups);
 
   sandboxInitMap();
-  sandboxRenderMap([]);
+  sandboxRenderMap(sandbox.techProfiles);
 }
 
 // ── Tech settings page ─────────────────────────────────────────────────────────
 
-async function loadRouteTechSettings(force = false) {
+async function loadRouteTechSettings(_force = false) {
   setLayout("single");
-  const result = await api("/api/routes/technician-profiles").catch(() => ({ items: [] }));
-  const currentResult = await api("/api/routes/current").catch(() => ({ technicians: [] }));
-  const knownTechs = (currentResult.technicians || []);
+  const result = await api(
+    "/api/routes/technician-profiles?include_private=1",
+  ).catch(() => ({ items: [] }));
+  const currentResult = await api("/api/routes/current").catch(() => ({
+    technicians: [],
+  }));
+  const knownTechs = currentResult.technicians || [];
   const profiles = result.items || [];
 
   els.mainPanel.innerHTML = `
@@ -4616,9 +4857,13 @@ async function loadRouteTechSettings(force = false) {
       </p>
       <div id="tech-profiles-list">
         ${knownTechs.length === 0 ? `<div class="empty-state">No technicians found in Skimmer import data.</div>` : ""}
-        ${knownTechs.map((tech) => {
-          const profile = profiles.find((p) => p.technician_id === tech.source_account_id) || {};
-          return `
+        ${knownTechs
+          .map((tech) => {
+            const profile =
+              profiles.find(
+                (p) => p.technician_id === tech.source_account_id,
+              ) || {};
+            return `
             <div class="sandbox-tech-profile-card" data-tech-id="${escapeHtml(tech.source_account_id)}">
               <div class="sandbox-tech-profile-header">
                 <span class="sandbox-group-dot" style="background:${sandboxTechColor(tech.source_account_id)}"></span>
@@ -4638,11 +4883,11 @@ async function loadRouteTechSettings(force = false) {
                 </select>
                 <div class="sandbox-tech-include-row">
                   <label>
-                    <input type="checkbox" id="tp-inc-start-${escapeHtml(tech.source_account_id)}"${profile.include_start_drive_in_metrics !== false ? " checked" : ""} />
+                    <input type="checkbox" id="tp-inc-start-${escapeHtml(tech.source_account_id)}"${profile.include_start_drive_in_metrics === true ? " checked" : ""} />
                     Include start drive in metrics
                   </label>
                   <label>
-                    <input type="checkbox" id="tp-inc-end-${escapeHtml(tech.source_account_id)}"${profile.include_end_drive_in_metrics !== false ? " checked" : ""} />
+                    <input type="checkbox" id="tp-inc-end-${escapeHtml(tech.source_account_id)}"${profile.include_end_drive_in_metrics === true ? " checked" : ""} />
                     Include end drive in metrics
                   </label>
                 </div>
@@ -4651,7 +4896,8 @@ async function loadRouteTechSettings(force = false) {
                 </div>
               </div>
             </div>`;
-        }).join("")}
+          })
+          .join("")}
       </div>
     </div>`;
 }
@@ -4675,6 +4921,14 @@ async function saveTechProfile(techId) {
     });
   }, "Tech profile saved");
 }
+
+window.sandboxMoveStop = sandboxMoveStop;
+window.sandboxCloseDetail = sandboxCloseDetail;
+window.renderSandboxDefaultView = renderSandboxDefaultView;
+window.sandboxApprovePacket = sandboxApprovePacket;
+window.sandboxPrintPacket = sandboxPrintPacket;
+window.sandboxMarkPlanItem = sandboxMarkPlanItem;
+window.saveTechProfile = saveTechProfile;
 
 init().catch((error) => {
   setStatus("Error", "critical");

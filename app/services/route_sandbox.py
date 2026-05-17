@@ -20,6 +20,28 @@ DAY_ORDER = {
     "Sunday": 6,
 }
 
+SCENARIO_STATUSES = {"draft", "locked", "approved", "manually_completed", "archived"}
+SCENARIO_EDITABLE_STATUSES = {"draft"}
+SCENARIO_STATUS_TRANSITIONS = {
+    "draft": {"locked", "approved", "archived"},
+    "locked": {"approved", "archived"},
+    "approved": {"manually_completed", "archived"},
+    "manually_completed": {"archived"},
+    "archived": set(),
+}
+CHANGE_PLAN_STATUSES = {
+    "generated",
+    "approved",
+    "printed",
+    "manually_in_progress",
+    "manually_completed",
+    "failed",
+    "partially_completed",
+    "stale",
+}
+CHANGE_PLAN_ACTIONABLE_STATUSES = {"approved", "printed", "manually_in_progress"}
+VALID_SOURCE_SYSTEMS = {"skimmer"}
+
 # Warn if a route group exceeds this many stops
 WARN_POOL_COUNT_THRESHOLD = int(__import__("os").getenv("ROUTE_WARN_POOL_COUNT", "20"))
 # Warn if estimated route hours exceed this
@@ -35,6 +57,27 @@ WARN_COMMUTE_MILES = float(__import__("os").getenv("ROUTE_WARN_COMMUTE_MILES", "
 def _require_postgres() -> None:
     if not DATABASE_URL:
         raise HTTPException(status_code=404, detail="DATABASE_URL is not configured")
+
+
+def _validate_source_system(source_system: str) -> str:
+    value = str(source_system or "skimmer").strip().lower()
+    if value not in VALID_SOURCE_SYSTEMS:
+        raise HTTPException(status_code=400, detail="Only imported Skimmer route data is supported")
+    return value
+
+
+def _require_valid_day(day: Any) -> str:
+    value = str(day or "").strip()
+    if value not in DAY_ORDER:
+        raise HTTPException(status_code=400, detail=f"day_of_week must be one of: {', '.join(DAY_ORDER.keys())}")
+    return value
+
+
+def _route_change_plan_status(status: Any) -> str:
+    value = str(status or "").strip()
+    if value not in CHANGE_PLAN_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(sorted(CHANGE_PLAN_STATUSES))}")
+    return value
 
 
 def _haversine_miles(lat1: Optional[float], lon1: Optional[float], lat2: Optional[float], lon2: Optional[float]) -> Optional[float]:
@@ -61,6 +104,26 @@ def _route_miles(stops: List[Dict[str, Any]]) -> float:
                     total += d
             prev_lat, prev_lon = float(lat), float(lon)
     return round(total, 2)
+
+
+def _route_endpoint(
+    tech_profile: Optional[Dict[str, Any]],
+    kind: str,
+) -> Tuple[Optional[float], Optional[float], str]:
+    profile = tech_profile or {}
+    location_type = profile.get(
+        "default_start_location_type" if kind == "start" else "default_end_location_type",
+        "first_stop" if kind == "start" else "last_stop",
+    )
+    if location_type == "home":
+        return profile.get("home_latitude"), profile.get("home_longitude"), "home"
+    if location_type == "custom":
+        return (
+            profile.get("custom_start_latitude" if kind == "start" else "custom_end_latitude"),
+            profile.get("custom_start_longitude" if kind == "start" else "custom_end_longitude"),
+            "custom",
+        )
+    return None, None, location_type
 
 
 def _centroid(stops: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float]]:
@@ -104,19 +167,19 @@ def _build_route_warnings(
     if tech_profile:
         start_type = tech_profile.get("default_start_location_type", "first_stop")
         end_type = tech_profile.get("default_end_location_type", "last_stop")
-        if ordered and start_type in ("home", "custom"):
-            slat = tech_profile.get("home_latitude") if start_type == "home" else tech_profile.get("custom_start_latitude")
-            slon = tech_profile.get("home_longitude") if start_type == "home" else tech_profile.get("custom_start_longitude")
+        include_start = bool(tech_profile.get("include_start_drive_in_metrics"))
+        include_end = bool(tech_profile.get("include_end_drive_in_metrics"))
+        if ordered and include_start and start_type in ("home", "custom"):
+            slat, slon, _ = _route_endpoint(tech_profile, "start")
             first = next((s for s in ordered if s.get("latitude") is not None), None)
-            if first and slat is not None:
+            if first and slat is not None and slon is not None:
                 d = _haversine_miles(slat, slon, first.get("latitude"), first.get("longitude"))
                 if d is not None and d > WARN_COMMUTE_MILES:
                     warnings.append(f"First stop is {d:.1f} mi from tech start location — long commute.")
-        if ordered and end_type in ("home", "custom"):
-            elat = tech_profile.get("home_latitude") if end_type == "home" else tech_profile.get("custom_end_latitude")
-            elon = tech_profile.get("home_longitude") if end_type == "home" else tech_profile.get("custom_end_longitude")
+        if ordered and include_end and end_type in ("home", "custom"):
+            elat, elon, _ = _route_endpoint(tech_profile, "end")
             last = next((s for s in reversed(ordered) if s.get("latitude") is not None), None)
-            if last and elat is not None:
+            if last and elat is not None and elon is not None:
                 d = _haversine_miles(elat, elon, last.get("latitude"), last.get("longitude"))
                 if d is not None and d > WARN_COMMUTE_MILES:
                     warnings.append(f"Last stop is {d:.1f} mi from tech end location — long return drive.")
@@ -132,28 +195,30 @@ def _build_route_metrics(
     in_route_miles = _route_miles(ordered)
     service_minutes = sum(s.get("estimated_duration_minutes") or 45 for s in stops)
 
-    start_miles: Optional[float] = None
-    end_miles: Optional[float] = None
+    start_to_first_stop_miles: Optional[float] = None
+    last_stop_to_end_miles: Optional[float] = None
     start_type = (tech_profile or {}).get("default_start_location_type", "first_stop")
     end_type = (tech_profile or {}).get("default_end_location_type", "last_stop")
-    include_start = (tech_profile or {}).get("include_start_drive_in_metrics", True)
-    include_end = (tech_profile or {}).get("include_end_drive_in_metrics", True)
+    include_start = bool((tech_profile or {}).get("include_start_drive_in_metrics"))
+    include_end = bool((tech_profile or {}).get("include_end_drive_in_metrics"))
 
-    if tech_profile and include_start and start_type in ("home", "custom"):
-        slat = tech_profile.get("home_latitude") if start_type == "home" else tech_profile.get("custom_start_latitude")
-        slon = tech_profile.get("home_longitude") if start_type == "home" else tech_profile.get("custom_start_longitude")
+    if tech_profile and start_type in ("home", "custom"):
+        slat, slon, _ = _route_endpoint(tech_profile, "start")
         first = next((s for s in ordered if s.get("latitude") is not None), None)
-        if first and slat is not None:
-            start_miles = _haversine_miles(slat, slon, first.get("latitude"), first.get("longitude"))
+        if first and slat is not None and slon is not None:
+            start_to_first_stop_miles = _haversine_miles(slat, slon, first.get("latitude"), first.get("longitude"))
 
-    if tech_profile and include_end and end_type in ("home", "custom"):
-        elat = tech_profile.get("home_latitude") if end_type == "home" else tech_profile.get("custom_end_latitude")
-        elon = tech_profile.get("home_longitude") if end_type == "home" else tech_profile.get("custom_end_longitude")
+    if tech_profile and end_type in ("home", "custom"):
+        elat, elon, _ = _route_endpoint(tech_profile, "end")
         last = next((s for s in reversed(ordered) if s.get("latitude") is not None), None)
-        if last and elat is not None:
-            end_miles = _haversine_miles(elat, elon, last.get("latitude"), last.get("longitude"))
+        if last and elat is not None and elon is not None:
+            last_stop_to_end_miles = _haversine_miles(elat, elon, last.get("latitude"), last.get("longitude"))
 
-    commute_miles = (start_miles or 0.0) + (end_miles or 0.0)
+    start_weighted = start_to_first_stop_miles if include_start else 0.0
+    end_weighted = last_stop_to_end_miles if include_end else 0.0
+    commute_miles = (start_weighted or 0.0) + (end_weighted or 0.0)
+    total_without_start_end = round(in_route_miles, 2)
+    total_with_start_end = round(in_route_miles + (start_to_first_stop_miles or 0.0) + (last_stop_to_end_miles or 0.0), 2)
     total_miles = round(in_route_miles + commute_miles, 2)
     # Rough estimate: 25 mph avg
     drive_time_minutes = round((total_miles / 25.0) * 60)
@@ -162,21 +227,57 @@ def _build_route_metrics(
     return {
         "pool_count": len(stops),
         "service_minutes": service_minutes,
+        "stop_to_stop_miles": round(in_route_miles, 2),
         "in_route_miles": round(in_route_miles, 2),
-        "start_miles": round(start_miles, 2) if start_miles is not None else None,
-        "end_miles": round(end_miles, 2) if end_miles is not None else None,
+        "start_to_first_stop_miles": round(start_to_first_stop_miles, 2) if start_to_first_stop_miles is not None else None,
+        "last_stop_to_end_miles": round(last_stop_to_end_miles, 2) if last_stop_to_end_miles is not None else None,
+        "start_miles": round(start_to_first_stop_miles, 2) if start_to_first_stop_miles is not None else None,
+        "end_miles": round(last_stop_to_end_miles, 2) if last_stop_to_end_miles is not None else None,
         "commute_miles": round(commute_miles, 2),
+        "total_without_start_end_miles": total_without_start_end,
+        "total_with_start_end_miles": total_with_start_end,
+        "total_weighted_miles": total_miles,
         "total_miles": total_miles,
+        "include_start_drive_in_metrics": include_start,
+        "include_end_drive_in_metrics": include_end,
         "drive_time_minutes": drive_time_minutes,
         "total_time_minutes": total_time_minutes,
         "missing_coords_count": sum(1 for s in stops if s.get("latitude") is None or s.get("longitude") is None),
     }
 
 
+def _ensure_scenario_editable(cur, scenario_id: int) -> Dict[str, Any]:
+    cur.execute("SELECT * FROM route_scenarios WHERE id = %s", (scenario_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    scenario = dict(row)
+    if scenario.get("status") not in SCENARIO_EDITABLE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Scenario is read-only. Duplicate it into a new draft before editing.",
+        )
+    return scenario
+
+
+def _mark_change_plans_stale(cur, scenario_id: int) -> None:
+    cur.execute(
+        """
+        UPDATE route_change_plans
+        SET status = 'stale',
+            error_json = jsonb_build_object('reason', 'Scenario changed after packet generation')
+        WHERE scenario_id = %s
+          AND status IN ('generated', 'approved', 'printed')
+        """,
+        (scenario_id,),
+    )
+
+
 # ── Current routes (from Skimmer data) ────────────────────────────────────────
 
 def list_current_route_pools(source_system: str = "skimmer") -> Dict[str, Any]:
     _require_postgres()
+    source_system = _validate_source_system(source_system)
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -290,14 +391,33 @@ def list_current_route_pools(source_system: str = "skimmer") -> Dict[str, Any]:
 
 # ── Technician route profiles ──────────────────────────────────────────────────
 
-def list_technician_profiles() -> Dict[str, Any]:
+def list_technician_profiles(include_private: bool = False) -> Dict[str, Any]:
     _require_postgres()
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT
-                    p.*,
+                    p.id,
+                    p.technician_id,
+                    p.display_name,
+                    p.home_latitude,
+                    p.home_longitude,
+                    p.default_start_location_type,
+                    p.default_end_location_type,
+                    p.custom_start_latitude,
+                    p.custom_start_longitude,
+                    p.custom_end_latitude,
+                    p.custom_end_longitude,
+                    p.include_start_drive_in_metrics,
+                    p.include_end_drive_in_metrics,
+                    p.is_active,
+                    p.notes,
+                    p.created_at,
+                    p.updated_at,
+                    CASE WHEN %s THEN p.home_address ELSE NULL END AS home_address,
+                    CASE WHEN %s THEN p.custom_start_address ELSE NULL END AS custom_start_address,
+                    CASE WHEN %s THEN p.custom_end_address ELSE NULL END AS custom_end_address,
                     COALESCE(
                         NULLIF(trim(concat_ws(' ', a.first_name, a.last_name)), ''),
                         a.username,
@@ -308,7 +428,8 @@ def list_technician_profiles() -> Dict[str, Any]:
                     ON a.source_system = 'skimmer'
                    AND a.source_account_id = p.technician_id
                 ORDER BY skimmer_tech_name ASC
-                """
+                """,
+                (include_private, include_private, include_private),
             )
             items = [dict(r) for r in cur.fetchall()]
     return {"ok": True, "items": items, "total": len(items)}
@@ -333,7 +454,6 @@ def upsert_technician_profile(technician_id: str, payload: Dict[str, Any]) -> Di
             raise HTTPException(status_code=400, detail=f"{key} must be one of: {', '.join(valid_start_end)}")
 
     set_clauses = [f"{k} = %s" for k in data]
-    values = list(data.values()) + [technician_id]
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -449,22 +569,38 @@ def get_scenario(scenario_id: int) -> Dict[str, Any]:
 def update_scenario(scenario_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     _require_postgres()
     allowed = {"name", "status", "notes"}
-    valid_statuses = {"draft", "locked", "approved", "pushed", "archived"}
     data = {k: v for k, v in payload.items() if k in allowed and v is not None}
     if not data:
         raise HTTPException(status_code=400, detail="No valid fields provided")
-    if "status" in data and data["status"] not in valid_statuses:
-        raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(valid_statuses)}")
-    set_clauses = [f"{k} = %s" for k in data] + ["updated_at = NOW()"]
+    if "status" in data and data["status"] not in SCENARIO_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(sorted(SCENARIO_STATUSES))}")
     with pg() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT * FROM route_scenarios WHERE id = %s", (scenario_id,))
+            existing = cur.fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="Scenario not found")
+            existing = dict(existing)
+            current_status = existing.get("status")
+            next_status = data.get("status")
+            if next_status and next_status != current_status:
+                allowed_next = SCENARIO_STATUS_TRANSITIONS.get(current_status, set())
+                if next_status not in allowed_next:
+                    raise HTTPException(status_code=409, detail=f"Invalid scenario status transition: {current_status} -> {next_status}")
+                if next_status == "approved":
+                    validation = validate_scenario(scenario_id)
+                    if not validation.get("valid"):
+                        raise HTTPException(status_code=409, detail="Scenario has unresolved validation errors")
+            if any(k in data for k in ("name", "notes")) and current_status not in SCENARIO_EDITABLE_STATUSES:
+                raise HTTPException(status_code=409, detail="Scenario details are read-only unless the scenario is a draft")
+            set_clauses = [f"{k} = %s" for k in data] + ["updated_at = NOW()"]
             cur.execute(
                 f"UPDATE route_scenarios SET {', '.join(set_clauses)} WHERE id = %s RETURNING *",
                 list(data.values()) + [scenario_id],
             )
             row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Scenario not found")
+            if any(k in data for k in ("name", "notes")):
+                _mark_change_plans_stale(cur, scenario_id)
         conn.commit()
     return {"ok": True, "scenario": dict(row)}
 
@@ -472,6 +608,7 @@ def update_scenario(scenario_id: int, payload: Dict[str, Any]) -> Dict[str, Any]
 def create_scenario_from_current(name: str, notes: str = "", created_by: str = "", source_system: str = "skimmer") -> Dict[str, Any]:
     """Snapshot the current Skimmer route data into a new sandbox scenario."""
     _require_postgres()
+    source_system = _validate_source_system(source_system)
     current = list_current_route_pools(source_system)
     scenario_result = create_scenario(name or f"Snapshot {date.today().isoformat()}", notes, created_by)
     scenario_id = scenario_result["scenario"]["id"]
@@ -597,11 +734,16 @@ def move_assignment(
     new_stop_order: Optional[int] = None,
 ) -> Dict[str, Any]:
     _require_postgres()
-    valid_days = set(DAY_ORDER.keys())
-    if new_day_of_week not in valid_days:
-        raise HTTPException(status_code=400, detail=f"day_of_week must be one of: {', '.join(sorted(valid_days))}")
+    new_day_of_week = _require_valid_day(new_day_of_week)
+    if not str(new_account_id or "").strip():
+        raise HTTPException(status_code=400, detail="source_account_id is required")
+    try:
+        new_stop_order = int(new_stop_order) if new_stop_order is not None else None
+    except Exception:
+        raise HTTPException(status_code=400, detail="stop_order must be an integer")
     with pg() as conn:
         with conn.cursor() as cur:
+            _ensure_scenario_editable(cur, scenario_id)
             cur.execute(
                 "SELECT * FROM route_scenario_assignments WHERE id = %s AND scenario_id = %s",
                 (assignment_id, scenario_id),
@@ -615,6 +757,8 @@ def move_assignment(
                 (new_account_id,),
             )
             tech_row = cur.fetchone()
+            if not tech_row:
+                raise HTTPException(status_code=400, detail="source_account_id does not match a known Skimmer technician")
             tech_name = None
             if tech_row:
                 tech_name = (
@@ -653,6 +797,7 @@ def move_assignment(
                 "UPDATE route_scenarios SET updated_at = NOW() WHERE id = %s",
                 (scenario_id,),
             )
+            _mark_change_plans_stale(cur, scenario_id)
         conn.commit()
     return {"ok": True, "assignment": dict(updated) if updated else {}}
 
@@ -662,22 +807,38 @@ def reorder_assignments(scenario_id: int, ordered_ids: List[int]) -> Dict[str, A
     _require_postgres()
     if not ordered_ids:
         raise HTTPException(status_code=400, detail="ordered_ids must not be empty")
+    if len(set(ordered_ids)) != len(ordered_ids):
+        raise HTTPException(status_code=400, detail="ordered_ids must not contain duplicates")
     with pg() as conn:
         with conn.cursor() as cur:
+            _ensure_scenario_editable(cur, scenario_id)
             cur.execute(
-                "SELECT id FROM route_scenario_assignments WHERE scenario_id = %s AND id = ANY(%s)",
+                """
+                SELECT id, source_account_id, day_of_week
+                FROM route_scenario_assignments
+                WHERE scenario_id = %s AND id = ANY(%s)
+                """,
                 (scenario_id, ordered_ids),
             )
-            found_ids = {r["id"] for r in cur.fetchall()}
+            found_rows = [dict(r) for r in cur.fetchall()]
+            found_ids = {r["id"] for r in found_rows}
             missing = [i for i in ordered_ids if i not in found_ids]
             if missing:
                 raise HTTPException(status_code=404, detail=f"Assignment IDs not found in scenario: {missing}")
+            group_keys = {(r["source_account_id"], r["day_of_week"]) for r in found_rows}
+            if len(group_keys) != 1:
+                raise HTTPException(status_code=400, detail="Reorder can only operate within one technician/day route group")
             for order, aid in enumerate(ordered_ids, start=1):
                 cur.execute(
-                    "UPDATE route_scenario_assignments SET stop_order = %s, updated_at = NOW() WHERE id = %s AND scenario_id = %s",
+                    """
+                    UPDATE route_scenario_assignments
+                    SET stop_order = %s, is_changed_from_current = TRUE, updated_at = NOW()
+                    WHERE id = %s AND scenario_id = %s
+                    """,
                     (order * 10, aid, scenario_id),
                 )
             cur.execute("UPDATE route_scenarios SET updated_at = NOW() WHERE id = %s", (scenario_id,))
+            _mark_change_plans_stale(cur, scenario_id)
         conn.commit()
     return {"ok": True, "reordered": len(ordered_ids)}
 
@@ -691,38 +852,79 @@ def validate_scenario(scenario_id: int) -> Dict[str, Any]:
     route_groups = detail["route_groups"]
 
     all_warnings: List[Dict[str, Any]] = []
+    all_errors: List[Dict[str, Any]] = []
     seen_locations: Dict[str, List[str]] = {}
+    valid_days = set(DAY_ORDER.keys())
 
     for group in route_groups:
         key = f"{group['tech_name']} / {group['day_of_week']}"
+        if not group.get("source_account_id"):
+            all_errors.append({"group": key, "message": "Route group is missing a technician."})
+        if group.get("day_of_week") not in valid_days:
+            all_errors.append({"group": key, "message": f"Route group has invalid day: {group.get('day_of_week') or 'blank'}."})
         for w in group.get("warnings", []):
             all_warnings.append({"group": key, "message": w})
         for stop in group["stops"]:
             loc = stop.get("source_service_location_id", "")
+            if not loc:
+                all_errors.append({"group": key, "message": "Assignment is missing a service location id."})
+            if not stop.get("source_account_id"):
+                all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} is missing a technician."})
+            if stop.get("day_of_week") not in valid_days:
+                all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} has invalid day: {stop.get('day_of_week') or 'blank'}."})
             seen_locations.setdefault(loc, []).append(key)
 
     # Duplicate location across route groups
     for loc, groups in seen_locations.items():
-        if len(groups) > 1:
-            all_warnings.append({
+        if loc and len(groups) > 1:
+            all_errors.append({
                 "group": "global",
-                "message": f"Service location appears in multiple route groups: {', '.join(groups)}",
+                "message": f"Service location {loc} appears in multiple route groups: {', '.join(groups)}",
             })
 
     return {
         "ok": True,
         "scenario_id": scenario_id,
         "scenario_name": scenario.get("name"),
+        "error_count": len(all_errors),
         "warning_count": len(all_warnings),
+        "errors": all_errors,
         "warnings": all_warnings,
-        "valid": len(all_warnings) == 0,
+        "valid": len(all_errors) == 0,
     }
+
+
+def _load_scenario_for_plan(cur, scenario_id: int) -> Dict[str, Any]:
+    cur.execute("SELECT * FROM route_scenarios WHERE id = %s", (scenario_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    return dict(row)
+
+
+def _require_approved_valid_scenario_for_packet(scenario_id: int) -> Dict[str, Any]:
+    validation = validate_scenario(scenario_id)
+    with pg() as conn:
+        with conn.cursor() as cur:
+            scenario = _load_scenario_for_plan(cur, scenario_id)
+    if scenario.get("status") != "approved":
+        raise HTTPException(status_code=409, detail="Manual update packets can only be generated from approved scenarios")
+    if not validation.get("valid"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Scenario has unresolved validation errors",
+                "errors": validation.get("errors", []),
+            },
+        )
+    return scenario
 
 
 # ── Comparison (scenario vs current) ─────────────────────────────────────────
 
 def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str, Any]:
     _require_postgres()
+    source_system = _validate_source_system(source_system)
     current = list_current_route_pools(source_system)
     scenario_detail = get_scenario(scenario_id)
 
@@ -732,6 +934,7 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
         for stop in group["stops"]:
             loc = stop["source_service_location_id"]
             current_map[loc] = {
+                "source_route_assignment_id": stop.get("source_route_assignment_id"),
                 "source_account_id": stop["source_account_id"],
                 "tech_name": stop.get("tech_name"),
                 "day_of_week": stop["day_of_week"],
@@ -795,6 +998,7 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
                     "customer_name": cur.get("customer_name"),
                     "address": cur.get("address"),
                     "change_type": "reordered",
+                    "source_account_id": cur["source_account_id"],
                     "tech_name": cur.get("tech_name"),
                     "day_of_week": cur["day_of_week"],
                     "current_order": cur.get("stop_order"),
@@ -818,6 +1022,8 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
         "added": added,
         "removed": removed,
         "reordered": reordered,
+        "current_route_groups": current["route_groups"],
+        "proposed_route_groups": scenario_detail["route_groups"],
     }
 
 
@@ -825,6 +1031,7 @@ def get_comparison(scenario_id: int, source_system: str = "skimmer") -> Dict[str
 
 def generate_change_plan(scenario_id: int) -> Dict[str, Any]:
     _require_postgres()
+    scenario = _require_approved_valid_scenario_for_packet(scenario_id)
     comparison = get_comparison(scenario_id)
 
     items: List[Dict[str, Any]] = []
@@ -894,18 +1101,40 @@ def generate_change_plan(scenario_id: int) -> Dict[str, Any]:
         "total_changes": len(items),
     }
 
+    items.sort(
+        key=lambda item: (
+            item.get("day_of_week_proposed") or item.get("day_of_week_current") or "",
+            item.get("source_account_id_proposed") or item.get("source_account_id_current") or "",
+            item.get("stop_order_proposed") or item.get("stop_order_current") or 0,
+            item.get("source_service_location_id") or "",
+            item.get("change_type") or "",
+        )
+    )
+
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO route_change_plans (scenario_id, summary_json)
-                VALUES (%s, %s::jsonb)
+                UPDATE route_change_plans
+                SET status = 'stale',
+                    error_json = jsonb_build_object('reason', 'New manual update packet generated'),
+                    updated_at = NOW()
+                WHERE scenario_id = %s
+                  AND status IN ('generated', 'approved', 'printed')
+                """,
+                (scenario_id,),
+            )
+            cur.execute(
+                """
+                INSERT INTO route_change_plans (scenario_id, scenario_updated_at, summary_json)
+                VALUES (%s, %s, %s::jsonb)
                 RETURNING *
                 """,
-                (scenario_id, json.dumps(summary)),
+                (scenario_id, scenario.get("updated_at"), json.dumps(summary)),
             )
             plan_row = cur.fetchone()
             plan_id = plan_row["id"]
+            persisted_items: List[Dict[str, Any]] = []
             for item in items:
                 cur.execute(
                     """
@@ -916,6 +1145,7 @@ def generate_change_plan(scenario_id: int) -> Dict[str, Any]:
                         source_account_id_proposed, day_of_week_proposed, stop_order_proposed,
                         skimmer_route_assignment_id
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *
                     """,
                     (
                         plan_id,
@@ -932,9 +1162,12 @@ def generate_change_plan(scenario_id: int) -> Dict[str, Any]:
                         item.get("skimmer_route_assignment_id"),
                     ),
                 )
+                inserted = cur.fetchone()
+                if inserted:
+                    persisted_items.append(dict(inserted))
         conn.commit()
 
-    return {"ok": True, "change_plan_id": plan_id, "change_plan": dict(plan_row), "summary": summary, "items": items}
+    return {"ok": True, "change_plan_id": plan_id, "change_plan": dict(plan_row), "summary": summary, "items": persisted_items}
 
 
 def get_change_plan(plan_id: int) -> Dict[str, Any]:
@@ -959,16 +1192,34 @@ def approve_change_plan(plan_id: int, approved_by: str = "") -> Dict[str, Any]:
         with conn.cursor() as cur:
             cur.execute(
                 """
+                SELECT p.*, s.updated_at AS current_scenario_updated_at
+                FROM route_change_plans p
+                JOIN route_scenarios s ON s.id = p.scenario_id
+                WHERE p.id = %s
+                """,
+                (plan_id,),
+            )
+            existing = cur.fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="Change plan not found")
+            existing_plan = dict(existing)
+            if existing_plan.get("status") != "generated":
+                raise HTTPException(status_code=409, detail="Change plan is not in generated status")
+            if existing_plan.get("scenario_updated_at") != existing_plan.get("current_scenario_updated_at"):
+                raise HTTPException(status_code=409, detail="Change plan is stale; regenerate the manual update packet")
+            validation = validate_scenario(int(existing_plan["scenario_id"]))
+            if not validation.get("valid"):
+                raise HTTPException(status_code=409, detail="Scenario has unresolved validation errors")
+            cur.execute(
+                """
                 UPDATE route_change_plans
                 SET status = 'approved', approved_by = %s, approved_at = NOW(), updated_at = NOW()
-                WHERE id = %s AND status = 'generated'
+                WHERE id = %s
                 RETURNING *
                 """,
                 (approved_by.strip() or "user", plan_id),
             )
             row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Change plan not found or not in generated status")
         conn.commit()
     return {"ok": True, "change_plan": dict(row)}
 
@@ -981,6 +1232,13 @@ def mark_plan_item(plan_id: int, item_id: int, status: str, notes: str = "") -> 
         raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(valid)}")
     with pg() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT * FROM route_change_plans WHERE id = %s", (plan_id,))
+            plan_row = cur.fetchone()
+            if not plan_row:
+                raise HTTPException(status_code=404, detail="Change plan not found")
+            plan = dict(plan_row)
+            if _route_change_plan_status(plan.get("status")) not in CHANGE_PLAN_ACTIONABLE_STATUSES:
+                raise HTTPException(status_code=409, detail="Manual checklist items can only be marked after the packet is approved")
             cur.execute(
                 """
                 UPDATE route_change_plan_items
@@ -1008,12 +1266,33 @@ def mark_plan_item(plan_id: int, item_id: int, status: str, notes: str = "") -> 
             counts = dict(cur.fetchone())
             if counts["pending"] == 0 and counts["needs_review"] == 0:
                 cur.execute(
-                    "UPDATE route_change_plans SET status = 'manually_completed' WHERE id = %s AND status IN ('approved', 'manually_in_progress')",
+                    """
+                    UPDATE route_change_plans
+                    SET status = 'manually_completed',
+                        manually_completed_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s AND status IN ('approved', 'printed', 'manually_in_progress')
+                    RETURNING scenario_id
+                    """,
                     (plan_id,),
                 )
+                completed_plan = cur.fetchone()
+                if completed_plan:
+                    cur.execute(
+                        """
+                        UPDATE route_scenarios
+                        SET status = 'manually_completed', updated_at = NOW()
+                        WHERE id = %s AND status = 'approved'
+                        """,
+                        (completed_plan["scenario_id"],),
+                    )
             elif counts["completed"] > 0:
                 cur.execute(
-                    "UPDATE route_change_plans SET status = 'manually_in_progress' WHERE id = %s AND status = 'approved'",
+                    """
+                    UPDATE route_change_plans
+                    SET status = 'manually_in_progress', updated_at = NOW()
+                    WHERE id = %s AND status IN ('approved', 'printed')
+                    """,
                     (plan_id,),
                 )
         conn.commit()
@@ -1025,7 +1304,12 @@ def mark_plan_printed(plan_id: int) -> Dict[str, Any]:
     with pg() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE route_change_plans SET status = 'printed' WHERE id = %s AND status IN ('generated', 'approved') RETURNING *",
+                """
+                UPDATE route_change_plans
+                SET status = 'printed', updated_at = NOW()
+                WHERE id = %s AND status = 'approved'
+                RETURNING *
+                """,
                 (plan_id,),
             )
             row = cur.fetchone()

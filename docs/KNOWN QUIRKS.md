@@ -26,6 +26,11 @@ Examples:
 - Public `sentinel.northtexaspoolpros.com` does not expose every backend/internal job path.
 - If an alert summary looks wrong after a code fix, remember that the dashboard may need both a backend refresh and a schema/view refresh path if the wrong value is coming from a SQL view rather than the frontend text formatter.
 
+## Route Sandbox
+
+- Route Sandbox must not expose a push-to-Skimmer workflow. Skimmer route changes are applied manually from the generated packet, then confirmed by a later Skimmer import/compare.
+- Technician home/base addresses are Sentinel-only route-planning settings. Do not log them or include them in ordinary Route Sandbox map payloads unless the operator is editing technician route settings.
+
 ## Psycopg
 
 - In psycopg SQL strings, `%` inside `LIKE` clauses must be escaped as `%%` because `%` is treated as a placeholder prefix.

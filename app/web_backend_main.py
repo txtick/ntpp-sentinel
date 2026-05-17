@@ -1062,9 +1062,9 @@ def api_sandbox_export_csv(request: Request, plan_id: int):
 # ── Technician route profiles ──────────────────────────────────────────────────
 
 @app.get("/api/routes/technician-profiles")
-def api_technician_profiles(request: Request):
+def api_technician_profiles(request: Request, include_private: int = 0):
     _dashboard_read_auth_or_401(request)
-    return list_technician_profiles()
+    return list_technician_profiles(include_private=bool(include_private))
 
 
 @app.post("/api/routes/technician-profiles/{technician_id}")

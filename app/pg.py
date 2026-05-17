@@ -497,8 +497,8 @@ def ensure_route_sandbox_schema() -> None:
                     custom_end_address TEXT,
                     custom_end_latitude NUMERIC,
                     custom_end_longitude NUMERIC,
-                    include_start_drive_in_metrics BOOLEAN NOT NULL DEFAULT TRUE,
-                    include_end_drive_in_metrics BOOLEAN NOT NULL DEFAULT TRUE,
+                    include_start_drive_in_metrics BOOLEAN NOT NULL DEFAULT FALSE,
+                    include_end_drive_in_metrics BOOLEAN NOT NULL DEFAULT FALSE,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
                     notes TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -506,6 +506,12 @@ def ensure_route_sandbox_schema() -> None:
                     UNIQUE (technician_id)
                 )
                 """
+            )
+            cur.execute(
+                "ALTER TABLE technician_route_profiles ALTER COLUMN include_start_drive_in_metrics SET DEFAULT FALSE"
+            )
+            cur.execute(
+                "ALTER TABLE technician_route_profiles ALTER COLUMN include_end_drive_in_metrics SET DEFAULT FALSE"
             )
             cur.execute(
                 """
@@ -519,6 +525,13 @@ def ensure_route_sandbox_schema() -> None:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
+                """
+            )
+            cur.execute(
+                """
+                UPDATE route_scenarios
+                SET status = 'manually_completed'
+                WHERE status = 'pushed'
                 """
             )
             cur.execute(
@@ -556,17 +569,59 @@ def ensure_route_sandbox_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_route_scenario_assignments_pool
+                ON route_scenario_assignments(source_service_location_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_scenario_assignments_technician
+                ON route_scenario_assignments(source_account_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_scenario_assignments_service_day
+                ON route_scenario_assignments(day_of_week)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_scenario_assignments_scenario_tech_day
+                ON route_scenario_assignments(scenario_id, source_account_id, day_of_week)
+                """
+            )
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS route_change_plans (
                     id BIGSERIAL PRIMARY KEY,
                     scenario_id BIGINT NOT NULL REFERENCES route_scenarios(id) ON DELETE CASCADE,
                     status TEXT NOT NULL DEFAULT 'generated',
                     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    scenario_updated_at TIMESTAMPTZ,
                     approved_by TEXT,
                     approved_at TIMESTAMPTZ,
-                    pushed_at TIMESTAMPTZ,
+                    manually_completed_at TIMESTAMPTZ,
                     summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-                    error_json JSONB
+                    error_json JSONB,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
+                """
+            )
+            cur.execute("ALTER TABLE route_change_plans ADD COLUMN IF NOT EXISTS scenario_updated_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE route_change_plans ADD COLUMN IF NOT EXISTS manually_completed_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE route_change_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+            cur.execute(
+                """
+                UPDATE route_change_plans
+                SET status = 'manually_completed'
+                WHERE status = 'pushed'
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_change_plans_scenario
+                ON route_change_plans(scenario_id)
                 """
             )
             cur.execute(
@@ -588,6 +643,12 @@ def ensure_route_sandbox_schema() -> None:
                     status TEXT NOT NULL DEFAULT 'pending',
                     error_message TEXT
                 )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_change_plan_items_plan
+                ON route_change_plan_items(change_plan_id)
                 """
             )
         conn.commit()
