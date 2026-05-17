@@ -195,6 +195,8 @@ const viewMeta = {
   labor: { kicker: "Labor", title: "Weekly Payroll Prep" },
   reminders: { kicker: "Reminders", title: "Follow-Up Queue" },
   settings: { kicker: "Settings", title: "Alert Rule Configuration" },
+  "route-sandbox": { kicker: "Routes", title: "Route Sandbox" },
+  "route-tech-settings": { kicker: "Routes", title: "Tech Route Settings" },
 };
 
 const filters = {
@@ -1365,6 +1367,19 @@ function renderFilters() {
     `;
     document.getElementById("technician-profile-back").onclick = () =>
       setView("technicians");
+    return;
+  }
+
+  if (state.view === "route-sandbox") {
+    setLayout("single");
+    els.filters.innerHTML = "";
+    return;
+  }
+
+  if (state.view === "route-tech-settings") {
+    setLayout("single");
+    els.filters.innerHTML = "";
+    return;
   }
 }
 
@@ -1382,6 +1397,8 @@ async function loadCurrentView(force = false) {
     if (state.view === "labor") await loadLabor(force);
     if (state.view === "reminders") await loadReminders(force);
     if (state.view === "settings") await loadSettings(force);
+    if (state.view === "route-sandbox") await loadRouteSandbox(force);
+    if (state.view === "route-tech-settings") await loadRouteTechSettings(force);
     setStatus("Live", "info");
   } catch (error) {
     setStatus("Error", "critical");
@@ -3792,6 +3809,866 @@ function openSettingsCreateModal(table) {
       }, "Rule created");
     }
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Route Sandbox
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TECH_COLORS = [
+  "#2f9be8", "#e84040", "#2ecc71", "#f39c12", "#9b59b6",
+  "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
+];
+
+const sandbox = {
+  scenarios: [],
+  activeScenarioId: null,
+  activeScenario: null,
+  currentRoutes: null,
+  filterDay: "",
+  filterTech: "",
+  map: null,
+  markers: [],
+  routeLines: [],
+  techColorMap: {},
+  selectedLocationId: null,
+  dragSourceId: null,
+  comparisonData: null,
+  planData: null,
+};
+
+function sandboxTechColor(techId) {
+  if (!sandbox.techColorMap[techId]) {
+    const idx = Object.keys(sandbox.techColorMap).length % TECH_COLORS.length;
+    sandbox.techColorMap[techId] = TECH_COLORS[idx];
+  }
+  return sandbox.techColorMap[techId];
+}
+
+function sandboxDayLabel(day) {
+  const short = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
+  return short[day] || day;
+}
+
+function sandboxChangeTypeBadge(ct) {
+  const map = {
+    moved: { label: "Moved", cls: "badge-warning" },
+    added: { label: "Added", cls: "badge-info" },
+    removed: { label: "Removed", cls: "badge-danger" },
+    reordered: { label: "Reordered", cls: "badge-muted" },
+    update_assignment: { label: "Update", cls: "badge-warning" },
+    create_assignment: { label: "Add", cls: "badge-info" },
+    delete_assignment: { label: "Remove", cls: "badge-danger" },
+    reorder_stop: { label: "Reorder", cls: "badge-muted" },
+  };
+  const b = map[ct] || { label: ct, cls: "badge-muted" };
+  return `<span class="badge ${b.cls}">${escapeHtml(b.label)}</span>`;
+}
+
+function sandboxItemStatusBadge(s) {
+  const map = {
+    pending: "badge-muted",
+    completed: "badge-success",
+    skipped: "badge-warning",
+    needs_review: "badge-danger",
+  };
+  return `<span class="badge ${map[s] || "badge-muted"}">${escapeHtml(s || "pending")}</span>`;
+}
+
+// ── Source data (current Skimmer routes) ──────────────────────────────────────
+
+function sandboxGetActiveData() {
+  if (sandbox.activeScenario) {
+    return sandbox.activeScenario.route_groups || [];
+  }
+  return (sandbox.currentRoutes || {}).route_groups || [];
+}
+
+function sandboxGetTechs() {
+  const groups = sandboxGetActiveData();
+  const seen = {};
+  groups.forEach((g) => {
+    if (!seen[g.source_account_id]) {
+      seen[g.source_account_id] = g.tech_name || g.source_account_id;
+    }
+  });
+  return Object.entries(seen).map(([id, name]) => ({ id, name }));
+}
+
+function sandboxFilterGroups(groups) {
+  return groups.filter((g) => {
+    if (sandbox.filterDay && g.day_of_week !== sandbox.filterDay) return false;
+    if (sandbox.filterTech && g.source_account_id !== sandbox.filterTech) return false;
+    return true;
+  });
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+
+function sandboxInitMap() {
+  if (sandbox.map) return;
+  const mapEl = document.getElementById("sandbox-map-container");
+  if (!mapEl || typeof L === "undefined") return;
+  sandbox.map = L.map(mapEl, { zoomControl: true }).setView([32.9, -97.0], 10);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    maxZoom: 19,
+  }).addTo(sandbox.map);
+}
+
+function sandboxMapIcon(color, order, isChanged) {
+  const border = isChanged ? "#fff" : "transparent";
+  const size = order != null ? 24 : 18;
+  const html = order != null
+    ? `<div style="background:${color};color:#fff;border:2px solid ${border};width:${size}px;height:${size}px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.3)">${order}</div>`
+    : `<div style="background:${color};border:2px solid ${border};width:${size}px;height:${size}px;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`;
+  return L.divIcon({ html, className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+}
+
+function sandboxMapGrayIcon() {
+  return L.divIcon({
+    html: `<div style="background:#b0bec5;width:12px;height:12px;border-radius:50%;opacity:0.5;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div>`,
+    className: "",
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
+  });
+}
+
+function sandboxMapHomeIcon(color) {
+  return L.divIcon({
+    html: `<div style="background:${color};color:#fff;width:20px;height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.3)">H</div>`,
+    className: "",
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+  });
+}
+
+function sandboxRenderMap(techProfiles) {
+  if (!sandbox.map) return;
+
+  // Remove existing markers and lines
+  sandbox.markers.forEach((m) => m.remove());
+  sandbox.routeLines.forEach((l) => l.remove());
+  sandbox.markers = [];
+  sandbox.routeLines = [];
+
+  const allGroups = sandboxGetActiveData();
+  const activeGroups = sandboxFilterGroups(allGroups);
+  const activeLocIds = new Set();
+  activeGroups.forEach((g) => g.stops.forEach((s) => activeLocIds.add(s.source_service_location_id)));
+
+  const isFiltered = sandbox.filterDay || sandbox.filterTech;
+
+  // Draw inactive markers first (grey, background)
+  allGroups.forEach((g) => {
+    g.stops.forEach((s) => {
+      if (!s.latitude || !s.longitude) return;
+      if (activeLocIds.has(s.source_service_location_id) && isFiltered) return;
+      if (!isFiltered) return; // will be drawn as active below
+      const m = L.marker([s.latitude, s.longitude], { icon: sandboxMapGrayIcon() })
+        .addTo(sandbox.map)
+        .on("click", () => sandboxSelectStop(s));
+      sandbox.markers.push(m);
+    });
+  });
+
+  // Draw active route groups
+  activeGroups.forEach((g) => {
+    const color = sandboxTechColor(g.source_account_id);
+    const ordered = [...g.stops].sort((a, b) => (a.stop_order || 9999) - (b.stop_order || 9999));
+    const coords = [];
+
+    ordered.forEach((s, idx) => {
+      if (!s.latitude || !s.longitude) return;
+      const latLng = [s.latitude, s.longitude];
+      coords.push(latLng);
+      const isSelected = sandbox.selectedLocationId === s.source_service_location_id;
+      const isChanged = s.is_changed_from_current;
+      const icon = sandboxMapIcon(isSelected ? "#fff" : color, idx + 1, isChanged);
+      const m = L.marker(latLng, { icon })
+        .addTo(sandbox.map)
+        .bindTooltip(`${s.customer_name || "Unknown"}<br>${s.address || ""}`, { sticky: true })
+        .on("click", () => sandboxSelectStop(s));
+      sandbox.markers.push(m);
+    });
+
+    if (coords.length > 1) {
+      const line = L.polyline(coords, { color, weight: 2, opacity: 0.6, dashArray: "6 4" }).addTo(sandbox.map);
+      sandbox.routeLines.push(line);
+    }
+
+    // Tech home marker if profile available
+    const profile = (techProfiles || []).find((p) => p.technician_id === g.source_account_id);
+    if (profile && profile.home_latitude && profile.home_longitude) {
+      const hm = L.marker([profile.home_latitude, profile.home_longitude], { icon: sandboxMapHomeIcon(color) })
+        .addTo(sandbox.map)
+        .bindTooltip(`${g.tech_name} — Home / Start`, { sticky: true });
+      sandbox.markers.push(hm);
+    }
+  });
+}
+
+// ── Stop selection ─────────────────────────────────────────────────────────────
+
+function sandboxSelectStop(stop) {
+  sandbox.selectedLocationId = stop.source_service_location_id;
+  renderSandboxDetailDrawer(stop);
+  renderSandboxMap_deferred();
+}
+
+function renderSandboxDetailDrawer(stop) {
+  const drawer = document.getElementById("sandbox-detail-drawer");
+  if (!drawer) return;
+  const allGroups = sandboxGetActiveData();
+  const currentGroups = (sandbox.currentRoutes || {}).route_groups || [];
+
+  // Find current assignment (from raw current data)
+  let currentAssign = null;
+  currentGroups.forEach((g) => {
+    const match = g.stops.find((s) => s.source_service_location_id === stop.source_service_location_id);
+    if (match) currentAssign = { tech: g.tech_name, day: g.day_of_week, order: match.stop_order };
+  });
+
+  // Find scenario assignment
+  let proposedAssign = null;
+  if (sandbox.activeScenario) {
+    allGroups.forEach((g) => {
+      const match = g.stops.find((s) => s.source_service_location_id === stop.source_service_location_id);
+      if (match) proposedAssign = { tech: g.tech_name, day: g.day_of_week, order: match.stop_order, id: match.id, accountId: g.source_account_id };
+    });
+  }
+
+  const techsHtml = sandbox.activeScenarioId
+    ? sandboxGetTechs().map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join("")
+    : "";
+  const daysHtml = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((d) => `<option value="${d}">${d}</option>`).join("");
+
+  drawer.innerHTML = `
+    <div class="sandbox-detail-inner">
+      <div class="sandbox-detail-header">
+        <strong>${escapeHtml(stop.customer_name || "Unknown Customer")}</strong>
+        <button class="sandbox-detail-close" onclick="sandboxCloseDetail()">✕</button>
+      </div>
+      <div class="sandbox-detail-addr">${escapeHtml([stop.address, stop.city].filter(Boolean).join(", ") || "—")}</div>
+      <div class="sandbox-detail-section">
+        <div class="sandbox-detail-label">Service Type</div>
+        <div>${escapeHtml(stop.rate_type || stop.frequency || "—")}</div>
+        <div class="sandbox-detail-label">Est. Duration</div>
+        <div>${stop.estimated_duration_minutes ? `${stop.estimated_duration_minutes} min` : "—"}</div>
+      </div>
+      <div class="sandbox-detail-section">
+        <div class="sandbox-detail-label">Current Skimmer Route</div>
+        <div>${currentAssign ? `${escapeHtml(currentAssign.tech)} / ${escapeHtml(currentAssign.day)}${currentAssign.order ? ` #${currentAssign.order}` : ""}` : "—"}</div>
+        ${sandbox.activeScenarioId ? `
+        <div class="sandbox-detail-label">Draft Scenario</div>
+        <div>${proposedAssign ? `${escapeHtml(proposedAssign.tech)} / ${escapeHtml(proposedAssign.day)}${proposedAssign.order ? ` #${proposedAssign.order}` : ""}` : "—"}
+          ${stop.is_changed_from_current ? ' <span class="badge badge-warning">Changed</span>' : ""}
+        </div>
+        ` : ""}
+      </div>
+      ${sandbox.activeScenarioId && proposedAssign ? `
+      <div class="sandbox-detail-section">
+        <div class="sandbox-detail-label">Move to</div>
+        <div class="sandbox-move-row">
+          <select id="move-tech-sel" class="sandbox-sel">${techsHtml}</select>
+          <select id="move-day-sel" class="sandbox-sel">${daysHtml}</select>
+          <button class="button button-primary" style="height:32px" onclick="sandboxMoveStop('${escapeHtml(stop.source_service_location_id)}', ${proposedAssign.id})">Move</button>
+        </div>
+      </div>
+      ` : ""}
+      ${!stop.latitude || !stop.longitude ? `<div class="sandbox-warn-badge">⚠ No GPS coordinates</div>` : ""}
+    </div>
+  `;
+  if (proposedAssign) {
+    const techSel = document.getElementById("move-tech-sel");
+    const daySel = document.getElementById("move-day-sel");
+    if (techSel) techSel.value = proposedAssign.accountId || "";
+    if (daySel) daySel.value = proposedAssign.day || "Monday";
+  }
+  drawer.hidden = false;
+}
+
+async function sandboxMoveStop(locationId, assignmentId) {
+  const techSel = document.getElementById("move-tech-sel");
+  const daySel = document.getElementById("move-day-sel");
+  if (!techSel || !daySel || !sandbox.activeScenarioId) return;
+  await withSaving(async () => {
+    await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`, {
+      method: "POST",
+      body: JSON.stringify({ assignment_id: assignmentId, source_account_id: techSel.value, day_of_week: daySel.value }),
+    });
+    await loadRouteSandbox(true);
+    showToast("Stop moved.");
+  }, "Stop moved");
+}
+
+function sandboxCloseDetail() {
+  sandbox.selectedLocationId = null;
+  const drawer = document.getElementById("sandbox-detail-drawer");
+  if (drawer) drawer.hidden = true;
+}
+
+// Deferred map re-render (after selection change)
+let _sandboxMapTimer = null;
+function renderSandboxMap_deferred(techProfiles) {
+  clearTimeout(_sandboxMapTimer);
+  _sandboxMapTimer = setTimeout(() => sandboxRenderMap(techProfiles || []), 80);
+}
+
+// ── Left panel route list ──────────────────────────────────────────────────────
+
+function renderSandboxRouteList(groups) {
+  const container = document.getElementById("sandbox-route-list");
+  if (!container) return;
+
+  if (!groups || groups.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:16px">No routes for the selected filters.</div>`;
+    return;
+  }
+
+  container.innerHTML = groups.map((g) => {
+    const color = sandboxTechColor(g.source_account_id);
+    const m = g.metrics || {};
+    const warnings = g.warnings || [];
+    const ordered = [...g.stops].sort((a, b) => (a.stop_order || 9999) - (b.stop_order || 9999));
+    const stopsHtml = ordered.map((s, idx) => {
+      const isSelected = sandbox.selectedLocationId === s.source_service_location_id;
+      const isChanged = s.is_changed_from_current;
+      return `
+        <div class="sandbox-stop-row${isSelected ? " is-selected" : ""}${isChanged ? " is-changed" : ""}"
+             data-loc="${escapeHtml(s.source_service_location_id)}"
+             draggable="true"
+             data-aid="${s.id || ""}"
+             onclick="sandboxSelectStop(${JSON.stringify(JSON.stringify(s)).slice(1,-1)})">
+          <span class="sandbox-stop-num" style="background:${color}">${idx + 1}</span>
+          <span class="sandbox-stop-name">${escapeHtml(s.customer_name || "Unknown")}</span>
+          <span class="sandbox-stop-addr muted">${escapeHtml(s.city || s.address || "")}</span>
+          ${isChanged ? `<span class="badge badge-warning" style="font-size:10px">✎</span>` : ""}
+          ${!s.latitude ? `<span class="badge badge-muted" style="font-size:10px">?GPS</span>` : ""}
+        </div>`;
+    }).join("");
+
+    const warningBadge = warnings.length > 0
+      ? `<span class="badge badge-warning" title="${escapeHtml(warnings.join("\n"))}">⚠ ${warnings.length}</span>`
+      : "";
+
+    return `
+      <div class="sandbox-group" data-tech="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
+        <div class="sandbox-group-header">
+          <span class="sandbox-group-dot" style="background:${color}"></span>
+          <span class="sandbox-group-title">${escapeHtml(g.tech_name)} — ${escapeHtml(sandboxDayLabel(g.day_of_week))}</span>
+          ${warningBadge}
+          <span class="sandbox-group-meta muted">${m.pool_count || 0} stops · ${m.in_route_miles || 0} mi · ~${Math.round((m.service_minutes || 0) / 60)}h svc</span>
+        </div>
+        <div class="sandbox-stop-list" data-account="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
+          ${stopsHtml}
+        </div>
+      </div>`;
+  }).join("");
+
+  wireSandboxDragDrop(container);
+}
+
+function wireSandboxDragDrop(container) {
+  container.querySelectorAll(".sandbox-stop-row[draggable]").forEach((el) => {
+    el.addEventListener("dragstart", (e) => {
+      sandbox.dragSourceId = el.dataset.aid;
+      e.dataTransfer.effectAllowed = "move";
+      el.classList.add("is-dragging");
+    });
+    el.addEventListener("dragend", () => el.classList.remove("is-dragging"));
+  });
+  container.querySelectorAll(".sandbox-stop-list").forEach((list) => {
+    list.addEventListener("dragover", (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+    list.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      if (!sandbox.dragSourceId || !sandbox.activeScenarioId) return;
+      const account = list.dataset.account;
+      const day = list.dataset.day;
+      const orderedIds = [...list.querySelectorAll(".sandbox-stop-row")].map((el) => el.dataset.aid).filter(Boolean);
+      const srcIdx = orderedIds.indexOf(sandbox.dragSourceId);
+      const target = e.target.closest(".sandbox-stop-row");
+      if (target && target.dataset.aid !== sandbox.dragSourceId) {
+        const tgtIdx = orderedIds.indexOf(target.dataset.aid);
+        if (tgtIdx !== -1) {
+          orderedIds.splice(srcIdx, 1);
+          orderedIds.splice(tgtIdx, 0, sandbox.dragSourceId);
+        }
+      }
+      try {
+        await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/reorder`, {
+          method: "POST",
+          body: JSON.stringify({ ordered_ids: orderedIds.map(Number) }),
+        });
+        // If drop target is a different group, also move
+        const srcRow = container.querySelector(`[data-aid="${sandbox.dragSourceId}"]`);
+        if (srcRow) {
+          const srcList = srcRow.closest(".sandbox-stop-list");
+          if (srcList && (srcList.dataset.account !== account || srcList.dataset.day !== day)) {
+            await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`, {
+              method: "POST",
+              body: JSON.stringify({ assignment_id: Number(sandbox.dragSourceId), source_account_id: account, day_of_week: day }),
+            });
+          }
+        }
+        await loadRouteSandbox(true);
+      } catch (err) {
+        showToast(`Error: ${err.message}`, 4000);
+      }
+      sandbox.dragSourceId = null;
+    });
+  });
+}
+
+// ── Toolbar rendering ─────────────────────────────────────────────────────────
+
+function renderSandboxToolbar() {
+  const toolbar = document.getElementById("sandbox-toolbar");
+  if (!toolbar) return;
+  const scenarios = sandbox.scenarios || [];
+  const activeId = sandbox.activeScenarioId;
+  const activeScenario = scenarios.find((s) => s.id === activeId);
+  const status = activeScenario ? activeScenario.status : "";
+  const isDraft = status === "draft";
+  const isApproved = status === "approved";
+
+  toolbar.innerHTML = `
+    <div class="sandbox-toolbar-left">
+      <select id="sandbox-scenario-sel" class="sandbox-sel sandbox-scenario-sel">
+        <option value="">— Current Skimmer Routes (read-only) —</option>
+        ${scenarios.map((s) => `<option value="${s.id}"${s.id === activeId ? " selected" : ""}>${escapeHtml(s.name)} (${escapeHtml(s.status)})</option>`).join("")}
+      </select>
+      <button class="button button-secondary" id="sandbox-create-scenario-btn" title="Create scenario from current Skimmer routes">+ New Scenario</button>
+    </div>
+    <div class="sandbox-toolbar-right">
+      ${activeId ? `
+        <button class="button button-secondary" id="sandbox-duplicate-btn" title="Duplicate this scenario">Duplicate</button>
+        <button class="button button-secondary" id="sandbox-validate-btn">Validate</button>
+        <button class="button button-secondary" id="sandbox-compare-btn">Compare to Current</button>
+        ${isDraft ? `<button class="button button-primary" id="sandbox-approve-btn">Approve Scenario</button>` : ""}
+        ${isApproved ? `<button class="button button-primary" id="sandbox-genplan-btn">Generate Update Packet</button>` : ""}
+        ${activeScenario && status !== "archived" ? `<button class="button button-secondary" id="sandbox-discard-btn" style="color:var(--color-danger)">Discard</button>` : ""}
+      ` : ""}
+    </div>
+  `;
+
+  document.getElementById("sandbox-scenario-sel")?.addEventListener("change", async (e) => {
+    sandbox.activeScenarioId = e.target.value ? Number(e.target.value) : null;
+    sandbox.activeScenario = null;
+    sandbox.comparisonData = null;
+    sandbox.planData = null;
+    await loadRouteSandbox(true);
+  });
+
+  document.getElementById("sandbox-create-scenario-btn")?.addEventListener("click", async () => {
+    const name = prompt("Scenario name:", `Route Plan ${new Date().toLocaleDateString()}`);
+    if (!name) return;
+    await withSaving(async () => {
+      const result = await api("/api/routes/sandbox/scenarios/from-current", {
+        method: "POST",
+        body: JSON.stringify({ name, created_by: state.actor }),
+      });
+      sandbox.activeScenarioId = result.scenario.id;
+      sandbox.activeScenario = null;
+      await loadRouteSandbox(true);
+    }, "Scenario created from current routes");
+  });
+
+  document.getElementById("sandbox-duplicate-btn")?.addEventListener("click", async () => {
+    if (!activeId) return;
+    const name = prompt("Name for duplicate:", `${activeScenario?.name || "Scenario"} (copy)`);
+    if (!name) return;
+    await withSaving(async () => {
+      const result = await api(`/api/routes/sandbox/scenarios/${activeId}/duplicate`, {
+        method: "POST",
+        body: JSON.stringify({ name, created_by: state.actor }),
+      });
+      sandbox.activeScenarioId = result.scenario.id;
+      sandbox.activeScenario = null;
+      await loadRouteSandbox(true);
+    }, "Scenario duplicated");
+  });
+
+  document.getElementById("sandbox-validate-btn")?.addEventListener("click", async () => {
+    if (!activeId) return;
+    const result = await api(`/api/routes/sandbox/scenarios/${activeId}/validate`);
+    renderSandboxValidationModal(result);
+  });
+
+  document.getElementById("sandbox-compare-btn")?.addEventListener("click", async () => {
+    if (!activeId) return;
+    setStatus("Loading…", "warning");
+    sandbox.comparisonData = await api(`/api/routes/sandbox/scenarios/${activeId}/comparison`);
+    setStatus("Live", "info");
+    renderSandboxComparisonPanel();
+  });
+
+  document.getElementById("sandbox-approve-btn")?.addEventListener("click", async () => {
+    if (!activeId) return;
+    if (!confirm("Approve this scenario? This locks the scenario for generating a manual update packet.")) return;
+    await withSaving(async () => {
+      await api(`/api/routes/sandbox/scenarios/${activeId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "approved" }),
+      });
+      await loadRouteSandbox(true);
+    }, "Scenario approved");
+  });
+
+  document.getElementById("sandbox-genplan-btn")?.addEventListener("click", async () => {
+    if (!activeId) return;
+    await withSaving(async () => {
+      const result = await api(`/api/routes/sandbox/scenarios/${activeId}/change-plan`, { method: "POST" });
+      sandbox.planData = result;
+      renderSandboxPlanPanel(result);
+    }, "Update packet generated");
+  });
+
+  document.getElementById("sandbox-discard-btn")?.addEventListener("click", async () => {
+    if (!activeId) return;
+    if (!confirm("Archive this scenario? This cannot be undone.")) return;
+    await withSaving(async () => {
+      await api(`/api/routes/sandbox/scenarios/${activeId}/discard`, { method: "POST" });
+      sandbox.activeScenarioId = null;
+      sandbox.activeScenario = null;
+      await loadRouteSandbox(true);
+    }, "Scenario archived");
+  });
+}
+
+// ── Filter bar rendering ───────────────────────────────────────────────────────
+
+function renderSandboxFilters(groups) {
+  const bar = document.getElementById("sandbox-filter-bar");
+  if (!bar) return;
+  const techs = sandboxGetTechs();
+  const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+  bar.innerHTML = `
+    <label class="filter-chip"><span>Day</span>
+      <select id="sandbox-day-filter">
+        <option value="">All Days</option>
+        ${days.map((d) => `<option value="${d}"${sandbox.filterDay === d ? " selected" : ""}>${d}</option>`).join("")}
+      </select>
+    </label>
+    <label class="filter-chip"><span>Tech</span>
+      <select id="sandbox-tech-filter">
+        <option value="">All Techs</option>
+        ${techs.map((t) => `<option value="${escapeHtml(t.id)}"${sandbox.filterTech === t.id ? " selected" : ""}>${escapeHtml(t.name)}</option>`).join("")}
+      </select>
+    </label>
+    <span class="muted" style="font-size:13px">${groups.length} route group(s)</span>
+  `;
+
+  document.getElementById("sandbox-day-filter")?.addEventListener("change", (e) => {
+    sandbox.filterDay = e.target.value;
+    const filtered = sandboxFilterGroups(sandboxGetActiveData());
+    renderSandboxFilters(filtered);
+    renderSandboxRouteList(filtered);
+    sandboxRenderMap([]);
+  });
+
+  document.getElementById("sandbox-tech-filter")?.addEventListener("change", (e) => {
+    sandbox.filterTech = e.target.value;
+    const filtered = sandboxFilterGroups(sandboxGetActiveData());
+    renderSandboxFilters(filtered);
+    renderSandboxRouteList(filtered);
+    sandboxRenderMap([]);
+  });
+}
+
+// ── Modals and panels ─────────────────────────────────────────────────────────
+
+function renderSandboxValidationModal(result) {
+  const warnings = result.warnings || [];
+  const existing = document.getElementById("sandbox-validation-modal");
+  if (existing) existing.remove();
+  const modal = document.createElement("div");
+  modal.id = "sandbox-validation-modal";
+  modal.className = "settings-modal-backdrop";
+  modal.innerHTML = `
+    <div class="settings-modal" style="max-width:620px">
+      <div class="settings-modal-header">
+        <h3 class="settings-modal-title">Scenario Validation — ${escapeHtml(result.scenario_name || "")}</h3>
+        <button class="button button-secondary settings-modal-close" onclick="document.getElementById('sandbox-validation-modal').remove()">✕</button>
+      </div>
+      <div style="padding:16px 24px">
+        ${result.valid
+          ? `<p class="muted" style="color:var(--color-success)">✓ No warnings found. Scenario looks good.</p>`
+          : `<p class="muted">${warnings.length} warning(s) found.</p>`
+        }
+        ${warnings.map((w) => `
+          <div class="sandbox-warn-item">
+            <span class="badge badge-warning">⚠</span>
+            <span class="muted" style="font-size:13px"><strong>${escapeHtml(w.group)}</strong>: ${escapeHtml(w.message)}</span>
+          </div>
+        `).join("")}
+      </div>
+      <div class="settings-modal-actions settings-modal-actions-right">
+        <button class="button button-secondary" onclick="document.getElementById('sandbox-validation-modal').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+}
+
+function renderSandboxComparisonPanel() {
+  const panel = document.getElementById("sandbox-main-content");
+  if (!panel) return;
+  const c = sandbox.comparisonData;
+  if (!c) return;
+
+  const allChanges = [
+    ...(c.changes || []).map((x) => ({ ...x, change_type: "moved" })),
+    ...(c.added || []).map((x) => ({ ...x, change_type: "added" })),
+    ...(c.removed || []).map((x) => ({ ...x, change_type: "removed" })),
+    ...(c.reordered || []).map((x) => ({ ...x, change_type: "reordered" })),
+  ];
+
+  panel.innerHTML = `
+    <div class="sandbox-section-header">
+      <h3>Comparison: ${escapeHtml(c.scenario_name || "Scenario")} vs. Current Skimmer</h3>
+      <button class="button button-secondary" onclick="renderSandboxDefaultView()">← Back to Map</button>
+    </div>
+    <div class="sandbox-stat-row">
+      <div class="sandbox-stat"><strong>${c.moved_count}</strong><span>Moved</span></div>
+      <div class="sandbox-stat"><strong>${c.added_count}</strong><span>Added</span></div>
+      <div class="sandbox-stat"><strong>${c.removed_count}</strong><span>Removed</span></div>
+      <div class="sandbox-stat"><strong>${c.reordered_count}</strong><span>Reordered</span></div>
+      <div class="sandbox-stat"><strong>${c.unchanged_count}</strong><span>Unchanged</span></div>
+    </div>
+    ${allChanges.length === 0
+      ? `<div class="empty-state">No differences found between scenario and current Skimmer routes.</div>`
+      : `<table class="sandbox-diff-table">
+          <thead><tr><th>Customer</th><th>Address</th><th>Change</th><th>Current</th><th>Proposed</th></tr></thead>
+          <tbody>
+          ${allChanges.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.customer_name || "—")}</td>
+              <td class="muted">${escapeHtml(row.address || "—")}</td>
+              <td>${sandboxChangeTypeBadge(row.change_type)}</td>
+              <td class="muted">${escapeHtml(row.current_tech_name || row.tech_name || "—")} / ${escapeHtml(row.current_day || row.day_of_week || "—")}${row.current_order != null ? ` #${row.current_order}` : ""}</td>
+              <td>${escapeHtml(row.proposed_tech_name || row.tech_name || "—")} / ${escapeHtml(row.proposed_day || row.day_of_week || "—")}${row.proposed_order != null ? ` #${row.proposed_order}` : ""}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>`
+    }`;
+}
+
+function renderSandboxDefaultView() {
+  sandbox.comparisonData = null;
+  const panel = document.getElementById("sandbox-main-content");
+  if (panel) panel.innerHTML = `<div id="sandbox-map-container" class="sandbox-map-container"></div>`;
+  sandboxInitMap();
+  sandboxRenderMap([]);
+}
+
+function renderSandboxPlanPanel(result) {
+  const panel = document.getElementById("sandbox-main-content");
+  if (!panel) return;
+  const items = result.items || [];
+  const summary = result.summary || {};
+  const planId = result.change_plan_id;
+
+  panel.innerHTML = `
+    <div class="sandbox-section-header">
+      <h3>Manual Skimmer Update Packet — Plan #${planId}</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="button button-secondary" onclick="window.print()">Print / Save PDF</button>
+        <a class="button button-secondary" href="/api/routes/sandbox/change-plans/${planId}/export-csv" download>Export CSV</a>
+        <button class="button button-secondary" onclick="renderSandboxDefaultView()">← Back to Map</button>
+      </div>
+    </div>
+    <div class="sandbox-plan-notice">
+      <strong>Important:</strong> Sentinel cannot write changes to Skimmer automatically.
+      Use this packet to manually update routes in Skimmer, then mark each item complete below.
+    </div>
+    <div class="sandbox-stat-row">
+      <div class="sandbox-stat"><strong>${summary.total_changes}</strong><span>Total Changes</span></div>
+      <div class="sandbox-stat"><strong>${summary.moved_count}</strong><span>Moves</span></div>
+      <div class="sandbox-stat"><strong>${summary.added_count}</strong><span>Additions</span></div>
+      <div class="sandbox-stat"><strong>${summary.removed_count}</strong><span>Removals</span></div>
+      <div class="sandbox-stat"><strong>${summary.reordered_count}</strong><span>Reorders</span></div>
+    </div>
+    <div class="sandbox-plan-instructions">
+      <ol>
+        <li>Review each change below.</li>
+        <li>Open Skimmer in another tab and make each change manually.</li>
+        <li>Check off each item as you complete it in Skimmer.</li>
+        <li>After all items are marked, the next Skimmer import will confirm the routes match.</li>
+      </ol>
+    </div>
+    <div id="sandbox-plan-items">
+      ${items.map((item) => `
+        <div class="sandbox-plan-item" data-item-id="${item.id}" data-status="${escapeHtml(item.status || "pending")}">
+          <div class="sandbox-plan-item-header">
+            ${sandboxChangeTypeBadge(item.change_type)}
+            ${sandboxItemStatusBadge(item.status || "pending")}
+            <strong>${escapeHtml(item.customer_name || "Unknown Customer")}</strong>
+            <span class="muted">${escapeHtml(item.address || "")}</span>
+          </div>
+          <div class="sandbox-plan-item-detail">
+            <span class="muted">Current:</span>
+            ${escapeHtml([item.source_account_id_current, item.day_of_week_current, item.stop_order_current != null ? `#${item.stop_order_current}` : ""].filter(Boolean).join(" / ") || "—")}
+            <span class="muted" style="margin-left:12px">→ Proposed:</span>
+            ${escapeHtml([item.source_account_id_proposed, item.day_of_week_proposed, item.stop_order_proposed != null ? `#${item.stop_order_proposed}` : ""].filter(Boolean).join(" / ") || "—")}
+          </div>
+          <div class="sandbox-plan-item-actions">
+            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'completed')">✓ Done in Skimmer</button>
+            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'skipped')">Skip</button>
+            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'needs_review')">Needs Review</button>
+          </div>
+        </div>
+      `).join("")}
+    </div>`;
+}
+
+async function sandboxMarkPlanItem(planId, itemId, status) {
+  try {
+    const result = await api(`/api/routes/sandbox/change-plans/${planId}/items/${itemId}/mark`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    });
+    const el = document.querySelector(`[data-item-id="${itemId}"]`);
+    if (el) {
+      el.dataset.status = status;
+      const badge = el.querySelector(".badge:nth-child(2)");
+      if (badge) badge.outerHTML = sandboxItemStatusBadge(status);
+    }
+    showToast(`Item marked as ${status}`);
+  } catch (err) {
+    showToast(`Error: ${err.message}`, 4000);
+  }
+}
+
+// ── Main load/render ───────────────────────────────────────────────────────────
+
+async function loadRouteSandbox(force = false) {
+  setLayout("single");
+  els.mainPanel.innerHTML = `
+    <div class="sandbox-shell">
+      <div id="sandbox-toolbar" class="sandbox-toolbar"></div>
+      <div class="sandbox-body">
+        <div class="sandbox-left">
+          <div id="sandbox-filter-bar" class="sandbox-filter-bar"></div>
+          <div id="sandbox-route-list" class="sandbox-route-list"></div>
+        </div>
+        <div class="sandbox-center">
+          <div id="sandbox-main-content" class="sandbox-main-content">
+            <div id="sandbox-map-container" class="sandbox-map-container"></div>
+          </div>
+        </div>
+        <div id="sandbox-detail-drawer" class="sandbox-detail-drawer" hidden></div>
+      </div>
+    </div>`;
+
+  // Load data in parallel
+  const [scenariosResult, currentResult] = await Promise.all([
+    api("/api/routes/sandbox/scenarios"),
+    api("/api/routes/current").catch(() => null),
+  ]);
+
+  sandbox.scenarios = scenariosResult.items || [];
+  sandbox.currentRoutes = currentResult;
+  sandbox.techColorMap = {};
+
+  if (sandbox.activeScenarioId) {
+    try {
+      const detail = await api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}`);
+      sandbox.activeScenario = detail;
+    } catch (_) {
+      sandbox.activeScenarioId = null;
+      sandbox.activeScenario = null;
+    }
+  }
+
+  const allGroups = sandboxGetActiveData();
+  const filteredGroups = sandboxFilterGroups(allGroups);
+
+  renderSandboxToolbar();
+  renderSandboxFilters(filteredGroups);
+  renderSandboxRouteList(filteredGroups);
+
+  sandboxInitMap();
+  sandboxRenderMap([]);
+}
+
+// ── Tech settings page ─────────────────────────────────────────────────────────
+
+async function loadRouteTechSettings(force = false) {
+  setLayout("single");
+  const result = await api("/api/routes/technician-profiles").catch(() => ({ items: [] }));
+  const currentResult = await api("/api/routes/current").catch(() => ({ technicians: [] }));
+  const knownTechs = (currentResult.technicians || []);
+  const profiles = result.items || [];
+
+  els.mainPanel.innerHTML = `
+    <div class="sandbox-shell" style="max-width:900px;margin:0 auto;padding:24px">
+      <h3 style="margin-bottom:16px">Tech Route Settings</h3>
+      <p class="muted" style="margin-bottom:24px">
+        Configure home/start/end locations for each technician. These are used to calculate commute
+        distance and first/last stop metrics in the Route Sandbox.
+      </p>
+      <div id="tech-profiles-list">
+        ${knownTechs.length === 0 ? `<div class="empty-state">No technicians found in Skimmer import data.</div>` : ""}
+        ${knownTechs.map((tech) => {
+          const profile = profiles.find((p) => p.technician_id === tech.source_account_id) || {};
+          return `
+            <div class="sandbox-tech-profile-card" data-tech-id="${escapeHtml(tech.source_account_id)}">
+              <div class="sandbox-tech-profile-header">
+                <span class="sandbox-group-dot" style="background:${sandboxTechColor(tech.source_account_id)}"></span>
+                <strong>${escapeHtml(tech.tech_name)}</strong>
+                <span class="muted" style="font-size:12px">${escapeHtml(tech.source_account_id)}</span>
+              </div>
+              <div class="sandbox-tech-profile-form">
+                <label class="sandbox-field-label">Home Address</label>
+                <input class="sandbox-input" id="tp-addr-${escapeHtml(tech.source_account_id)}" value="${escapeHtml(profile.home_address || "")}" placeholder="Street, City, TX" />
+                <label class="sandbox-field-label">Route Start</label>
+                <select class="sandbox-sel" id="tp-start-${escapeHtml(tech.source_account_id)}">
+                  ${["first_stop", "home", "office", "custom"].map((v) => `<option value="${v}"${(profile.default_start_location_type || "first_stop") === v ? " selected" : ""}>${v === "first_stop" ? "Start at first stop" : v === "home" ? "Start from home" : v === "office" ? "Start from office" : "Custom start"}</option>`).join("")}
+                </select>
+                <label class="sandbox-field-label">Route End</label>
+                <select class="sandbox-sel" id="tp-end-${escapeHtml(tech.source_account_id)}">
+                  ${["last_stop", "home", "office", "custom"].map((v) => `<option value="${v}"${(profile.default_end_location_type || "last_stop") === v ? " selected" : ""}>${v === "last_stop" ? "End at last stop" : v === "home" ? "Return home" : v === "office" ? "Return to office" : "Custom end"}</option>`).join("")}
+                </select>
+                <div class="sandbox-tech-include-row">
+                  <label>
+                    <input type="checkbox" id="tp-inc-start-${escapeHtml(tech.source_account_id)}"${profile.include_start_drive_in_metrics !== false ? " checked" : ""} />
+                    Include start drive in metrics
+                  </label>
+                  <label>
+                    <input type="checkbox" id="tp-inc-end-${escapeHtml(tech.source_account_id)}"${profile.include_end_drive_in_metrics !== false ? " checked" : ""} />
+                    Include end drive in metrics
+                  </label>
+                </div>
+                <div style="margin-top:8px">
+                  <button class="button button-primary" onclick="saveTechProfile('${escapeHtml(tech.source_account_id)}')">Save</button>
+                </div>
+              </div>
+            </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
+async function saveTechProfile(techId) {
+  const addr = document.getElementById(`tp-addr-${techId}`)?.value.trim();
+  const startType = document.getElementById(`tp-start-${techId}`)?.value;
+  const endType = document.getElementById(`tp-end-${techId}`)?.value;
+  const incStart = document.getElementById(`tp-inc-start-${techId}`)?.checked;
+  const incEnd = document.getElementById(`tp-inc-end-${techId}`)?.checked;
+  await withSaving(async () => {
+    await api(`/api/routes/technician-profiles/${encodeURIComponent(techId)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        home_address: addr || null,
+        default_start_location_type: startType || "first_stop",
+        default_end_location_type: endType || "last_stop",
+        include_start_drive_in_metrics: incStart !== false,
+        include_end_drive_in_metrics: incEnd !== false,
+      }),
+    });
+  }, "Tech profile saved");
 }
 
 init().catch((error) => {

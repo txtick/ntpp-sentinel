@@ -10,6 +10,29 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from services.route_sandbox import (
+    approve_change_plan,
+    create_scenario,
+    create_scenario_from_current,
+    discard_scenario,
+    duplicate_scenario,
+    ensure_schema as ensure_route_sandbox_schema,
+    export_change_plan_csv,
+    generate_change_plan,
+    get_change_plan,
+    get_comparison,
+    get_scenario,
+    list_current_route_pools,
+    list_scenarios,
+    list_technician_profiles,
+    mark_plan_item,
+    mark_plan_printed,
+    move_assignment,
+    reorder_assignments,
+    update_scenario,
+    upsert_technician_profile,
+    validate_scenario,
+)
 from services.dashboard_backend import (
     create_alert_reminder,
     get_dashboard_summary,
@@ -213,6 +236,7 @@ def _fetch_current_pollen_with_retry(attempts: int = 3, delay_seconds: float = 1
 def _startup() -> None:
     if os.getenv("DATABASE_URL"):
         ensure_web_backend_schema()
+        ensure_route_sandbox_schema()
     _check_ghl_token()
 
 
@@ -886,3 +910,165 @@ def api_weather(request: Request):
     _weather_cache = result
     _weather_cache_ts = now
     return result
+
+
+# ── Route Sandbox API ──────────────────────────────────────────────────────────
+
+@app.get("/api/routes/current")
+def api_routes_current(request: Request, source_system: str = "skimmer"):
+    _dashboard_read_auth_or_401(request)
+    return list_current_route_pools(source_system=source_system)
+
+
+@app.get("/api/routes/sandbox/scenarios")
+def api_sandbox_scenarios(request: Request):
+    _dashboard_read_auth_or_401(request)
+    return list_scenarios()
+
+
+@app.post("/api/routes/sandbox/scenarios")
+async def api_sandbox_create_scenario(request: Request):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return create_scenario(
+        name=body.get("name", ""),
+        notes=body.get("notes", ""),
+        created_by=body.get("created_by", ""),
+    )
+
+
+@app.post("/api/routes/sandbox/scenarios/from-current")
+async def api_sandbox_create_from_current(request: Request):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return create_scenario_from_current(
+        name=body.get("name", ""),
+        notes=body.get("notes", ""),
+        created_by=body.get("created_by", ""),
+        source_system=body.get("source_system", "skimmer"),
+    )
+
+
+@app.get("/api/routes/sandbox/scenarios/{scenario_id}")
+def api_sandbox_get_scenario(request: Request, scenario_id: int):
+    _dashboard_read_auth_or_401(request)
+    return get_scenario(scenario_id)
+
+
+@app.patch("/api/routes/sandbox/scenarios/{scenario_id}")
+async def api_sandbox_update_scenario(request: Request, scenario_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return update_scenario(scenario_id, body)
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/duplicate")
+async def api_sandbox_duplicate_scenario(request: Request, scenario_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return duplicate_scenario(
+        scenario_id,
+        new_name=body.get("name", ""),
+        created_by=body.get("created_by", ""),
+    )
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/discard")
+def api_sandbox_discard_scenario(request: Request, scenario_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    return discard_scenario(scenario_id)
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/assignments/move")
+async def api_sandbox_move_assignment(request: Request, scenario_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    assignment_id = body.get("assignment_id")
+    if not assignment_id:
+        raise HTTPException(status_code=400, detail="assignment_id is required")
+    return move_assignment(
+        scenario_id=scenario_id,
+        assignment_id=int(assignment_id),
+        new_account_id=body.get("source_account_id", ""),
+        new_day_of_week=body.get("day_of_week", ""),
+        new_stop_order=body.get("stop_order"),
+    )
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/assignments/reorder")
+async def api_sandbox_reorder_assignments(request: Request, scenario_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    ordered_ids = body.get("ordered_ids", [])
+    return reorder_assignments(scenario_id, [int(i) for i in ordered_ids])
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/validate")
+def api_sandbox_validate(request: Request, scenario_id: int):
+    _dashboard_read_auth_or_401(request)
+    return validate_scenario(scenario_id)
+
+
+@app.get("/api/routes/sandbox/scenarios/{scenario_id}/comparison")
+def api_sandbox_comparison(request: Request, scenario_id: int, source_system: str = "skimmer"):
+    _dashboard_read_auth_or_401(request)
+    return get_comparison(scenario_id, source_system=source_system)
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/change-plan")
+def api_sandbox_generate_change_plan(request: Request, scenario_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    return generate_change_plan(scenario_id)
+
+
+@app.get("/api/routes/sandbox/change-plans/{plan_id}")
+def api_sandbox_get_change_plan(request: Request, plan_id: int):
+    _dashboard_read_auth_or_401(request)
+    return get_change_plan(plan_id)
+
+
+@app.post("/api/routes/sandbox/change-plans/{plan_id}/approve")
+async def api_sandbox_approve_change_plan(request: Request, plan_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return approve_change_plan(plan_id, approved_by=body.get("approved_by", ""))
+
+
+@app.post("/api/routes/sandbox/change-plans/{plan_id}/mark-printed")
+def api_sandbox_mark_printed(request: Request, plan_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    return mark_plan_printed(plan_id)
+
+
+@app.post("/api/routes/sandbox/change-plans/{plan_id}/items/{item_id}/mark")
+async def api_sandbox_mark_plan_item(request: Request, plan_id: int, item_id: int):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return mark_plan_item(plan_id, item_id, status=body.get("status", "completed"), notes=body.get("notes", ""))
+
+
+@app.get("/api/routes/sandbox/change-plans/{plan_id}/export-csv")
+def api_sandbox_export_csv(request: Request, plan_id: int):
+    from fastapi.responses import PlainTextResponse
+    _dashboard_read_auth_or_401(request)
+    csv_text = export_change_plan_csv(plan_id)
+    return PlainTextResponse(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="route-update-plan-{plan_id}.csv"'},
+    )
+
+
+# ── Technician route profiles ──────────────────────────────────────────────────
+
+@app.get("/api/routes/technician-profiles")
+def api_technician_profiles(request: Request):
+    _dashboard_read_auth_or_401(request)
+    return list_technician_profiles()
+
+
+@app.post("/api/routes/technician-profiles/{technician_id}")
+async def api_upsert_technician_profile(request: Request, technician_id: str):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return upsert_technician_profile(technician_id, body)

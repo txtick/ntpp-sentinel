@@ -477,6 +477,122 @@ def get_service_stop_entries_with_location(source_system: str = "skimmer") -> li
             return cur.fetchall()
 
 
+def ensure_route_sandbox_schema() -> None:
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS technician_route_profiles (
+                    id BIGSERIAL PRIMARY KEY,
+                    technician_id TEXT NOT NULL,
+                    display_name TEXT,
+                    home_address TEXT,
+                    home_latitude NUMERIC,
+                    home_longitude NUMERIC,
+                    default_start_location_type TEXT NOT NULL DEFAULT 'first_stop',
+                    default_end_location_type TEXT NOT NULL DEFAULT 'last_stop',
+                    custom_start_address TEXT,
+                    custom_start_latitude NUMERIC,
+                    custom_start_longitude NUMERIC,
+                    custom_end_address TEXT,
+                    custom_end_latitude NUMERIC,
+                    custom_end_longitude NUMERIC,
+                    include_start_drive_in_metrics BOOLEAN NOT NULL DEFAULT TRUE,
+                    include_end_drive_in_metrics BOOLEAN NOT NULL DEFAULT TRUE,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    notes TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (technician_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_scenarios (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    source_snapshot_date DATE,
+                    created_by TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_scenario_assignments (
+                    id BIGSERIAL PRIMARY KEY,
+                    scenario_id BIGINT NOT NULL REFERENCES route_scenarios(id) ON DELETE CASCADE,
+                    source_route_assignment_id TEXT,
+                    source_service_location_id TEXT NOT NULL,
+                    source_customer_id TEXT,
+                    source_account_id TEXT NOT NULL,
+                    day_of_week TEXT NOT NULL,
+                    stop_order INTEGER,
+                    frequency TEXT,
+                    estimated_duration_minutes INTEGER,
+                    latitude NUMERIC,
+                    longitude NUMERIC,
+                    address TEXT,
+                    city TEXT,
+                    customer_name TEXT,
+                    tech_name TEXT,
+                    rate_type TEXT,
+                    notes TEXT,
+                    is_changed_from_current BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_scenario_assignments_scenario
+                ON route_scenario_assignments(scenario_id, day_of_week, source_account_id, stop_order)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_change_plans (
+                    id BIGSERIAL PRIMARY KEY,
+                    scenario_id BIGINT NOT NULL REFERENCES route_scenarios(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'generated',
+                    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    approved_by TEXT,
+                    approved_at TIMESTAMPTZ,
+                    pushed_at TIMESTAMPTZ,
+                    summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    error_json JSONB
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_change_plan_items (
+                    id BIGSERIAL PRIMARY KEY,
+                    change_plan_id BIGINT NOT NULL REFERENCES route_change_plans(id) ON DELETE CASCADE,
+                    change_type TEXT NOT NULL,
+                    source_service_location_id TEXT,
+                    customer_name TEXT,
+                    address TEXT,
+                    source_account_id_current TEXT,
+                    day_of_week_current TEXT,
+                    stop_order_current INTEGER,
+                    source_account_id_proposed TEXT,
+                    day_of_week_proposed TEXT,
+                    stop_order_proposed INTEGER,
+                    skimmer_route_assignment_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error_message TEXT
+                )
+                """
+            )
+        conn.commit()
+
+
 def get_pools_with_service_location(source_system: str = "skimmer") -> list[dict]:
     with pg() as conn:
         with conn.cursor() as cur:
