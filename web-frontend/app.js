@@ -4824,12 +4824,121 @@ function renderSandboxDefaultView() {
 function renderSandboxPlanPanel(result) {
   const panel = document.getElementById("sandbox-main-content");
   if (!panel) return;
-  // Hide the map so the packet takes the full center column
   const map = document.getElementById("sandbox-map-container");
   if (map) map.hidden = true;
   const items = result.items || [];
   const summary = result.summary || {};
   const planId = result.change_plan_id;
+
+  // Build tech name lookup from already-loaded sandbox groups
+  const techNameMap = {};
+  for (const g of sandbox.groups || []) {
+    if (!techNameMap[g.source_account_id]) {
+      techNameMap[g.source_account_id] = g.tech_name || g.source_account_id;
+    }
+  }
+  function tn(accountId) {
+    return accountId ? (techNameMap[accountId] || accountId) : "—";
+  }
+
+  // Group items by the route where the action is performed in Skimmer:
+  //   reorder / move-out / remove → current tech/day (you find the stop there and act on it)
+  //   add                         → proposed tech/day (you add the stop there)
+  const DAY_ORD = { Monday: 0, Tuesday: 1, Wednesday: 2, Thursday: 3, Friday: 4, Saturday: 5, Sunday: 6 };
+  const sectionMap = new Map();
+  function getSection(accountId, day) {
+    const key = `${accountId}|${day}`;
+    if (!sectionMap.has(key)) {
+      sectionMap.set(key, { accountId, techName: tn(accountId), day, reorders: [], moves: [], removes: [], adds: [] });
+    }
+    return sectionMap.get(key);
+  }
+  for (const item of items) {
+    if (item.change_type === "create_assignment") {
+      getSection(item.source_account_id_proposed, item.day_of_week_proposed).adds.push(item);
+    } else if (item.change_type === "delete_assignment") {
+      getSection(item.source_account_id_current, item.day_of_week_current).removes.push(item);
+    } else if (item.change_type === "update_assignment") {
+      getSection(item.source_account_id_current, item.day_of_week_current).moves.push(item);
+    } else if (item.change_type === "reorder_stop") {
+      getSection(item.source_account_id_current, item.day_of_week_current).reorders.push(item);
+    }
+  }
+  const sections = [...sectionMap.values()].sort((a, b) => {
+    const t = a.techName.localeCompare(b.techName);
+    return t !== 0 ? t : (DAY_ORD[a.day] ?? 99) - (DAY_ORD[b.day] ?? 99);
+  });
+  for (const s of sections) {
+    s.reorders.sort((a, b) => (a.stop_order_proposed ?? 999) - (b.stop_order_proposed ?? 999));
+    s.adds.sort((a, b) => (a.stop_order_proposed ?? 999) - (b.stop_order_proposed ?? 999));
+  }
+
+  function planItemRow(item, actionText) {
+    return `
+      <div class="sandbox-plan-item" data-item-id="${item.id}" data-status="${escapeHtml(item.status || "pending")}">
+        <div class="sandbox-plan-item-body">
+          ${sandboxItemStatusBadge(item.status || "pending")}
+          <div class="sandbox-plan-item-text">
+            <strong>${escapeHtml(item.customer_name || "Unknown Customer")}</strong>${item.address ? `<span class="muted"> · ${escapeHtml(item.address)}</span>` : ""}
+            <span class="sandbox-plan-item-action">${actionText}</span>
+          </div>
+        </div>
+        <div class="sandbox-plan-item-actions">
+          <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'completed')">✓ Done</button>
+          <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'skipped')">Skip</button>
+        </div>
+      </div>`;
+  }
+
+  const sectionsHtml = sections.map((sec) => {
+    const parts = [];
+    if (sec.reorders.length) {
+      parts.push(`<div class="sandbox-plan-action-group">
+        <div class="sandbox-plan-action-label">Drag stops to new positions</div>
+        ${sec.reorders.map((item) =>
+          planItemRow(item, `→ drag to stop #${item.stop_order_proposed ?? "?"}  <span class="muted" style="font-size:11px">(currently #${item.stop_order_current ?? "?"})</span>`)
+        ).join("")}
+      </div>`);
+    }
+    if (sec.moves.length) {
+      parts.push(`<div class="sandbox-plan-action-group">
+        <div class="sandbox-plan-action-label">Click ··· → "Move to Different Day/Tech"</div>
+        ${sec.moves.map((item) => {
+          const destTech = escapeHtml(tn(item.source_account_id_proposed));
+          const destDay = escapeHtml(sandboxDayLabel(item.day_of_week_proposed || ""));
+          const destPos = item.stop_order_proposed != null ? `, then drag to stop #${item.stop_order_proposed} on that route` : "";
+          return planItemRow(item, `→ move to ${destTech} / ${destDay}${destPos}`);
+        }).join("")}
+      </div>`);
+    }
+    if (sec.removes.length) {
+      parts.push(`<div class="sandbox-plan-action-group">
+        <div class="sandbox-plan-action-label">Click ··· → "Delete Route Assignment"</div>
+        ${sec.removes.map((item) => planItemRow(item, "→ delete this stop")).join("")}
+      </div>`);
+    }
+    if (sec.adds.length) {
+      parts.push(`<div class="sandbox-plan-action-group">
+        <div class="sandbox-plan-action-label">Click "+ Add Route Assignment" and search for the customer</div>
+        ${sec.adds.map((item) =>
+          planItemRow(item, `→ add at stop #${item.stop_order_proposed ?? "?"}`)
+        ).join("")}
+      </div>`);
+    }
+    const changeCount = sec.reorders.length + sec.moves.length + sec.removes.length + sec.adds.length;
+    return `
+      <div class="sandbox-plan-section">
+        <div class="sandbox-plan-section-header">
+          <span class="sandbox-group-dot" style="background:${sandboxTechColor(sec.accountId)}"></span>
+          <strong>${escapeHtml(sec.techName)}</strong>
+          <span class="muted">—</span>
+          <strong>${escapeHtml(sandboxDayLabel(sec.day))}</strong>
+          <span class="sandbox-plan-section-count">${changeCount} change${changeCount !== 1 ? "s" : ""}</span>
+        </div>
+        <div class="sandbox-plan-section-hint">Open Skimmer → Routes → Route Builder → <strong>${escapeHtml(sec.techName)}</strong> → <strong>${escapeHtml(sandboxDayLabel(sec.day))}</strong></div>
+        ${parts.join("")}
+      </div>`;
+  }).join("");
 
   panel.innerHTML = `
     <div class="sandbox-section-header">
@@ -4842,8 +4951,7 @@ function renderSandboxPlanPanel(result) {
       </div>
     </div>
     <div class="sandbox-plan-notice">
-      <strong>Important:</strong> Sentinel cannot write changes to Skimmer automatically.
-      Use this packet to manually update routes in Skimmer, then mark each item complete below.
+      <strong>Note:</strong> Sentinel cannot write to Skimmer directly. Work through each section below, then mark items done as you go.
     </div>
     <div class="sandbox-stat-row">
       <div class="sandbox-stat"><strong>${summary.total_changes}</strong><span>Total Changes</span></div>
@@ -4852,40 +4960,8 @@ function renderSandboxPlanPanel(result) {
       <div class="sandbox-stat"><strong>${summary.removed_count}</strong><span>Removals</span></div>
       <div class="sandbox-stat"><strong>${summary.reordered_count}</strong><span>Reorders</span></div>
     </div>
-    <div class="sandbox-plan-instructions">
-      <ol>
-        <li>Review each change below.</li>
-        <li>Open Skimmer in another tab and make each change manually.</li>
-        <li>Check off each item as you complete it in Skimmer.</li>
-        <li>After all items are marked, the next Skimmer import will confirm the routes match.</li>
-      </ol>
-    </div>
     <div id="sandbox-plan-items">
-      ${items
-        .map(
-          (item) => `
-        <div class="sandbox-plan-item" data-item-id="${item.id}" data-status="${escapeHtml(item.status || "pending")}">
-          <div class="sandbox-plan-item-header">
-            ${sandboxChangeTypeBadge(item.change_type)}
-            ${sandboxItemStatusBadge(item.status || "pending")}
-            <strong>${escapeHtml(item.customer_name || "Unknown Customer")}</strong>
-            <span class="muted">${escapeHtml(item.address || "")}</span>
-          </div>
-          <div class="sandbox-plan-item-detail">
-            <span class="muted">Current:</span>
-            ${escapeHtml([item.source_account_id_current, item.day_of_week_current, item.stop_order_current != null ? `#${item.stop_order_current}` : ""].filter(Boolean).join(" / ") || "—")}
-            <span class="muted" style="margin-left:12px">→ Proposed:</span>
-            ${escapeHtml([item.source_account_id_proposed, item.day_of_week_proposed, item.stop_order_proposed != null ? `#${item.stop_order_proposed}` : ""].filter(Boolean).join(" / ") || "—")}
-          </div>
-          <div class="sandbox-plan-item-actions">
-            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'completed')">Mark Item Complete</button>
-            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'skipped')">Mark Skipped</button>
-            <button class="button button-secondary" style="font-size:12px" onclick="sandboxMarkPlanItem(${planId},${item.id},'needs_review')">Needs Review</button>
-          </div>
-        </div>
-      `,
-        )
-        .join("")}
+      ${sections.length ? sectionsHtml : '<p class="muted" style="padding:16px">No changes to apply.</p>'}
     </div>`;
 }
 

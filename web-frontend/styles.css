@@ -1916,41 +1916,112 @@ textarea {
   margin-bottom: 14px;
 }
 
-.sandbox-plan-instructions {
-  font-size: 0.8rem;
-  color: var(--muted);
-  margin-bottom: 14px;
-  line-height: 1.5;
-}
-
-.sandbox-plan-item {
+/* Tech+Day section card */
+.sandbox-plan-section {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 8px;
+  border-radius: 10px;
+  margin-bottom: 16px;
   overflow: hidden;
 }
 
-.sandbox-plan-item-header {
+.sandbox-plan-section-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: var(--bg);
+  padding: 10px 14px;
+  background: var(--bg-alt, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.sandbox-plan-section-count {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.sandbox-plan-section-hint {
+  font-size: 0.76rem;
+  color: var(--muted);
+  padding: 6px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+}
+
+.sandbox-plan-section-hint strong {
+  color: var(--text);
+}
+
+/* Action sub-group within a section */
+.sandbox-plan-action-group {
+  padding: 8px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sandbox-plan-action-group:last-child {
+  border-bottom: none;
+}
+
+.sandbox-plan-action-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* Individual stop row */
+.sandbox-plan-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   font-size: 0.82rem;
 }
 
-.sandbox-plan-item-detail {
-  padding: 6px 12px 8px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  border-top: 1px solid var(--border);
+.sandbox-plan-item:last-child {
+  border-bottom: none;
+}
+
+.sandbox-plan-item[data-status="completed"] {
+  opacity: 0.45;
+}
+
+.sandbox-plan-item[data-status="skipped"] {
+  opacity: 0.35;
+  text-decoration: line-through;
+}
+
+.sandbox-plan-item-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sandbox-plan-item-text {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.sandbox-plan-item-action {
+  color: var(--accent);
+  font-size: 0.8rem;
 }
 
 .sandbox-plan-item-actions {
   display: flex;
-  gap: 6px;
-  padding: 6px 12px 10px;
-  border-top: 1px solid var(--border);
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 /* Section header inside sandbox panels */

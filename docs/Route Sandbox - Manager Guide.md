@@ -17,8 +17,7 @@ Open Sentinel in your browser and click **Routes → Route Sandbox** in the left
 |---|---|
 | **Toolbar** (top) | Current scenario name, scenario picker, action buttons |
 | **Left panel** | Route groups — one card per tech/day combination |
-| **Center map** | All stops plotted. Click a route group header to overlay its driving route. |
-| **Bottom panel** | Comparison results, update packets, stop detail |
+| **Center area** | Map by default. Replaced by the comparison or update packet view when those are open. Click **← Back to Map** to return to the map. |
 | **Right drawer** | Stop detail when you click a stop |
 
 ---
@@ -118,13 +117,16 @@ Let Google suggest a more efficient stop order.
 See what changed between your scenario and the live Skimmer routes.
 
 1. Make sure a scenario is active in the toolbar.
-2. Click **Compare** in the toolbar.
-3. A side-by-side summary appears in the bottom panel showing:
-   - Stops added, removed, or reassigned
-   - Stop count changes per tech/day
-   - Any stops that moved between days or techs
+2. Click **Compare Against Latest Skimmer Import** in the toolbar.
+3. The map is replaced by a summary showing:
+   - Stops added, removed, or reassigned between techs/days
+   - Stops that changed position within a route (reordered)
+   - A count of unchanged stops
+4. Click **← Back to Map** to return to the map view.
 
 Use this to review your changes before generating a packet.
+
+> **Note:** The same pool appearing under two different techs (e.g. James does weekly maintenance and Jarrett handles repairs at the same location) is expected and will not show as a conflict.
 
 ---
 
@@ -132,16 +134,30 @@ Use this to review your changes before generating a packet.
 
 When you're happy with the scenario, generate a checklist for making the changes manually in Skimmer.
 
-1. Click **Generate Update Packet** in the toolbar (or from the compare view).
-2. Sentinel builds a checklist of every change: stops that moved, changed tech, changed day, were added, or were removed.
-3. Review the checklist on screen.
-4. Click **Approve Packet** to lock it for printing.
-5. Click **Print Packet** to open the print dialog and print or save as PDF.
+### Step 1 — Validate
+Click **Validate** in the toolbar. A modal shows any errors or warnings in the scenario. Errors must be resolved before you can approve. Warnings (long commute, busy day) are informational only and won't block approval.
 
-### Using the packet
-- Work through the list in Skimmer, making each change one at a time.
-- As you complete each item, come back to Sentinel and click the checkbox next to that item to mark it **Done** (or **Skipped** if you decided not to make that change).
-- Items can be marked from the packet view at any time — you don't have to do it all at once.
+### Step 2 — Approve the scenario
+Click **Approve Scenario**. Sentinel runs validation automatically — if anything is wrong it shows the error list instead of approving. If the scenario is clean, a confirmation dialog appears. Click OK to lock the scenario.
+
+> Once approved, the scenario is read-only. You cannot move stops or re-run optimization.
+
+### Step 3 — Generate the packet
+Click **Generate Manual Update Packet**. The map is replaced by a full checklist of every change: stops that moved tech or day, stops that were added or removed, and stops whose position within a route changed.
+
+At the top of the packet you have three options:
+- **Approve Packet** — locks the packet and marks it ready to execute
+- **Print Packet** — opens the print dialog so you can print or save as PDF
+- **Export CSV** — downloads a spreadsheet version of the change list
+
+### Step 4 — Work through the list in Skimmer
+Open Skimmer in another tab and make each change one at a time, following the packet.
+
+As you finish each item, return to Sentinel and mark it **Done**. If you decide to skip a change, mark it **Skipped**.
+
+You don't have to complete the whole list in one sitting — your progress is saved and you can come back to the packet view at any time.
+
+Click **← Back to Map** when you want to return to the route map view.
 
 ---
 
@@ -165,6 +181,10 @@ When you're happy with the scenario, generate a checklist for making the changes
 | **Compare** | Show diff between scenario and current routes |
 | **Est.** | Get Google Maps mileage and drive time for one route |
 | **Opt.** | Get a Google Maps optimized stop order (preview only) |
-| **Generate Update Packet** | Build the manual Skimmer change checklist |
+| **Validate** | Check scenario for errors before approving |
+| **Approve Scenario** | Lock scenario and enable packet generation |
+| **Generate Manual Update Packet** | Build the Skimmer change checklist (replaces map view) |
 | **Approve Packet** | Lock packet for printing |
 | **Print Packet** | Print or save the checklist as PDF |
+| **Export CSV** | Download change list as a spreadsheet |
+| **← Back to Map** | Close comparison or packet view and return to the map |
