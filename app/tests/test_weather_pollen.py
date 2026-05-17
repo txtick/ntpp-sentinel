@@ -104,6 +104,7 @@ def test_fetch_current_pollen_sends_documented_ambee_headers(monkeypatch):
     def _fake_ambee_urlopen(req, timeout=10):
         captured["url"] = req.full_url
         captured["headers"] = dict(req.header_items())
+        captured["timeout"] = timeout
         return _FakeResponse(
             {
                 "data": [
@@ -138,6 +139,7 @@ def test_fetch_current_pollen_sends_documented_ambee_headers(monkeypatch):
     assert captured["headers"]["X-api-key"] == "test-ambee-key"
     assert captured["headers"]["Accept"] == "application/json"
     assert captured["headers"]["Content-type"] == "application/json"
+    assert captured["timeout"] == wb.POLLEN_API_TIMEOUT
     assert result["tree_risk"] == "Low"
     assert result["ragweed_count"] == 3
 
@@ -148,6 +150,7 @@ def test_fetch_current_pollen_uses_google_provider_when_configured(monkeypatch):
     def _fake_google_urlopen(req, timeout=10):
         captured["url"] = req.full_url
         captured["headers"] = dict(req.header_items())
+        captured["timeout"] = timeout
         return _FakeResponse(
             {
                 "dailyInfo": [
@@ -180,6 +183,7 @@ def test_fetch_current_pollen_uses_google_provider_when_configured(monkeypatch):
     assert "key=test-google-key" in captured["url"]
     assert "location.longitude=" in captured["url"]
     assert "location.latitude=" in captured["url"]
+    assert captured["timeout"] == wb.POLLEN_API_TIMEOUT
     assert result["provider"] == "google"
     assert result["tree_risk"] == "Moderate"
     assert result["grass_count"] == 2
@@ -260,7 +264,11 @@ def test_api_weather_uses_todays_stored_pollen_when_live_fetch_fails(monkeypatch
     monkeypatch.setattr(wb, "_weather_cache_ts", 0.0)
     monkeypatch.setattr(wb, "AMBEE_API_KEY", "configured")
     monkeypatch.setattr(wb, "_local_weather_date_str", lambda: "2026-05-06")
-    monkeypatch.setattr(wb, "_fetch_current_pollen_with_retry", lambda: (_ for _ in ()).throw(RuntimeError("ambee down")))
+    monkeypatch.setattr(
+        wb,
+        "_fetch_current_pollen_with_retry",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ambee down")),
+    )
     monkeypatch.setattr(wb, "upsert_pollen_daily_log", lambda _pollen: None)
     monkeypatch.setattr(wb, "get_avg_water_temp", lambda days=7: 71.6)
     monkeypatch.setattr(

@@ -154,6 +154,18 @@ WEATHER_CACHE_TTL = 3600  # 1 hour
 TIMEZONE_NAME = os.getenv("TIMEZONE", os.getenv("TZ", "America/Chicago"))
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+WEATHER_API_TIMEOUT = _env_float("WEATHER_API_TIMEOUT", 4.0)
+WEATHER_AQ_TIMEOUT = _env_float("WEATHER_AQ_TIMEOUT", 3.0)
+POLLEN_API_TIMEOUT = _env_float("POLLEN_API_TIMEOUT", 4.0)
+
+
 class AmbeePollenAuthError(RuntimeError):
     """Raised when Ambee rejects the configured key/subscription."""
 
@@ -192,7 +204,7 @@ def _fetch_current_ambee_pollen() -> dict:
         },
     )
     try:
-        with _urllib_req.urlopen(a_req, timeout=10) as resp:
+        with _urllib_req.urlopen(a_req, timeout=POLLEN_API_TIMEOUT) as resp:
             a_data = json.loads(resp.read())
     except _urllib_error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:500]
@@ -283,7 +295,7 @@ def _fetch_current_google_pollen() -> dict:
         },
     )
     try:
-        with _urllib_req.urlopen(req, timeout=10) as resp:
+        with _urllib_req.urlopen(req, timeout=POLLEN_API_TIMEOUT) as resp:
             data = json.loads(resp.read())
     except _urllib_error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")[:500]
@@ -972,7 +984,7 @@ def api_weather(request: Request):
     url = f"https://api.open-meteo.com/v1/forecast?{params}"
     try:
         req = _urllib_req.Request(url, headers={"User-Agent": "NTPP-Sentinel/1.0"})
-        with _urllib_req.urlopen(req, timeout=10) as resp:
+        with _urllib_req.urlopen(req, timeout=WEATHER_API_TIMEOUT) as resp:
             data = json.loads(resp.read())
     except Exception as exc:
         _logger.warning(f"Weather API fetch failed: {exc}")
@@ -997,7 +1009,7 @@ def api_weather(request: Request):
             f"https://air-quality-api.open-meteo.com/v1/air-quality?{aq_params}",
             headers={"User-Agent": "NTPP-Sentinel/1.0"},
         )
-        with _urllib_req.urlopen(aq_req, timeout=10) as resp:
+        with _urllib_req.urlopen(aq_req, timeout=WEATHER_AQ_TIMEOUT) as resp:
             aq_data = json.loads(resp.read())
         hourly = aq_data.get("hourly", {})
         for i, t in enumerate(hourly.get("time", [])):
@@ -1015,7 +1027,7 @@ def api_weather(request: Request):
     pollen_provider = _configured_pollen_provider()
     if pollen_provider not in {"off", "disabled"}:
         try:
-            current_pollen = _fetch_current_pollen_with_retry()
+            current_pollen = _fetch_current_pollen_with_retry(attempts=1, delay_seconds=0)
             # Persist today's reading so we can show pollen history
             upsert_pollen_daily_log(current_pollen)
         except Exception as exc:

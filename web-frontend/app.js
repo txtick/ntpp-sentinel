@@ -153,6 +153,7 @@ const state = {
   data: {
     home: null,
     weather: null,
+    weatherLoading: false,
     alerts: null,
     customers: null,
     problemPools: null,
@@ -1409,15 +1410,29 @@ async function loadCurrentView(force = false) {
 }
 
 async function loadHome() {
-  const [summary, alerts, reminders, weather] = await Promise.all([
+  const [summary, alerts, reminders] = await Promise.all([
     api("/api/home/summary"),
     api("/api/alerts?limit=6"),
     api("/api/reminders?limit=6"),
-    api("/api/weather").catch(() => null),
   ]);
   state.data.home = { summary, alerts, reminders };
-  state.data.weather = weather;
+  state.data.weather = null;
+  state.data.weatherLoading = true;
   renderHome();
+
+  api("/api/weather")
+    .then((weather) => {
+      if (state.view !== "home") return;
+      state.data.weather = weather;
+      state.data.weatherLoading = false;
+      renderHome();
+    })
+    .catch(() => {
+      if (state.view !== "home") return;
+      state.data.weather = null;
+      state.data.weatherLoading = false;
+      renderHome();
+    });
 }
 
 const WMO_LABELS = {
@@ -1509,6 +1524,8 @@ function renderPollenRows(pollen) {
 
 function renderWeatherWidget() {
   const w = state.data.weather;
+  if (state.data.weatherLoading)
+    return `<section class="detail-card"><h3>Weather</h3><p class="muted">Loading weather data...</p></section>`;
   if (!w)
     return `<section class="detail-card"><h3>Weather</h3><p class="muted">Weather data unavailable.</p></section>`;
 
@@ -4713,10 +4730,7 @@ function renderSandboxComparisonPanel() {
 function renderSandboxDefaultView() {
   sandbox.comparisonData = null;
   const panel = document.getElementById("sandbox-main-content");
-  if (panel)
-    panel.innerHTML = `<div id="sandbox-map-container" class="sandbox-map-container"></div>`;
-  sandboxInitMap();
-  sandboxRenderMap(sandbox.techProfiles || []);
+  if (panel) panel.innerHTML = "";
 }
 
 function renderSandboxPlanPanel(result) {
