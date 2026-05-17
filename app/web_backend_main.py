@@ -12,7 +12,9 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from services.route_sandbox import (
+    apply_optimized_order,
     approve_change_plan,
+    calculate_route_estimate,
     create_scenario,
     create_scenario_from_current,
     discard_scenario,
@@ -22,6 +24,8 @@ from services.route_sandbox import (
     generate_change_plan,
     get_change_plan,
     get_comparison,
+    get_maps_status,
+    get_route_estimates,
     get_scenario,
     list_current_route_pools,
     list_scenarios,
@@ -29,11 +33,13 @@ from services.route_sandbox import (
     mark_plan_item,
     mark_plan_printed,
     move_assignment,
+    optimize_route_order,
     reorder_assignments,
     update_scenario,
     upsert_technician_profile,
     validate_scenario,
 )
+from pg import ensure_route_maps_schema
 from services.dashboard_backend import (
     create_alert_reminder,
     get_dashboard_summary,
@@ -439,6 +445,7 @@ def _startup() -> None:
     if os.getenv("DATABASE_URL"):
         ensure_web_backend_schema()
         ensure_route_sandbox_schema()
+        ensure_route_maps_schema()
     _check_ghl_token()
 
 
@@ -1280,3 +1287,74 @@ async def api_upsert_technician_profile(request: Request, technician_id: str):
     _dashboard_mutation_auth_or_401(request)
     body = await request.json()
     return upsert_technician_profile(technician_id, body)
+
+
+# ── Google Maps / route estimate endpoints ────────────────────────────────────
+
+@app.get("/api/routes/maps/status")
+def api_maps_status(request: Request):
+    """Return Google Maps configuration flags. Never returns the server API key."""
+    _dashboard_read_auth_or_401(request)
+    return get_maps_status()
+
+
+@app.post("/api/routes/geocode")
+async def api_geocode(request: Request):
+    """Geocode an address using the server-side Google Maps key."""
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    address = (body.get("address") or "").strip()
+    if not address:
+        raise HTTPException(status_code=400, detail="address is required")
+    from services.google_maps import geocode, server_configured
+    if not server_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
+    result = geocode(address)
+    if not result:
+        raise HTTPException(status_code=404, detail="Address could not be geocoded")
+    return result
+
+
+@app.get("/api/routes/sandbox/scenarios/{scenario_id}/estimates")
+def api_get_route_estimates(request: Request, scenario_id: int, technician_id: str = None, day: str = None):
+    _dashboard_read_auth_or_401(request)
+    return get_route_estimates(scenario_id, technician_id=technician_id, day_of_week=day)
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/routes/{technician_id}/{day}/estimate")
+async def api_estimate_route(request: Request, scenario_id: int, technician_id: str, day: str):
+    """Calculate driving distance/time for one tech/day route via Google Maps."""
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    force_refresh = bool(body.get("force_refresh", False))
+    profiles = list_technician_profiles()
+    tech_profile = next((p for p in profiles.get("items", []) if p["technician_id"] == technician_id), None)
+    source_type = body.get("source_type", "scenario")
+    return calculate_route_estimate(
+        technician_id=technician_id,
+        day_of_week=day,
+        scenario_id=scenario_id,
+        source_type=source_type,
+        tech_profile=tech_profile,
+        force_refresh=force_refresh,
+    )
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/routes/{technician_id}/{day}/optimize")
+async def api_optimize_route(request: Request, scenario_id: int, technician_id: str, day: str):
+    """Return an optimization preview. Does NOT mutate scenario data."""
+    _dashboard_mutation_auth_or_401(request)
+    profiles = list_technician_profiles()
+    tech_profile = next((p for p in profiles.get("items", []) if p["technician_id"] == technician_id), None)
+    return optimize_route_order(scenario_id, technician_id, day, tech_profile=tech_profile)
+
+
+@app.post("/api/routes/sandbox/scenarios/{scenario_id}/routes/{technician_id}/{day}/apply-optimized-order")
+async def api_apply_optimized_order(request: Request, scenario_id: int, technician_id: str, day: str):
+    """Apply a reordered stop sequence to the sandbox scenario (sandbox only — never touches Skimmer)."""
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    ordered_ids = body.get("ordered_assignment_ids") or []
+    if not ordered_ids:
+        raise HTTPException(status_code=400, detail="ordered_assignment_ids is required")
+    return apply_optimized_order(scenario_id, technician_id, day, [int(i) for i in ordered_ids])

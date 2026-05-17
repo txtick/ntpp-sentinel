@@ -1722,6 +1722,32 @@ textarea {
   white-space: nowrap;
 }
 
+.sandbox-est-badge {
+  font-size: 0.70rem;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sandbox-group-action {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1.5;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.sandbox-group-action:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .sandbox-stop-list {
   padding: 0 0 4px 0;
 }

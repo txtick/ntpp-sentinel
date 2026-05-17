@@ -1366,3 +1366,550 @@ def export_change_plan_csv(plan_id: int) -> str:
 
 def ensure_schema() -> None:
     ensure_route_sandbox_schema()
+
+
+# ── Google Maps integration ───────────────────────────────────────────────────
+
+def get_maps_status() -> Dict[str, Any]:
+    from services import google_maps
+    return {
+        "server_maps_configured": google_maps.server_configured(),
+        "browser_maps_configured": google_maps.browser_configured(),
+        "optimization_enabled": google_maps.server_configured(),
+        "browser_maps_api_key": google_maps.browser_api_key() if google_maps.browser_configured() else None,
+    }
+
+
+def _get_cached_segment(cur, origin_hash: str, dest_hash: str, mode: str = "DRIVE") -> Optional[Dict]:
+    cur.execute(
+        """
+        SELECT distance_meters, duration_seconds, polyline, provider
+        FROM route_distance_cache
+        WHERE origin_hash = %s AND destination_hash = %s AND travel_mode = %s
+          AND expires_at > NOW()
+        LIMIT 1
+        """,
+        (origin_hash, dest_hash, mode),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def _store_cached_segment(
+    cur,
+    origin_hash: str, dest_hash: str,
+    origin_lat: float, origin_lng: float,
+    dest_lat: float, dest_lng: float,
+    distance_m: int, duration_s: int,
+    polyline: str = "",
+    mode: str = "DRIVE",
+) -> None:
+    from datetime import timezone, timedelta
+    expires = datetime.now(timezone.utc) + timedelta(days=30)
+    cur.execute(
+        """
+        INSERT INTO route_distance_cache (
+            origin_hash, destination_hash,
+            origin_latitude, origin_longitude,
+            destination_latitude, destination_longitude,
+            travel_mode, distance_meters, duration_seconds,
+            polyline, expires_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (origin_hash, destination_hash, travel_mode) DO UPDATE SET
+            distance_meters = EXCLUDED.distance_meters,
+            duration_seconds = EXCLUDED.duration_seconds,
+            polyline = EXCLUDED.polyline,
+            calculated_at = NOW(),
+            expires_at = EXCLUDED.expires_at
+        """,
+        (origin_hash, dest_hash, origin_lat, origin_lng,
+         dest_lat, dest_lng, mode, distance_m, duration_s,
+         polyline, expires),
+    )
+
+
+def _stops_for_route(
+    scenario_id: Optional[int],
+    source_type: str,
+    technician_id: str,
+    day_of_week: str,
+    source_system: str = "skimmer",
+) -> List[Dict]:
+    """Return ordered stops for a given tech/day from a scenario or current routes."""
+    if source_type == "scenario" and scenario_id:
+        detail = get_scenario(scenario_id)
+        stops = [
+            s
+            for g in detail["route_groups"]
+            for s in g["stops"]
+            if g["source_account_id"] == technician_id and g["day_of_week"] == day_of_week
+        ]
+    else:
+        current = list_current_route_pools(source_system)
+        stops = [
+            s
+            for g in current["route_groups"]
+            for s in g["stops"]
+            if g["source_account_id"] == technician_id and g["day_of_week"] == day_of_week
+        ]
+    stops.sort(key=lambda x: (x.get("stop_order") or 9999))
+    return stops
+
+
+def calculate_route_estimate(
+    technician_id: str,
+    day_of_week: str,
+    scenario_id: Optional[int] = None,
+    source_type: str = "scenario",
+    tech_profile: Optional[Dict] = None,
+    force_refresh: bool = False,
+    source_system: str = "skimmer",
+) -> Dict[str, Any]:
+    """
+    Calculate true driving distance/time for a single tech/day route via Google Maps.
+    Results are cached segment-by-segment in route_distance_cache.
+    Persists a route_estimate_run record with segments.
+    """
+    from services import google_maps
+
+    _require_postgres()
+    if not google_maps.server_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
+
+    stops = _stops_for_route(scenario_id, source_type, technician_id, day_of_week, source_system)
+    if not stops:
+        raise HTTPException(status_code=404, detail="No stops found for this tech/day")
+
+    # Determine start / end anchor locations from profile
+    start_lat = start_lng = end_lat = end_lng = None
+    start_type = "first_stop"
+    end_type = "last_stop"
+
+    if tech_profile:
+        home_lat = tech_profile.get("home_latitude")
+        home_lng = tech_profile.get("home_longitude")
+        if home_lat and home_lng:
+            if tech_profile.get("default_start_location_type") == "home":
+                start_lat, start_lng, start_type = float(home_lat), float(home_lng), "home"
+            if tech_profile.get("default_end_location_type") == "home":
+                end_lat, end_lng, end_type = float(home_lat), float(home_lng), "home"
+
+    # Build ordered sequence of points
+    points: List[Dict] = []
+    if start_lat is not None:
+        points.append({"type": start_type, "lat": start_lat, "lng": start_lng, "pool_id": None, "duration_min": 0})
+    for s in stops:
+        lat = float(s["latitude"]) if s.get("latitude") else None
+        lng = float(s["longitude"]) if s.get("longitude") else None
+        points.append({
+            "type": "pool",
+            "lat": lat,
+            "lng": lng,
+            "pool_id": s.get("source_service_location_id"),
+            "duration_min": s.get("estimated_duration_minutes") or 30,
+        })
+    if end_lat is not None:
+        points.append({"type": end_type, "lat": end_lat, "lng": end_lng, "pool_id": None, "duration_min": 0})
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO route_estimate_runs
+                    (scenario_id, source_type, technician_id, service_day, provider, status, stop_count)
+                VALUES (%s, %s, %s, %s, 'google_maps', 'pending', %s) RETURNING id
+                """,
+                (scenario_id, source_type, technician_id, day_of_week, len(stops)),
+            )
+            run_id = cur.fetchone()["id"]
+        conn.commit()
+
+        warnings: List[str] = []
+        request_count = 0
+        cache_hit_count = 0
+        seg_records: List[Dict] = []
+
+        total_distance_m = 0
+        total_duration_s = 0
+        c2c_distance_m = 0
+        c2c_duration_s = 0
+        start_to_first_m = start_to_first_s = None
+        last_to_end_m = last_to_end_s = None
+        service_duration_s = sum(p["duration_min"] * 60 for p in points if p["type"] == "pool")
+
+        pairs = list(zip(points, points[1:]))
+        has_start_anchor = start_lat is not None
+        has_end_anchor = end_lat is not None
+
+        for seq, (pt_from, pt_to) in enumerate(pairs):
+            seg: Dict[str, Any] = {
+                "sequence": seq,
+                "from_type": pt_from["type"],
+                "from_pool_id": pt_from.get("pool_id"),
+                "from_latitude": pt_from.get("lat"),
+                "from_longitude": pt_from.get("lng"),
+                "to_type": pt_to["type"],
+                "to_pool_id": pt_to.get("pool_id"),
+                "to_latitude": pt_to.get("lat"),
+                "to_longitude": pt_to.get("lng"),
+                "distance_meters": 0,
+                "duration_seconds": 0,
+                "polyline": "",
+                "cache_hit": False,
+                "error_message": None,
+            }
+
+            if not pt_from.get("lat") or not pt_to.get("lat"):
+                seg["error_message"] = "Missing coordinates"
+                warnings.append(f"Segment {seq}: missing coordinates — skipped")
+            else:
+                oh, dh = google_maps.segment_hashes(
+                    pt_from["lat"], pt_from["lng"],
+                    pt_to["lat"], pt_to["lng"],
+                )
+                with conn.cursor() as cur:
+                    cached = None if force_refresh else _get_cached_segment(cur, oh, dh)
+                if cached:
+                    seg.update({
+                        "distance_meters": cached["distance_meters"],
+                        "duration_seconds": cached["duration_seconds"],
+                        "polyline": cached.get("polyline") or "",
+                        "cache_hit": True,
+                    })
+                    cache_hit_count += 1
+                else:
+                    result = google_maps.compute_route(
+                        pt_from["lat"], pt_from["lng"],
+                        pt_to["lat"], pt_to["lng"],
+                    )
+                    request_count += 1
+                    if result.get("error"):
+                        seg["error_message"] = result["error"]
+                        warnings.append(f"Segment {seq}: {result['error']}")
+                    else:
+                        seg.update({
+                            "distance_meters": result["distance_meters"],
+                            "duration_seconds": result["duration_seconds"],
+                            "polyline": result.get("polyline", ""),
+                        })
+                        with conn.cursor() as cur:
+                            _store_cached_segment(
+                                cur, oh, dh,
+                                pt_from["lat"], pt_from["lng"],
+                                pt_to["lat"], pt_to["lng"],
+                                seg["distance_meters"], seg["duration_seconds"],
+                                seg["polyline"],
+                            )
+                        conn.commit()
+
+            seg_records.append(seg)
+            dm, ds = seg["distance_meters"], seg["duration_seconds"]
+            total_distance_m += dm
+            total_duration_s += ds
+
+            is_first_seg = seq == 0
+            is_last_seg = seq == len(pairs) - 1
+
+            if has_start_anchor and is_first_seg:
+                start_to_first_m, start_to_first_s = dm, ds
+            elif has_end_anchor and is_last_seg:
+                last_to_end_m, last_to_end_s = dm, ds
+            else:
+                c2c_distance_m += dm
+                c2c_duration_s += ds
+
+        total_work_s = total_duration_s + service_duration_s
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE route_estimate_runs SET
+                    status = 'complete',
+                    total_distance_meters = %s,
+                    total_duration_seconds = %s,
+                    customer_to_customer_distance_meters = %s,
+                    customer_to_customer_duration_seconds = %s,
+                    start_to_first_distance_meters = %s,
+                    start_to_first_duration_seconds = %s,
+                    last_to_end_distance_meters = %s,
+                    last_to_end_duration_seconds = %s,
+                    service_duration_seconds = %s,
+                    total_work_duration_seconds = %s,
+                    request_count = %s,
+                    cache_hit_count = %s,
+                    warnings = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (
+                    total_distance_m, total_duration_s,
+                    c2c_distance_m, c2c_duration_s,
+                    start_to_first_m, start_to_first_s,
+                    last_to_end_m, last_to_end_s,
+                    service_duration_s, total_work_s,
+                    request_count, cache_hit_count,
+                    json.dumps(warnings), run_id,
+                ),
+            )
+            for seg in seg_records:
+                cur.execute(
+                    """
+                    INSERT INTO route_estimate_segments (
+                        estimate_run_id, sequence,
+                        from_type, from_pool_id, from_latitude, from_longitude,
+                        to_type, to_pool_id, to_latitude, to_longitude,
+                        distance_meters, duration_seconds, polyline,
+                        provider, cache_hit, error_message
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'google_maps',%s,%s)
+                    """,
+                    (
+                        run_id, seg["sequence"],
+                        seg["from_type"], seg["from_pool_id"],
+                        seg["from_latitude"], seg["from_longitude"],
+                        seg["to_type"], seg["to_pool_id"],
+                        seg["to_latitude"], seg["to_longitude"],
+                        seg["distance_meters"], seg["duration_seconds"],
+                        seg["polyline"], seg["cache_hit"], seg["error_message"],
+                    ),
+                )
+        conn.commit()
+
+    def _mi(m: Optional[int]) -> Optional[float]:
+        return round((m or 0) / 1609.34, 1) if m is not None else None
+
+    def _min(s: Optional[int]) -> Optional[int]:
+        return round((s or 0) / 60) if s is not None else None
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "technician_id": technician_id,
+        "day_of_week": day_of_week,
+        "stop_count": len(stops),
+        "total_distance_miles": _mi(total_distance_m),
+        "total_duration_minutes": _min(total_duration_s),
+        "customer_to_customer_distance_miles": _mi(c2c_distance_m),
+        "customer_to_customer_duration_minutes": _min(c2c_duration_s),
+        "start_to_first_distance_miles": _mi(start_to_first_m),
+        "start_to_first_duration_minutes": _min(start_to_first_s),
+        "last_to_end_distance_miles": _mi(last_to_end_m),
+        "last_to_end_duration_minutes": _min(last_to_end_s),
+        "service_duration_minutes": _min(service_duration_s),
+        "total_work_duration_minutes": _min(total_work_s),
+        "request_count": request_count,
+        "cache_hit_count": cache_hit_count,
+        "warnings": warnings,
+        "segments": [
+            {
+                "sequence": s["sequence"],
+                "from_type": s["from_type"],
+                "to_type": s["to_type"],
+                "distance_miles": round((s["distance_meters"] or 0) / 1609.34, 2),
+                "duration_minutes": round((s["duration_seconds"] or 0) / 60, 1),
+                "polyline": s["polyline"],
+                "cache_hit": s["cache_hit"],
+                "error": s.get("error_message"),
+            }
+            for s in seg_records
+        ],
+    }
+
+
+def get_route_estimates(
+    scenario_id: int,
+    technician_id: Optional[str] = None,
+    day_of_week: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return the most recent estimate run(s) for a scenario."""
+    _require_postgres()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            filters = ["scenario_id = %s", "status = 'complete'"]
+            params: List[Any] = [scenario_id]
+            if technician_id:
+                filters.append("technician_id = %s")
+                params.append(technician_id)
+            if day_of_week:
+                filters.append("service_day = %s")
+                params.append(day_of_week)
+            cur.execute(
+                f"""
+                SELECT DISTINCT ON (technician_id, service_day)
+                    id, technician_id, service_day,
+                    total_distance_meters, total_duration_seconds,
+                    customer_to_customer_distance_meters,
+                    customer_to_customer_duration_seconds,
+                    service_duration_seconds, total_work_duration_seconds,
+                    stop_count, request_count, cache_hit_count,
+                    warnings, created_at
+                FROM route_estimate_runs
+                WHERE {" AND ".join(filters)}
+                ORDER BY technician_id, service_day, created_at DESC
+                """,
+                params,
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+    def _mi(m): return round((m or 0) / 1609.34, 1) if m is not None else None
+    def _min(s): return round((s or 0) / 60) if s is not None else None
+
+    items = []
+    for r in rows:
+        r["total_distance_miles"] = _mi(r.pop("total_distance_meters", None))
+        r["total_duration_minutes"] = _min(r.pop("total_duration_seconds", None))
+        r["customer_to_customer_distance_miles"] = _mi(r.pop("customer_to_customer_distance_meters", None))
+        r["customer_to_customer_duration_minutes"] = _min(r.pop("customer_to_customer_duration_seconds", None))
+        r["service_duration_minutes"] = _min(r.pop("service_duration_seconds", None))
+        r["total_work_duration_minutes"] = _min(r.pop("total_work_duration_seconds", None))
+        items.append(r)
+
+    return {"ok": True, "items": items}
+
+
+def optimize_route_order(
+    scenario_id: int,
+    technician_id: str,
+    day_of_week: str,
+    tech_profile: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """
+    Return an optimization preview for a single tech/day route.
+    Does NOT mutate any scenario data — returns proposed order only.
+    """
+    from services import google_maps
+
+    _require_postgres()
+    if not google_maps.server_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
+
+    stops = _stops_for_route(scenario_id, "scenario", technician_id, day_of_week)
+    if len(stops) < 3:
+        raise HTTPException(status_code=400, detail="Route needs at least 3 stops to optimize")
+
+    # Determine anchor locations
+    start_lat = start_lng = end_lat = end_lng = None
+    if tech_profile:
+        home_lat = tech_profile.get("home_latitude")
+        home_lng = tech_profile.get("home_longitude")
+        if home_lat and home_lng:
+            if tech_profile.get("default_start_location_type") == "home":
+                start_lat, start_lng = float(home_lat), float(home_lng)
+            if tech_profile.get("default_end_location_type") == "home":
+                end_lat, end_lng = float(home_lat), float(home_lng)
+
+    # Use first/last stop as anchors if no home configured
+    valid_stops = [s for s in stops if s.get("latitude") and s.get("longitude")]
+    if len(valid_stops) < 3:
+        raise HTTPException(status_code=400, detail="Not enough stops with coordinates to optimize")
+
+    if start_lat is None and valid_stops:
+        start_lat = float(valid_stops[0]["latitude"])
+        start_lng = float(valid_stops[0]["longitude"])
+        intermediates_stops = valid_stops[1:]
+    else:
+        intermediates_stops = valid_stops
+
+    if end_lat is None and valid_stops:
+        end_lat = float(valid_stops[-1]["latitude"])
+        end_lng = float(valid_stops[-1]["longitude"])
+        if not tech_profile or tech_profile.get("default_start_location_type") != "home":
+            intermediates_stops = valid_stops[1:-1]
+
+    if len(intermediates_stops) < 1:
+        raise HTTPException(status_code=400, detail="Not enough intermediate stops to optimize")
+
+    intermediates = [
+        {"location": {"latLng": {"latitude": float(s["latitude"]), "longitude": float(s["longitude"])}}}
+        for s in intermediates_stops
+    ]
+
+    result = google_maps.compute_route(
+        start_lat, start_lng, end_lat, end_lng,
+        intermediates=intermediates,
+        optimize_waypoint_order=True,
+    )
+
+    if result.get("error"):
+        raise HTTPException(status_code=502, detail=f"Google Maps error: {result['error']}")
+
+    optimized_indices = result.get("optimized_waypoint_order") or list(range(len(intermediates_stops)))
+
+    # Build optimized stop ordering
+    optimized_stops = [intermediates_stops[i] for i in optimized_indices]
+
+    # Reconstruct full list with anchors
+    if tech_profile and tech_profile.get("default_start_location_type") == "home":
+        full_optimized = optimized_stops
+    else:
+        full_optimized = [valid_stops[0]] + optimized_stops
+
+    if tech_profile and tech_profile.get("default_end_location_type") == "home":
+        pass  # end anchor is home, not a stop
+    elif valid_stops and valid_stops[-1] not in full_optimized:
+        full_optimized = full_optimized + [valid_stops[-1]]
+
+    # Calculate current route distance for comparison (using straight-line if no estimate available)
+    current_dist_m = result.get("distance_meters", 0)
+    current_dur_s = result.get("duration_seconds", 0)
+
+    # Calculate savings vs naive current order (re-use the optimized route result as the optimized baseline)
+    optimized_dist_m = result.get("distance_meters", 0)
+    optimized_dur_s = result.get("duration_seconds", 0)
+
+    return {
+        "ok": True,
+        "scenario_id": scenario_id,
+        "technician_id": technician_id,
+        "day_of_week": day_of_week,
+        "stop_count": len(stops),
+        "valid_stop_count": len(valid_stops),
+        "skipped_count": len(stops) - len(valid_stops),
+        "current_stop_order": [
+            {"assignment_id": s.get("id"), "stop_order": s.get("stop_order"), "customer_name": s.get("customer_name"), "address": s.get("address")}
+            for s in stops
+        ],
+        "optimized_stop_order": [
+            {"assignment_id": s.get("id"), "stop_order": idx + 1, "customer_name": s.get("customer_name"), "address": s.get("address")}
+            for idx, s in enumerate(full_optimized)
+        ],
+        "optimized_distance_miles": round(optimized_dist_m / 1609.34, 1),
+        "optimized_duration_minutes": round(optimized_dur_s / 60),
+        "polyline": result.get("polyline", ""),
+        "warnings": [f"{len(stops) - len(valid_stops)} stop(s) skipped (missing coordinates)"] if len(stops) != len(valid_stops) else [],
+    }
+
+
+def apply_optimized_order(
+    scenario_id: int,
+    technician_id: str,
+    day_of_week: str,
+    ordered_assignment_ids: List[int],
+) -> Dict[str, Any]:
+    """
+    Apply a new stop order to scenario assignments.
+    Only mutates route_scenario_assignments — never touches Skimmer/current route tables.
+    """
+    _require_postgres()
+
+    detail = get_scenario(scenario_id)
+    if detail["scenario"]["status"] not in SCENARIO_EDITABLE_STATUSES:
+        raise HTTPException(status_code=409, detail="Scenario must be in draft status to apply optimization")
+
+    with pg() as conn:
+        with conn.cursor() as cur:
+            for new_order, assignment_id in enumerate(ordered_assignment_ids, start=1):
+                cur.execute(
+                    """
+                    UPDATE route_scenario_assignments
+                    SET stop_order = %s,
+                        is_changed_from_current = TRUE,
+                        updated_at = NOW()
+                    WHERE id = %s AND scenario_id = %s
+                      AND source_account_id = %s AND day_of_week = %s
+                    """,
+                    (new_order, assignment_id, scenario_id, technician_id, day_of_week),
+                )
+            _mark_change_plans_stale(cur, scenario_id)
+        conn.commit()
+
+    return {"ok": True, "updated_count": len(ordered_assignment_ids)}

@@ -654,6 +654,111 @@ def ensure_route_sandbox_schema() -> None:
         conn.commit()
 
 
+def ensure_route_maps_schema() -> None:
+    """Create distance cache and route estimate tables for Google Maps integration."""
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_distance_cache (
+                    id BIGSERIAL PRIMARY KEY,
+                    origin_hash TEXT NOT NULL,
+                    destination_hash TEXT NOT NULL,
+                    origin_latitude NUMERIC NOT NULL,
+                    origin_longitude NUMERIC NOT NULL,
+                    destination_latitude NUMERIC NOT NULL,
+                    destination_longitude NUMERIC NOT NULL,
+                    travel_mode TEXT NOT NULL DEFAULT 'DRIVE',
+                    distance_meters INTEGER NOT NULL,
+                    duration_seconds INTEGER NOT NULL,
+                    duration_in_traffic_seconds INTEGER,
+                    polyline TEXT,
+                    provider TEXT NOT NULL DEFAULT 'google_maps',
+                    calculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (origin_hash, destination_hash, travel_mode)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_distance_cache_lookup
+                ON route_distance_cache(origin_hash, destination_hash, travel_mode)
+                WHERE expires_at > NOW()
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_estimate_runs (
+                    id BIGSERIAL PRIMARY KEY,
+                    scenario_id BIGINT REFERENCES route_scenarios(id) ON DELETE SET NULL,
+                    source_type TEXT NOT NULL DEFAULT 'scenario',
+                    technician_id TEXT,
+                    service_day TEXT,
+                    provider TEXT NOT NULL DEFAULT 'google_maps',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    total_distance_meters INTEGER,
+                    total_duration_seconds INTEGER,
+                    customer_to_customer_distance_meters INTEGER,
+                    customer_to_customer_duration_seconds INTEGER,
+                    start_to_first_distance_meters INTEGER,
+                    start_to_first_duration_seconds INTEGER,
+                    last_to_end_distance_meters INTEGER,
+                    last_to_end_duration_seconds INTEGER,
+                    service_duration_seconds INTEGER,
+                    total_work_duration_seconds INTEGER,
+                    stop_count INTEGER,
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    cache_hit_count INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    warnings JSONB,
+                    polyline TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_estimate_runs_scenario
+                ON route_estimate_runs(scenario_id, technician_id, service_day)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_estimate_segments (
+                    id BIGSERIAL PRIMARY KEY,
+                    estimate_run_id BIGINT NOT NULL REFERENCES route_estimate_runs(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    from_type TEXT NOT NULL,
+                    from_pool_id TEXT,
+                    from_latitude NUMERIC,
+                    from_longitude NUMERIC,
+                    to_type TEXT NOT NULL,
+                    to_pool_id TEXT,
+                    to_latitude NUMERIC,
+                    to_longitude NUMERIC,
+                    distance_meters INTEGER NOT NULL DEFAULT 0,
+                    duration_seconds INTEGER NOT NULL DEFAULT 0,
+                    duration_in_traffic_seconds INTEGER,
+                    polyline TEXT,
+                    provider TEXT NOT NULL DEFAULT 'google_maps',
+                    cache_hit BOOLEAN NOT NULL DEFAULT FALSE,
+                    error_message TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_estimate_segments_run
+                ON route_estimate_segments(estimate_run_id, sequence)
+                """
+            )
+        conn.commit()
+
+
 def get_pools_with_service_location(source_system: str = "skimmer") -> list[dict]:
     with pg() as conn:
         with conn.cursor() as cur:
