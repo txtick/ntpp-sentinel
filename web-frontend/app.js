@@ -1466,9 +1466,11 @@ function dustLevel(ugm3) {
 }
 
 function pollenRisk(risk) {
-  // Ambee risk text: Low, Moderate, High, Very High
+  // Provider risk text: None, Very Low, Low, Moderate, High, Very High
   if (!risk) return { label: "—", color: "var(--muted)" };
   const r = risk.toLowerCase();
+  if (r === "none") return { label: "None", color: "var(--muted)" };
+  if (r === "very low") return { label: "Very Low", color: "var(--ink)" };
   if (r === "low") return { label: "Low", color: "var(--ink)" };
   if (r === "moderate") return { label: "Moderate", color: "var(--gold)" };
   if (r === "high") return { label: "High", color: "#d97706" };
@@ -3923,6 +3925,33 @@ function sandboxFilterGroups(groups) {
   });
 }
 
+// ── Soft refresh (route list + map only, no map destroy/recreate) ─────────────
+
+async function sandboxSoftRefresh() {
+  // Re-fetch the active scenario so stop order / assignments are current
+  if (sandbox.activeScenarioId) {
+    try {
+      sandbox.activeScenario = await api(
+        `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}`,
+      );
+    } catch (_) {}
+  }
+
+  const allGroups = sandboxGetActiveData();
+  const filteredGroups = sandboxFilterGroups(allGroups);
+
+  // Preserve the route list scroll position
+  const listEl = document.getElementById("sandbox-route-list");
+  const savedScroll = listEl ? listEl.scrollTop : 0;
+
+  renderSandboxFilters(filteredGroups);
+  renderSandboxRouteList(filteredGroups);
+
+  if (listEl) listEl.scrollTop = savedScroll;
+
+  sandboxRenderMap(sandbox.techProfiles || []);
+}
+
 // ── Map ───────────────────────────────────────────────────────────────────────
 
 function sandboxInitMap() {
@@ -3936,7 +3965,11 @@ function sandboxInitMap() {
 
   // Destroy any prior map — its container was removed when innerHTML was replaced
   if (sandbox.map) {
-    try { sandbox.map.remove(); } catch (_) {}
+    try {
+      sandbox.map.remove();
+    } catch {
+      // Best effort cleanup before recreating the map.
+    }
     sandbox.map = null;
   }
 
@@ -3948,7 +3981,7 @@ function sandboxInitMap() {
 
   // Two rAF calls ensure the browser has committed layout before Leaflet measures
   requestAnimationFrame(() =>
-    requestAnimationFrame(() => sandbox.map && sandbox.map.invalidateSize())
+    requestAnimationFrame(() => sandbox.map && sandbox.map.invalidateSize()),
   );
 }
 
@@ -4204,7 +4237,7 @@ async function sandboxMoveStop(locationId, assignmentId) {
         }),
       },
     );
-    await loadRouteSandbox(true);
+    await sandboxSoftRefresh();
     showToast("Stop moved.");
   }, "Stop moved");
 }
@@ -4349,7 +4382,7 @@ function wireSandboxDragDrop(container) {
             );
           }
         }
-        await loadRouteSandbox(true);
+        await sandboxSoftRefresh();
       } catch (err) {
         showToast(`Error: ${err.message}`, 4000);
       }

@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import time
+from typing import Optional
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -145,6 +146,8 @@ _logger = __import__("logging").getLogger("web_backend")
 WEATHER_LAT = float(os.getenv("WEATHER_LAT", "33.15"))
 WEATHER_LON = float(os.getenv("WEATHER_LON", "-96.82"))
 AMBEE_API_KEY = os.getenv("AMBEE_API_KEY", "").strip()
+GOOGLE_POLLEN_API_KEY = os.getenv("GOOGLE_POLLEN_API_KEY", "").strip()
+POLLEN_PROVIDER = os.getenv("POLLEN_PROVIDER", "").strip().lower()
 _weather_cache: dict = {}
 _weather_cache_ts: float = 0.0
 WEATHER_CACHE_TTL = 3600  # 1 hour
@@ -155,7 +158,21 @@ class AmbeePollenAuthError(RuntimeError):
     """Raised when Ambee rejects the configured key/subscription."""
 
 
-def _fetch_current_pollen() -> dict:
+class GooglePollenAuthError(RuntimeError):
+    """Raised when Google rejects the configured Pollen API key."""
+
+
+def _configured_pollen_provider() -> str:
+    if POLLEN_PROVIDER in {"google", "ambee", "off", "disabled"}:
+        return POLLEN_PROVIDER
+    if GOOGLE_POLLEN_API_KEY:
+        return "google"
+    if AMBEE_API_KEY:
+        return "ambee"
+    return "off"
+
+
+def _fetch_current_ambee_pollen() -> dict:
     """Fetch the latest Ambee pollen reading for the configured coordinates."""
     if not AMBEE_API_KEY:
         return {}
@@ -217,7 +234,114 @@ def _fetch_current_pollen() -> dict:
         "tree_detail": tree_detail,
         "ragweed_count": (species.get("Weed") or {}).get("Ragweed"),
         "updated_at": entry.get("updatedAt"),
+        "provider": "ambee",
     }
+
+
+def _google_pollen_category(info: dict) -> Optional[str]:
+    category = (info.get("indexInfo") or {}).get("category")
+    if not category:
+        return None
+    return str(category).strip()
+
+
+def _google_pollen_value(info: dict) -> Optional[int]:
+    value = (info.get("indexInfo") or {}).get("value")
+    try:
+        return int(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _fetch_current_google_pollen() -> dict:
+    """Fetch today's Google Pollen forecast for the configured coordinates."""
+    if not GOOGLE_POLLEN_API_KEY:
+        return {}
+
+    import urllib.error as _urllib_error
+    import urllib.parse as _urllib_parse
+    import urllib.request as _urllib_req
+
+    params = _urllib_parse.urlencode(
+        {
+            "key": GOOGLE_POLLEN_API_KEY,
+            "location.longitude": WEATHER_LON,
+            "location.latitude": WEATHER_LAT,
+            "days": 1,
+            "plantsDescription": "false",
+        }
+    )
+    req = _urllib_req.Request(
+        f"https://pollen.googleapis.com/v1/forecast:lookup?{params}",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "NTPP-Sentinel/1.0",
+        },
+    )
+    try:
+        with _urllib_req.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except _urllib_error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:500]
+        _logger.warning(
+            "Google pollen HTTP error status=%s key_present=%s key_len=%s body=%s",
+            exc.code,
+            bool(GOOGLE_POLLEN_API_KEY),
+            len(GOOGLE_POLLEN_API_KEY or ""),
+            body,
+        )
+        if exc.code in (401, 403):
+            raise GooglePollenAuthError(body or f"Google Pollen auth failed with status {exc.code}") from exc
+        raise
+    except _urllib_error.URLError as exc:
+        _logger.warning("Google pollen request failed: %s", exc)
+        raise
+
+    daily = (data.get("dailyInfo") or [{}])[0]
+    type_info = {str(item.get("code") or "").upper(): item for item in daily.get("pollenTypeInfo") or []}
+    plant_info = daily.get("plantInfo") or []
+    tree_plants = [
+        item
+        for item in plant_info
+        if (item.get("plantDescription") or {}).get("type") == "TREE" or str(item.get("code") or "").upper() in {"ALDER", "ASH", "BIRCH", "COTTONWOOD", "ELM", "JUNIPER", "MAPLE", "OAK", "PINE"}
+    ]
+    top_trees = sorted(
+        [
+            (item.get("displayName") or item.get("code"), _google_pollen_value(item) or 0)
+            for item in tree_plants
+            if item.get("displayName") or item.get("code")
+        ],
+        key=lambda pair: pair[1],
+        reverse=True,
+    )[:3]
+    tree_detail = ", ".join(f"{name} {value}" for name, value in top_trees if value > 0)
+    ragweed = next((item for item in plant_info if str(item.get("code") or "").upper() == "RAGWEED"), {})
+    date_info = daily.get("date") or {}
+    updated_at = None
+    if date_info.get("year") and date_info.get("month") and date_info.get("day"):
+        updated_at = f"{int(date_info['year']):04d}-{int(date_info['month']):02d}-{int(date_info['day']):02d}"
+
+    return {
+        "tree_risk": _google_pollen_category(type_info.get("TREE", {})),
+        "grass_risk": _google_pollen_category(type_info.get("GRASS", {})),
+        "weed_risk": _google_pollen_category(type_info.get("WEED", {})),
+        "tree_count": _google_pollen_value(type_info.get("TREE", {})),
+        "grass_count": _google_pollen_value(type_info.get("GRASS", {})),
+        "weed_count": _google_pollen_value(type_info.get("WEED", {})),
+        "tree_detail": tree_detail,
+        "ragweed_count": _google_pollen_value(ragweed),
+        "updated_at": updated_at,
+        "provider": "google",
+    }
+
+
+def _fetch_current_pollen() -> dict:
+    provider = _configured_pollen_provider()
+    if provider in {"off", "disabled"}:
+        return {}
+    if provider == "google":
+        return _fetch_current_google_pollen()
+    return _fetch_current_ambee_pollen()
 
 
 def _local_weather_date_str() -> str:
@@ -247,7 +371,7 @@ def _fetch_current_pollen_with_retry(attempts: int = 3, delay_seconds: float = 1
     for attempt in range(max(1, int(attempts))):
         try:
             return _fetch_current_pollen()
-        except AmbeePollenAuthError:
+        except (AmbeePollenAuthError, GooglePollenAuthError):
             raise
         except Exception as exc:
             last_exc = exc
@@ -632,8 +756,9 @@ def job_filter_clean_quote_sync(request: Request):
 def job_weather_pollen_snapshot(request: Request):
     global _weather_cache, _weather_cache_ts
     _auth_or_401(request)
-    if not AMBEE_API_KEY:
-        return {"ok": False, "saved": False, "reason": "AMBEE_API_KEY not configured"}
+    provider = _configured_pollen_provider()
+    if provider in {"off", "disabled"}:
+        return {"ok": False, "saved": False, "reason": "No pollen provider is configured"}
     try:
         current_pollen = _fetch_current_pollen_with_retry()
         if not current_pollen:
@@ -645,7 +770,7 @@ def job_weather_pollen_snapshot(request: Request):
         return {
             "ok": True,
             "saved": True,
-            "provider": "ambee",
+            "provider": current_pollen.get("provider") or provider,
             "log_date": __import__("datetime").date.today().isoformat(),
             "current_pollen": current_pollen,
         }
@@ -876,7 +1001,7 @@ def api_weather(request: Request):
     pollen_log = get_pollen_daily_log(days=7)
     today_pollen = _stored_pollen_to_current(pollen_log.get(_local_weather_date_str(), {}))
     current_pollen: dict = {}
-    if AMBEE_API_KEY:
+    if _configured_pollen_provider() not in {"off", "disabled"}:
         try:
             current_pollen = _fetch_current_pollen_with_retry()
             # Persist today's reading so we can show pollen history

@@ -128,6 +128,8 @@ def test_fetch_current_pollen_sends_documented_ambee_headers(monkeypatch):
     import urllib.request as _urllib_req
 
     monkeypatch.setattr(wb, "AMBEE_API_KEY", "test-ambee-key")
+    monkeypatch.setattr(wb, "GOOGLE_POLLEN_API_KEY", "")
+    monkeypatch.setattr(wb, "POLLEN_PROVIDER", "ambee")
     monkeypatch.setattr(_urllib_req, "urlopen", _fake_ambee_urlopen)
 
     result = wb._fetch_current_pollen()
@@ -138,6 +140,52 @@ def test_fetch_current_pollen_sends_documented_ambee_headers(monkeypatch):
     assert captured["headers"]["Content-type"] == "application/json"
     assert result["tree_risk"] == "Low"
     assert result["ragweed_count"] == 3
+
+
+def test_fetch_current_pollen_uses_google_provider_when_configured(monkeypatch):
+    captured = {}
+
+    def _fake_google_urlopen(req, timeout=10):
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.header_items())
+        return _FakeResponse(
+            {
+                "dailyInfo": [
+                    {
+                        "date": {"year": 2026, "month": 5, "day": 16},
+                        "pollenTypeInfo": [
+                            {"code": "TREE", "indexInfo": {"category": "Moderate", "value": 3}},
+                            {"code": "GRASS", "indexInfo": {"category": "Low", "value": 2}},
+                            {"code": "WEED", "indexInfo": {"category": "High", "value": 4}},
+                        ],
+                        "plantInfo": [
+                            {"code": "OAK", "displayName": "Oak", "indexInfo": {"value": 3}},
+                            {"code": "JUNIPER", "displayName": "Juniper", "indexInfo": {"value": 2}},
+                            {"code": "RAGWEED", "displayName": "Ragweed", "indexInfo": {"value": 1}},
+                        ],
+                    }
+                ]
+            }
+        )
+
+    import urllib.request as _urllib_req
+
+    monkeypatch.setattr(wb, "GOOGLE_POLLEN_API_KEY", "test-google-key")
+    monkeypatch.setattr(wb, "POLLEN_PROVIDER", "google")
+    monkeypatch.setattr(_urllib_req, "urlopen", _fake_google_urlopen)
+
+    result = wb._fetch_current_pollen()
+
+    assert "pollen.googleapis.com/v1/forecast:lookup" in captured["url"]
+    assert "key=test-google-key" in captured["url"]
+    assert "location.longitude=" in captured["url"]
+    assert "location.latitude=" in captured["url"]
+    assert result["provider"] == "google"
+    assert result["tree_risk"] == "Moderate"
+    assert result["grass_count"] == 2
+    assert result["weed_risk"] == "High"
+    assert result["tree_detail"] == "Oak 3, Juniper 2"
+    assert result["ragweed_count"] == 1
 
 
 def test_fetch_current_pollen_with_retry_does_not_retry_ambee_auth_errors(monkeypatch):
@@ -169,6 +217,7 @@ def test_fetch_current_pollen_wraps_401_as_auth_error(monkeypatch):
     import urllib.request as _urllib_req
 
     monkeypatch.setattr(wb, "AMBEE_API_KEY", "test-ambee-key")
+    monkeypatch.setattr(wb, "POLLEN_PROVIDER", "ambee")
     monkeypatch.setattr(_urllib_req, "urlopen", _fake_ambee_urlopen)
 
     with pytest.raises(wb.AmbeePollenAuthError):

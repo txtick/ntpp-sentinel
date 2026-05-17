@@ -175,6 +175,24 @@ docker compose exec -T web-backend sh -lc '
 '
 ```
 
+To use Google Pollen instead, set these in `/opt/ntpp-sentinel/.env` and restart `web-backend`:
+
+```bash
+POLLEN_PROVIDER=google
+GOOGLE_POLLEN_API_KEY=your_google_maps_pollen_key
+```
+
+Then verify the Google Pollen key from inside `web-backend`:
+
+```bash
+docker compose exec -T web-backend sh -lc '
+  echo "GOOGLE_POLLEN_API_KEY chars: ${#GOOGLE_POLLEN_API_KEY}"
+  curl -sS -i \
+    "https://pollen.googleapis.com/v1/forecast:lookup?key=${GOOGLE_POLLEN_API_KEY}&location.longitude=${WEATHER_LON:--96.82}&location.latitude=${WEATHER_LAT:-33.15}&days=1&plantsDescription=false" \
+    | sed -n "1,20p"
+'
+```
+
 ## 3a. Frontend Local Checks
 
 The dashboard frontend now has a minimal local tooling setup for JS linting,

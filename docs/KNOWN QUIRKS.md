@@ -58,7 +58,7 @@ Examples:
 
 - **Open-Meteo pollen (CAMS) does not cover North America.** Do not try to source Texas pollen history from Open-Meteo.
 - **Open-Meteo dust works globally** — use it for Saharan dust events (dust μg/m³ > 75 = elevated, > 200 = Saharan event).
-- **Production pollen fetches currently use Ambee latest-only data**, not a true historical API. The dashboard history fills from one stored row per day in `pollen_daily_log`.
+- **Production pollen fetches can use Google Pollen API or Ambee latest-only data**, controlled by `POLLEN_PROVIDER`. The dashboard history fills from one stored row per day in `pollen_daily_log`.
 - **Weather cache is in-process and resets on container restart.** First load after restart hits Open-Meteo weather, Open-Meteo AQ, and Ambee pollen. Cached for `WEATHER_CACHE_TTL` seconds (default 3600).
 - **Pollen history was previously traffic-driven.** Before the dedicated `weather_pollen` cron job, blank days appeared whenever `/api/weather` was not loaded that day or the live pollen fetch failed.
 - **Current pollen now falls back to today's stored snapshot if the live Ambee call fails.** This keeps the widget populated when the cron snapshot already saved a row earlier that day, but it cannot invent data for days where every snapshot attempt failed.
@@ -67,6 +67,7 @@ Examples:
 - `/api/weather` is on `web-backend` and requires dashboard auth. Weather data is fetched server-side and cached; the frontend does not call external APIs directly.
 - Ambee pollen auth uses the `x-api-key` header plus JSON request headers. If Ambee returns 401 while the dashboard key looks active, first verify the `web-backend` container has the current `AMBEE_API_KEY` and has been restarted after any `.env` change.
 - Ambee can return `401 {"message":"No active subscription found"}` even when the API key itself is active in the portal. That means the key/account is not entitled to the Pollen API product, so Sentinel cannot collect pollen until the Ambee subscription/product access is restored or replaced.
+- Google Pollen uses `GOOGLE_POLLEN_API_KEY` and `POLLEN_PROVIDER=google`. The key must have billing enabled and the Pollen API enabled/restricted in Google Maps Platform.
 
 ## Python urllib + Cloudflare + GHL
 

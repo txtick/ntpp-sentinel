@@ -96,6 +96,27 @@ docker compose exec -T web-backend sh -lc '
 '
 ```
 
+## Google Pollen Setup
+
+Set these in `/opt/ntpp-sentinel/.env`, then restart `web-backend`:
+
+```bash
+POLLEN_PROVIDER=google
+GOOGLE_POLLEN_API_KEY=your_google_maps_pollen_key
+```
+
+Direct auth check:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend sh -lc '
+  echo "GOOGLE_POLLEN_API_KEY chars: ${#GOOGLE_POLLEN_API_KEY}"
+  curl -sS -i \
+    "https://pollen.googleapis.com/v1/forecast:lookup?key=${GOOGLE_POLLEN_API_KEY}&location.longitude=${WEATHER_LON:--96.82}&location.latitude=${WEATHER_LAT:-33.15}&days=1&plantsDescription=false" \
+    | sed -n "1,20p"
+'
+```
+
 ## Frontend Checks
 
 ```bash
