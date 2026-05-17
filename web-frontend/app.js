@@ -4381,11 +4381,16 @@ function renderSandboxRouteList(groups) {
       return `
       <div class="sandbox-group" data-tech="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
         <div class="sandbox-group-header">
-          <span class="sandbox-group-dot" style="background:${color}"></span>
-          <span class="sandbox-group-title">${escapeHtml(g.tech_name)} — ${escapeHtml(sandboxDayLabel(g.day_of_week))}</span>
-          ${warningBadge}
-          <span class="sandbox-group-meta muted">${m.pool_count || 0} stops · ${m.in_route_miles || 0} mi haversine${estMeta ? " · " + estMeta.replace(/<[^>]+>/g, "") : ""}</span>
-          ${actionBtns}
+          <div class="sandbox-group-header-row">
+            <span class="sandbox-group-dot" style="background:${color}"></span>
+            <span class="sandbox-group-title">${escapeHtml(g.tech_name)} — ${escapeHtml(sandboxDayLabel(g.day_of_week))}</span>
+            ${warningBadge}
+            ${actionBtns}
+          </div>
+          <div class="sandbox-group-header-meta">
+            <span class="sandbox-group-meta muted">${m.pool_count || 0} stops · ${m.in_route_miles || 0} mi</span>
+            ${estMeta}
+          </div>
         </div>
         <div class="sandbox-stop-list" data-account="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
           ${stopsHtml}

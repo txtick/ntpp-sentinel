@@ -681,10 +681,12 @@ def ensure_route_maps_schema() -> None:
                 )
                 """
             )
+            # idx_route_distance_cache_lookup is intentionally omitted — the UNIQUE
+            # constraint already creates an equivalent B-tree index on the same columns,
+            # and a partial index using NOW() in the predicate would be rejected by PG.
             cur.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_route_distance_cache_lookup
-                ON route_distance_cache(origin_hash, destination_hash, travel_mode)
+                DROP INDEX IF EXISTS idx_route_distance_cache_lookup
                 """
             )
             cur.execute(
