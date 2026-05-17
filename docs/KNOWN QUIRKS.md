@@ -68,6 +68,7 @@ Examples:
 - Ambee pollen auth uses the `x-api-key` header plus JSON request headers. If Ambee returns 401 while the dashboard key looks active, first verify the `web-backend` container has the current `AMBEE_API_KEY` and has been restarted after any `.env` change.
 - Ambee can return `401 {"message":"No active subscription found"}` even when the API key itself is active in the portal. That means the key/account is not entitled to the Pollen API product, so Sentinel cannot collect pollen until the Ambee subscription/product access is restored or replaced.
 - Google Pollen uses `GOOGLE_POLLEN_API_KEY` and `POLLEN_PROVIDER=google`. The key must have billing enabled and the Pollen API enabled/restricted in Google Maps Platform.
+- Google Pollen is called server-side from `web-backend`, so a Google API key restricted by HTTP referrer will fail with `API_KEY_HTTP_REFERRER_BLOCKED` / `Requests from referer <empty> are blocked.` Use a server/IP application restriction for the droplet, or temporarily no application restriction, plus an API restriction to Pollen API only.
 
 ## Python urllib + Cloudflare + GHL
 

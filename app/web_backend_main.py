@@ -240,6 +240,10 @@ def _fetch_current_ambee_pollen() -> dict:
 
 def _google_pollen_category(info: dict) -> Optional[str]:
     category = (info.get("indexInfo") or {}).get("category")
+    if not category and info and info.get("inSeason") is False:
+        return "None"
+    if not category and info:
+        return "None"
     if not category:
         return None
     return str(category).strip()
@@ -300,6 +304,12 @@ def _fetch_current_google_pollen() -> dict:
     daily = (data.get("dailyInfo") or [{}])[0]
     type_info = {str(item.get("code") or "").upper(): item for item in daily.get("pollenTypeInfo") or []}
     plant_info = daily.get("plantInfo") or []
+    _logger.info(
+        "Google pollen response parsed daily_info=%s pollen_types=%s plants=%s",
+        len(data.get("dailyInfo") or []),
+        sorted(type_info.keys()),
+        len(plant_info),
+    )
     tree_plants = [
         item
         for item in plant_info
@@ -363,6 +373,7 @@ def _stored_pollen_to_current(entry: dict) -> dict:
         "tree_detail": entry.get("tree_detail"),
         "ragweed_count": entry.get("ragweed_count"),
         "updated_at": entry.get("updated_at"),
+        "provider": entry.get("provider"),
     }
 
 
@@ -997,17 +1008,18 @@ def api_weather(request: Request):
     except Exception as exc:
         _logger.warning(f"Open-Meteo air quality fetch failed: {exc}")
 
-    # Fetch current pollen from Ambee (free plan: latest only, no historical)
+    # Fetch current pollen from the configured provider.
     pollen_log = get_pollen_daily_log(days=7)
     today_pollen = _stored_pollen_to_current(pollen_log.get(_local_weather_date_str(), {}))
     current_pollen: dict = {}
-    if _configured_pollen_provider() not in {"off", "disabled"}:
+    pollen_provider = _configured_pollen_provider()
+    if pollen_provider not in {"off", "disabled"}:
         try:
             current_pollen = _fetch_current_pollen_with_retry()
             # Persist today's reading so we can show pollen history
             upsert_pollen_daily_log(current_pollen)
         except Exception as exc:
-            _logger.warning(f"Ambee pollen fetch failed: {exc}")
+            _logger.warning("%s pollen fetch failed: %s", pollen_provider, exc)
     if not current_pollen:
         current_pollen = today_pollen
 
@@ -1054,6 +1066,8 @@ def api_weather(request: Request):
         "daily": daily,
         "environmental": environmental,
         "current_pollen": current_pollen,
+        "pollen_provider": pollen_provider,
+        "pollen_live": bool(current_pollen) and current_pollen != today_pollen,
         "estimated_water_temp_f": estimated_water_temp_f,
         "water_temp_source": water_temp_source,
         "fetched_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",

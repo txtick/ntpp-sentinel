@@ -182,6 +182,11 @@ POLLEN_PROVIDER=google
 GOOGLE_POLLEN_API_KEY=your_google_maps_pollen_key
 ```
 
+Google key restrictions:
+
+- Application restriction: use the droplet/server outbound IP, not HTTP referrer. `web-backend` calls Google server-side, so no browser referrer is sent.
+- API restriction: Pollen API only.
+
 Then verify the Google Pollen key from inside `web-backend`:
 
 ```bash

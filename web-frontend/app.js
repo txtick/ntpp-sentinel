@@ -1487,7 +1487,11 @@ function algaeRisk(tempF) {
 }
 
 function renderPollenRows(pollen) {
-  if (!pollen || !pollen.tree_risk) return "";
+  if (
+    !pollen ||
+    !["tree_risk", "grass_risk", "weed_risk"].some((key) => pollen[key])
+  )
+    return "";
   const tree = pollenRisk(pollen.tree_risk);
   const grass = pollenRisk(pollen.grass_risk);
   const weed = pollenRisk(pollen.weed_risk);
@@ -3934,7 +3938,9 @@ async function sandboxSoftRefresh() {
       sandbox.activeScenario = await api(
         `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}`,
       );
-    } catch (_) {}
+    } catch {
+      // Keep rendering current routes if the selected scenario is unavailable.
+    }
   }
 
   const allGroups = sandboxGetActiveData();

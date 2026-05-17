@@ -188,6 +188,36 @@ def test_fetch_current_pollen_uses_google_provider_when_configured(monkeypatch):
     assert result["ragweed_count"] == 1
 
 
+def test_fetch_current_pollen_maps_google_out_of_season_to_none(monkeypatch):
+    def _fake_google_urlopen(req, timeout=10):
+        return _FakeResponse(
+            {
+                "dailyInfo": [
+                    {
+                        "date": {"year": 2026, "month": 5, "day": 16},
+                        "pollenTypeInfo": [
+                            {"code": "TREE", "inSeason": False},
+                            {"code": "GRASS", "indexInfo": {"category": "Low", "value": 2}},
+                        ],
+                        "plantInfo": [],
+                    }
+                ]
+            }
+        )
+
+    import urllib.request as _urllib_req
+
+    monkeypatch.setattr(wb, "GOOGLE_POLLEN_API_KEY", "test-google-key")
+    monkeypatch.setattr(wb, "POLLEN_PROVIDER", "google")
+    monkeypatch.setattr(_urllib_req, "urlopen", _fake_google_urlopen)
+
+    result = wb._fetch_current_pollen()
+
+    assert result["tree_risk"] == "None"
+    assert result["tree_count"] is None
+    assert result["grass_risk"] == "Low"
+
+
 def test_fetch_current_pollen_with_retry_does_not_retry_ambee_auth_errors(monkeypatch):
     attempts = {"count": 0}
 
