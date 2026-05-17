@@ -80,8 +80,9 @@ Get a real Google Maps driving estimate for any route group.
 4. A badge appears on the group header: `🗺 42.3 mi · 87 min drive`
 
 **Notes:**
-- Results are cached. Running Est. again on the same route is instant unless you've moved stops.
-- If a stop doesn't have a valid address on file, it's skipped silently. If the mileage looks low, check that all stops have addresses in Skimmer.
+- Results are cached. Running Est. again on the same route reuses cached route segments where possible.
+- If you've moved or reordered stops after an estimate, the mileage badge is marked stale until you refresh the estimate.
+- If a stop doesn't have GPS coordinates on file, Sentinel shows a warning and skips only the affected drive segment in the estimate.
 - Est. requires the Google Maps server key to be configured in Sentinel. If you don't see the Est. button, contact your administrator.
 
 ---
@@ -100,6 +101,12 @@ Let Google suggest a more efficient stop order.
 5. **If you don't want it:** Click **Reject** or close the modal. Nothing changes.
 
 > Optimization is always a preview. You control whether it's applied. Skimmer is never touched.
+
+**Notes:**
+- Optimization is off unless an administrator explicitly enables it with `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`.
+- Optimization only reorders the selected tech/day route. It does not move stops to a different tech or day.
+- Optimization is blocked when any stop in the selected route is missing GPS coordinates.
+- Applying a preview updates only the sandbox scenario stop order.
 
 ---
 
@@ -140,6 +147,7 @@ When you're happy with the scenario, generate a checklist for making the changes
 - **You can have multiple scenarios at once.** Name them clearly — "Current", "Option A", "Summer Plan" etc.
 - **Scenarios don't expire.** Come back to a scenario days later and your changes are still there.
 - **Estimates persist.** Once you run Est. on a route group, the mileage badge stays until you move stops.
+- **Stale estimate badges should be refreshed** before using mileage/time for a final route comparison.
 - **Nothing goes to Skimmer automatically.** The only way Skimmer is updated is when you manually make changes using the printed packet.
 - **The sandbox is safe to experiment in.** Move stops around, optimize routes, compare options — then delete the scenario if you decide not to use it.
 

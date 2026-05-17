@@ -455,6 +455,30 @@ Important Skimmer/worker env values:
 
 If anything is missing, update `/opt/ntpp-sentinel/.env` and redeploy.
 
+Route Sandbox Google Maps env:
+
+```bash
+GOOGLE_MAPS_SERVER_API_KEY=server_side_key
+GOOGLE_MAPS_BROWSER_API_KEY=browser_key_optional_for_future_google_map_rendering
+GOOGLE_MAPS_ENABLE_OPTIMIZATION=false
+GOOGLE_MAPS_CACHE_TTL_DAYS=30
+GOOGLE_MAPS_DAILY_REQUEST_LIMIT=500
+GOOGLE_MAPS_DAILY_MATRIX_ELEMENT_LIMIT=3000
+```
+
+Notes:
+
+- `GOOGLE_MAPS_SERVER_API_KEY` is backend-only. Never put it in frontend config or browser-visible URLs.
+- Optimization remains disabled unless `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`.
+- The current Leaflet map does not need `GOOGLE_MAPS_BROWSER_API_KEY`.
+- Verify safe config flags without exposing keys:
+
+```bash
+docker compose exec -T web-backend curl -s \
+  "http://localhost:8020/api/routes/maps/status" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
 ---
 
 ## 7. Cron Verification

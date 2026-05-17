@@ -63,6 +63,8 @@ This document captures business behavior that should remain stable unless intent
 - Technician home/start/end route settings are Sentinel-only and must not be pushed to Skimmer unless a future confirmed Skimmer field and explicit requirement exist.
 - Technician start/end mileage should report stop-to-stop miles separately from start-to-first-stop, last-stop-to-end, total with start/end, and total without start/end.
 - Start/end drive should not influence weighted route mileage unless explicitly enabled for that technician.
+- Google Maps route estimates and optimization must be explicit user actions, never automatic page-load or drag/drop side effects.
+- Google Maps optimization must remain disabled unless `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`; applying an optimization preview only reorders `route_scenario_assignments`.
 
 ## Filter Clean Logic
 

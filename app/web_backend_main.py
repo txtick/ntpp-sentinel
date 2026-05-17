@@ -1357,4 +1357,8 @@ async def api_apply_optimized_order(request: Request, scenario_id: int, technici
     ordered_ids = body.get("ordered_assignment_ids") or []
     if not ordered_ids:
         raise HTTPException(status_code=400, detail="ordered_assignment_ids is required")
-    return apply_optimized_order(scenario_id, technician_id, day, [int(i) for i in ordered_ids])
+    try:
+        parsed_ids = [int(i) for i in ordered_ids]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="ordered_assignment_ids must be integers")
+    return apply_optimized_order(scenario_id, technician_id, day, parsed_ids)

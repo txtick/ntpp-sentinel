@@ -70,6 +70,21 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+## Route Sandbox Maps Status
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend curl -s \
+  "http://localhost:8020/api/routes/maps/status" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
+Route optimization stays disabled unless this is set and `web-backend` is restarted:
+
+```bash
+GOOGLE_MAPS_ENABLE_OPTIMIZATION=true
+```
+
 ## Manual Pollen Snapshot
 
 ```bash

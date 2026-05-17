@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("WEBHOOK_SECRET", "test-secret")
 
 import services.route_sandbox as rs
+import services.google_maps as google_maps
 
 
 def _scenario_detail(assignments):
@@ -191,3 +192,79 @@ def test_frontend_uses_manual_packet_language_not_push_to_skimmer():
     assert "Generate Manual Update Packet" in text
     assert "Push to Skimmer" not in text
     assert "push-to-Skimmer" not in text
+
+
+def test_maps_status_does_not_expose_google_api_keys(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_SERVER_API_KEY", "server-secret-key")
+    monkeypatch.setenv("GOOGLE_MAPS_BROWSER_API_KEY", "browser-public-key")
+    monkeypatch.setenv("GOOGLE_MAPS_ENABLE_OPTIMIZATION", "false")
+
+    status = rs.get_maps_status()
+    serialized = str(status)
+
+    assert status["server_maps_configured"] is True
+    assert status["browser_maps_configured"] is True
+    assert status["optimization_enabled"] is False
+    assert "browser_maps_api_key" not in status
+    assert "server-secret-key" not in serialized
+    assert "browser-public-key" not in serialized
+
+
+def test_static_map_url_never_returns_server_key(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_SERVER_API_KEY", "server-secret-key")
+
+    url = google_maps.static_map_url([{"lat": 33.1, "lng": -96.8}])
+
+    assert url == ""
+    assert "server-secret-key" not in url
+
+
+def test_optimization_requires_explicit_enable_env(monkeypatch):
+    monkeypatch.setattr(rs, "_require_postgres", lambda: None)
+    monkeypatch.setenv("GOOGLE_MAPS_SERVER_API_KEY", "server-secret-key")
+    monkeypatch.setenv("GOOGLE_MAPS_ENABLE_OPTIMIZATION", "false")
+
+    with pytest.raises(HTTPException) as exc:
+        rs.optimize_route_order(10, "tech-a", "Monday")
+
+    assert exc.value.status_code == 403
+    assert "disabled" in str(exc.value.detail)
+
+
+class _UsageCursor:
+    def __init__(self, request_count=0, matrix_element_count=0):
+        self.request_count = request_count
+        self.matrix_element_count = matrix_element_count
+        self.updated = None
+
+    def execute(self, sql, params=None):
+        if "UPDATE route_google_usage_daily" in sql:
+            self.updated = params
+
+    def fetchone(self):
+        return {
+            "request_count": self.request_count,
+            "matrix_element_count": self.matrix_element_count,
+        }
+
+
+def test_google_maps_daily_request_limit_is_enforced(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_DAILY_REQUEST_LIMIT", "1")
+    cur = _UsageCursor(request_count=1)
+
+    with pytest.raises(HTTPException) as exc:
+        rs._check_and_record_google_maps_usage(cur, request_count=1)
+
+    assert exc.value.status_code == 429
+    assert cur.updated is None
+
+
+def test_google_maps_usage_counter_updates_when_under_limit(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_DAILY_REQUEST_LIMIT", "5")
+    monkeypatch.setenv("GOOGLE_MAPS_DAILY_MATRIX_ELEMENT_LIMIT", "10")
+    cur = _UsageCursor(request_count=1, matrix_element_count=2)
+
+    rs._check_and_record_google_maps_usage(cur, request_count=2, matrix_element_count=3)
+
+    assert cur.updated[0] == 3
+    assert cur.updated[1] == 5

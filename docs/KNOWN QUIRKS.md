@@ -30,6 +30,9 @@ Examples:
 
 - Route Sandbox must not expose a push-to-Skimmer workflow. Skimmer route changes are applied manually from the generated packet, then confirmed by a later Skimmer import/compare.
 - Technician home/base addresses are Sentinel-only route-planning settings. Do not log them or include them in ordinary Route Sandbox map payloads unless the operator is editing technician route settings.
+- Google Maps optimization is disabled unless `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`. Mileage estimates can still run with `GOOGLE_MAPS_SERVER_API_KEY`, but paid calls are protected by Sentinel's daily request and matrix-element counters.
+- Static Maps packet images are not enabled yet because a normal Static Maps URL carries the server API key. Do not return server-key-bearing map URLs to the frontend; implement a backend image proxy first if printable maps are needed.
+- Route estimate rows are marked stale after sandbox assignment moves, reorders, or applied optimization. Stale estimates remain visible as historical context but should be refreshed before comparing savings.
 
 ## Psycopg
 

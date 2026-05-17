@@ -685,7 +685,6 @@ def ensure_route_maps_schema() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS idx_route_distance_cache_lookup
                 ON route_distance_cache(origin_hash, destination_hash, travel_mode)
-                WHERE expires_at > NOW()
                 """
             )
             cur.execute(
@@ -711,6 +710,7 @@ def ensure_route_maps_schema() -> None:
                     stop_count INTEGER,
                     request_count INTEGER NOT NULL DEFAULT 0,
                     cache_hit_count INTEGER NOT NULL DEFAULT 0,
+                    is_stale BOOLEAN NOT NULL DEFAULT FALSE,
                     error_message TEXT,
                     warnings JSONB,
                     polyline TEXT,
@@ -723,6 +723,17 @@ def ensure_route_maps_schema() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS idx_route_estimate_runs_scenario
                 ON route_estimate_runs(scenario_id, technician_id, service_day)
+                """
+            )
+            cur.execute("ALTER TABLE route_estimate_runs ADD COLUMN IF NOT EXISTS is_stale BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS route_google_usage_daily (
+                    usage_date DATE PRIMARY KEY,
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    matrix_element_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
                 """
             )
             cur.execute(

@@ -1723,10 +1723,14 @@ textarea {
 }
 
 .sandbox-est-badge {
-  font-size: 0.70rem;
+  font-size: 0.7rem;
   color: var(--accent);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.sandbox-est-badge.is-stale {
+  color: var(--gold);
 }
 
 .sandbox-group-action {
@@ -1739,7 +1743,9 @@ textarea {
   cursor: pointer;
   flex-shrink: 0;
   line-height: 1.5;
-  transition: background 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
 }
 
 .sandbox-group-action:hover {

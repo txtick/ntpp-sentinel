@@ -21,33 +21,45 @@ _logger = logging.getLogger("google_maps")
 
 # ── Key access ────────────────────────────────────────────────────────────────
 
-_SERVER_KEY = os.getenv("GOOGLE_MAPS_SERVER_API_KEY", "").strip()
-_BROWSER_KEY = os.getenv("GOOGLE_MAPS_BROWSER_API_KEY", "").strip()
-
 ROUTES_BASE = "https://routes.googleapis.com/directions/v2:computeRoutes"
 GEOCODING_BASE = "https://maps.googleapis.com/maps/api/geocode/json"
 STATIC_MAP_BASE = "https://maps.googleapis.com/maps/api/staticmap"
 
 COORD_PRECISION = 5   # decimal places for cache key normalisation
-CACHE_TTL_DAYS = 30   # how long cached segments stay valid
+
+
+def cache_ttl_days() -> int:
+    try:
+        return max(1, int(os.getenv("GOOGLE_MAPS_CACHE_TTL_DAYS", "30")))
+    except ValueError:
+        return 30
+
+
+def optimization_enabled() -> bool:
+    return os.getenv("GOOGLE_MAPS_ENABLE_OPTIMIZATION", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def server_configured() -> bool:
-    return bool(_SERVER_KEY)
+    return bool(_server_key())
 
 
 def browser_configured() -> bool:
-    return bool(_BROWSER_KEY)
+    return bool(_browser_key())
 
 
 def browser_api_key() -> str:
     """Return the browser key. Safe to expose to the frontend."""
-    return _BROWSER_KEY
+    return _browser_key()
 
 
-def _key() -> str:
+def _server_key() -> str:
     """Return the server key. Never log or return to callers outside this module."""
-    return _SERVER_KEY
+    return os.getenv("GOOGLE_MAPS_SERVER_API_KEY", "").strip()
+
+
+def _browser_key() -> str:
+    """Return the browser key. Safe to expose only if the frontend actively needs it."""
+    return os.getenv("GOOGLE_MAPS_BROWSER_API_KEY", "").strip()
 
 
 # ── Coordinate helpers ────────────────────────────────────────────────────────
@@ -92,13 +104,13 @@ def geocode(address: str) -> Optional[Dict[str, Any]]:
     try:
         resp = httpx.get(
             GEOCODING_BASE,
-            params={"address": address, "key": _key()},
+            params={"address": address, "key": _server_key()},
             timeout=10.0,
         )
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") != "OK" or not data.get("results"):
-            _logger.warning("Geocode returned status=%s for address=%r", data.get("status"), address)
+            _logger.warning("Geocode returned status=%s", data.get("status"))
             return None
         result = data["results"][0]
         loc = result["geometry"]["location"]
@@ -108,7 +120,7 @@ def geocode(address: str) -> Optional[Dict[str, Any]]:
             "formatted_address": result.get("formatted_address", address),
         }
     except Exception:
-        _logger.exception("Geocode error for address=%r", address)
+        _logger.exception("Geocode error")
         return None
 
 
@@ -167,7 +179,7 @@ def compute_route(
             ROUTES_BASE,
             json=body,
             headers={
-                "X-Goog-Api-Key": _key(),
+                "X-Goog-Api-Key": _server_key(),
                 "X-Goog-FieldMask": field_mask,
             },
             timeout=30.0,
@@ -213,30 +225,7 @@ def static_map_url(
     maptype: str = "roadmap",
 ) -> str:
     """
-    Build a Maps Static API URL for printable route images.
-    markers: [{lat, lng, color, label}]
-    encoded_path: Google encoded polyline string for route overlay.
-    Returns "" if server key is not configured.
+    Static Maps is intentionally disabled until Sentinel can proxy images without
+    returning a server-key-bearing URL to the browser or packet HTML.
     """
-    if not server_configured():
-        return ""
-
-    parts: List[str] = [
-        f"size={size}",
-        f"maptype={maptype}",
-        f"key={_key()}",
-    ]
-
-    for m in markers:
-        lat = m.get("lat")
-        lng = m.get("lng")
-        if lat is None or lng is None:
-            continue
-        color = m.get("color", "red").replace("#", "0x")
-        label = (m.get("label") or "")[:1].upper()
-        parts.append(f"markers=color:{color}|label:{label}|{lat},{lng}")
-
-    if encoded_path:
-        parts.append(f"path=weight:4|color:0x2f9be8ff|enc:{encoded_path}")
-
-    return f"{STATIC_MAP_BASE}?" + "&".join(parts)
+    return ""

@@ -3840,18 +3840,26 @@ function openSettingsCreateModal(table) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TECH_COLORS = [
-  "#2f9be8", "#e84040", "#2ecc71", "#f39c12", "#9b59b6",
-  "#1abc9c", "#e67e22", "#3498db", "#e91e63", "#00bcd4",
+  "#2f9be8",
+  "#e84040",
+  "#2ecc71",
+  "#f39c12",
+  "#9b59b6",
+  "#1abc9c",
+  "#e67e22",
+  "#3498db",
+  "#e91e63",
+  "#00bcd4",
 ];
 
 const DAY_COLORS = {
-  Monday:    "#2f9be8",
-  Tuesday:   "#e84040",
+  Monday: "#2f9be8",
+  Tuesday: "#e84040",
   Wednesday: "#2ecc71",
-  Thursday:  "#f39c12",
-  Friday:    "#9b59b6",
-  Saturday:  "#1abc9c",
-  Sunday:    "#6b7280",
+  Thursday: "#f39c12",
+  Friday: "#9b59b6",
+  Saturday: "#1abc9c",
+  Sunday: "#6b7280",
 };
 
 const sandbox = {
@@ -3864,7 +3872,7 @@ const sandbox = {
   map: null,
   markers: [],
   routeLines: [],
-  polylineLayer: null,     // Google Maps driving route overlay
+  polylineLayer: null, // Google Maps driving route overlay
   techColorMap: {},
   selectedLocationId: null,
   dragSourceId: null,
@@ -3872,8 +3880,8 @@ const sandbox = {
   planData: null,
   techProfiles: [],
   showHomeMarkers: false,
-  mapsStatus: null,        // { server_maps_configured, browser_maps_configured, ... }
-  estimates: {},           // keyed by "techId/day"
+  mapsStatus: null, // { server_maps_configured, browser_maps_configured, ... }
+  estimates: {}, // keyed by "techId/day"
   optimizePreview: null,
   showDrivingRoute: false,
 };
@@ -4347,17 +4355,28 @@ function renderSandboxRouteList(groups) {
       const estKey = `${g.source_account_id}/${g.day_of_week}`;
       const est = sandbox.estimates[estKey];
       const estMeta = est
-        ? `<span class="sandbox-est-badge" title="Google Maps estimate">🗺 ${est.total_distance_miles} mi · ${est.total_duration_minutes} min drive</span>`
+        ? `<span class="sandbox-est-badge${est.is_stale ? " is-stale" : ""}" title="Google Maps estimate${est.is_stale ? " is stale after route changes" : ""}">🗺 ${est.total_distance_miles} mi · ${est.total_duration_minutes} min drive${est.is_stale ? " · stale" : ""}</span>`
         : "";
 
-      const canEstimate = sandbox.mapsStatus?.server_maps_configured && sandbox.activeScenarioId;
-      const canOptimize = canEstimate && sandbox.activeScenario?.scenario?.status === "draft" && g.stops.length >= 3;
-      const actionBtns = canEstimate ? `
+      const canEstimate =
+        sandbox.mapsStatus?.server_maps_configured && sandbox.activeScenarioId;
+      const canOptimize =
+        canEstimate &&
+        sandbox.mapsStatus?.optimization_enabled &&
+        sandbox.activeScenario?.scenario?.status === "draft" &&
+        g.stops.length >= 3;
+      const actionBtns = canEstimate
+        ? `
         <button class="sandbox-group-action" title="Estimate drive time via Google Maps"
           onclick="sandboxEstimateRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Est.</button>
-        ${canOptimize ? `<button class="sandbox-group-action" title="Optimize stop order via Google Maps"
-          onclick="sandboxOptimizeRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Opt.</button>` : ""}
-      ` : "";
+        ${
+          canOptimize
+            ? `<button class="sandbox-group-action" title="Optimize stop order via Google Maps"
+          onclick="sandboxOptimizeRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Opt.</button>`
+            : ""
+        }
+      `
+        : "";
 
       return `
       <div class="sandbox-group" data-tech="${escapeHtml(g.source_account_id)}" data-day="${escapeHtml(g.day_of_week)}">
@@ -4881,14 +4900,27 @@ async function sandboxMarkPlanItem(planId, itemId, status) {
 
 function decodePolyline(encoded) {
   const coords = [];
-  let index = 0, lat = 0, lng = 0;
+  let index = 0,
+    lat = 0,
+    lng = 0;
   while (index < encoded.length) {
-    let b, shift = 0, result = 0;
-    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
-    shift = 0; result = 0;
-    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    let b,
+      shift = 0,
+      result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0;
+    result = 0;
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
     coords.push([lat / 1e5, lng / 1e5]);
   }
   return coords;
@@ -4908,7 +4940,9 @@ function sandboxDrawPolyline(encodedPolyline) {
     opacity: 0.85,
     dashArray: null,
   }).addTo(sandbox.map);
-  sandbox.map.fitBounds(sandbox.polylineLayer.getBounds(), { padding: [32, 32] });
+  sandbox.map.fitBounds(sandbox.polylineLayer.getBounds(), {
+    padding: [32, 32],
+  });
 }
 
 async function sandboxEstimateRoute(techId, day) {
@@ -4920,14 +4954,19 @@ async function sandboxEstimateRoute(techId, day) {
       { method: "POST", body: JSON.stringify({ source_type: "scenario" }) },
     );
     sandbox.estimates[`${techId}/${day}`] = result;
-    showToast(`Route estimate: ${result.total_distance_miles} mi · ${result.total_duration_minutes} min drive`);
+    showToast(
+      `Route estimate: ${result.total_distance_miles} mi · ${result.total_duration_minutes} min drive`,
+    );
     setStatus("Live", "info");
     // Re-render route list to show updated estimate badge (soft, no API reload)
     const allGroups = sandboxGetActiveData();
     renderSandboxRouteList(sandboxFilterGroups(allGroups));
     // Draw the combined polyline from segments
     if (result.segments) {
-      const joined = result.segments.map((s) => s.polyline).filter(Boolean).join("");
+      const joined = result.segments
+        .map((s) => s.polyline)
+        .filter(Boolean)
+        .join("");
       if (joined) sandboxDrawPolyline(joined);
     }
   } catch (err) {
@@ -4958,9 +4997,13 @@ function sandboxShowOptimizeModal(preview, techId, day) {
   const existing = document.getElementById("sandbox-optimize-modal");
   if (existing) existing.remove();
 
-  const savings = preview.optimized_distance_miles;
+  const milesSaved = preview.estimated_miles_saved ?? 0;
+  const minutesSaved = preview.estimated_minutes_saved ?? 0;
   const orderRows = preview.optimized_stop_order
-    .map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.customer_name || "—")}</td><td class="muted">${escapeHtml(s.address || "—")}</td></tr>`)
+    .map(
+      (s, i) =>
+        `<tr><td>${i + 1}</td><td>${escapeHtml(s.customer_name || "—")}</td><td class="muted">${escapeHtml(s.address || "—")}</td></tr>`,
+    )
     .join("");
 
   const modal = document.createElement("div");
@@ -4974,12 +5017,15 @@ function sandboxShowOptimizeModal(preview, techId, day) {
       </div>
       <div style="padding:16px 24px">
         <div class="sandbox-stat-row" style="margin-bottom:16px">
-          <div class="sandbox-stat"><strong>${savings} mi</strong><span>Optimized Total</span></div>
+          <div class="sandbox-stat"><strong>${preview.current_distance_miles ?? "—"} mi</strong><span>Current Total</span></div>
+          <div class="sandbox-stat"><strong>${preview.optimized_distance_miles} mi</strong><span>Optimized Total</span></div>
+          <div class="sandbox-stat"><strong>${milesSaved} mi</strong><span>Estimated Saved</span></div>
           <div class="sandbox-stat"><strong>${preview.optimized_duration_minutes} min</strong><span>Optimized Drive Time</span></div>
-          <div class="sandbox-stat"><strong>${preview.stop_count}</strong><span>Total Stops</span></div>
+          <div class="sandbox-stat"><strong>${minutesSaved} min</strong><span>Drive Time Saved</span></div>
+          <div class="sandbox-stat"><strong>${preview.stops_reordered ?? 0}</strong><span>Stops Reordered</span></div>
           ${preview.skipped_count > 0 ? `<div class="sandbox-stat"><strong style="color:var(--gold)">${preview.skipped_count}</strong><span>Skipped (no GPS)</span></div>` : ""}
         </div>
-        ${preview.warnings?.length ? `<div class="sandbox-plan-notice" style="margin-bottom:12px">${preview.warnings.map(w => escapeHtml(w)).join("<br>")}</div>` : ""}
+        ${preview.warnings?.length ? `<div class="sandbox-plan-notice" style="margin-bottom:12px">${preview.warnings.map((w) => escapeHtml(w)).join("<br>")}</div>` : ""}
         <p class="muted" style="margin:0 0 10px;font-size:13px">Proposed stop order after optimization:</p>
         <div style="max-height:300px;overflow-y:auto">
           <table class="sandbox-diff-table">
@@ -5002,12 +5048,20 @@ function sandboxShowOptimizeModal(preview, techId, day) {
 async function sandboxApplyOptimization(techId, day) {
   const preview = sandbox.optimizePreview?.preview;
   if (!preview || !sandbox.activeScenarioId) return;
-  const orderedIds = preview.optimized_stop_order.map((s) => s.assignment_id).filter(Boolean);
-  if (!orderedIds.length) { showToast("No assignment IDs in optimization result", 4000); return; }
+  const orderedIds = preview.optimized_stop_order
+    .map((s) => s.assignment_id)
+    .filter(Boolean);
+  if (!orderedIds.length) {
+    showToast("No assignment IDs in optimization result", 4000);
+    return;
+  }
   try {
     await api(
       `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/routes/${encodeURIComponent(techId)}/${encodeURIComponent(day)}/apply-optimized-order`,
-      { method: "POST", body: JSON.stringify({ ordered_assignment_ids: orderedIds }) },
+      {
+        method: "POST",
+        body: JSON.stringify({ ordered_assignment_ids: orderedIds }),
+      },
     );
     document.getElementById("sandbox-optimize-modal")?.remove();
     sandbox.optimizePreview = null;
@@ -5039,12 +5093,13 @@ async function loadRouteSandbox(_force = false) {
     </div>`;
 
   // Load data in parallel
-  const [scenariosResult, currentResult, profileResult, mapsResult] = await Promise.all([
-    api("/api/routes/sandbox/scenarios"),
-    api("/api/routes/current").catch(() => null),
-    api("/api/routes/technician-profiles").catch(() => ({ items: [] })),
-    api("/api/routes/maps/status").catch(() => null),
-  ]);
+  const [scenariosResult, currentResult, profileResult, mapsResult] =
+    await Promise.all([
+      api("/api/routes/sandbox/scenarios"),
+      api("/api/routes/current").catch(() => null),
+      api("/api/routes/technician-profiles").catch(() => ({ items: [] })),
+      api("/api/routes/maps/status").catch(() => null),
+    ]);
 
   sandbox.scenarios = scenariosResult.items || [];
   sandbox.currentRoutes = currentResult;
@@ -5056,12 +5111,14 @@ async function loadRouteSandbox(_force = false) {
     try {
       const [detail, estimatesResult] = await Promise.all([
         api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}`),
-        api(`/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/estimates`).catch(() => ({ estimates: [] })),
+        api(
+          `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/estimates`,
+        ).catch(() => ({ estimates: [] })),
       ]);
       sandbox.activeScenario = detail;
       sandbox.estimates = {};
       for (const est of estimatesResult.estimates || []) {
-        sandbox.estimates[`${est.source_account_id}__${est.day_of_week}`] = est;
+        sandbox.estimates[`${est.source_account_id}/${est.day_of_week}`] = est;
       }
     } catch {
       sandbox.activeScenarioId = null;
