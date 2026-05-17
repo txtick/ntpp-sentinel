@@ -1586,7 +1586,7 @@ textarea {
 
 .sandbox-main-content {
   overflow-y: auto;
-  max-height: 260px;
+  flex: 1;
   border-top: 1px solid var(--border);
   padding: 14px;
   background: var(--surface);

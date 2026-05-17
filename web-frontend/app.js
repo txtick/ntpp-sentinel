@@ -4766,6 +4766,9 @@ function renderSandboxComparisonPanel() {
   if (!panel) return;
   const c = sandbox.comparisonData;
   if (!c) return;
+  // Hide the map so the comparison takes the full center column
+  const map = document.getElementById("sandbox-map-container");
+  if (map) map.hidden = true;
 
   const allChanges = [
     ...(c.changes || []).map((x) => ({ ...x, change_type: "moved" })),
@@ -4813,11 +4816,17 @@ function renderSandboxDefaultView() {
   sandbox.comparisonData = null;
   const panel = document.getElementById("sandbox-main-content");
   if (panel) panel.innerHTML = "";
+  const map = document.getElementById("sandbox-map-container");
+  if (map) map.hidden = false;
+  if (sandbox.map) sandbox.map.invalidateSize();
 }
 
 function renderSandboxPlanPanel(result) {
   const panel = document.getElementById("sandbox-main-content");
   if (!panel) return;
+  // Hide the map so the packet takes the full center column
+  const map = document.getElementById("sandbox-map-container");
+  if (map) map.hidden = true;
   const items = result.items || [];
   const summary = result.summary || {};
   const planId = result.change_plan_id;
