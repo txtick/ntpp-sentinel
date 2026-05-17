@@ -4369,11 +4369,11 @@ function renderSandboxRouteList(groups) {
       const actionBtns = canEstimate
         ? `
         <button class="sandbox-group-action" title="Estimate drive time via Google Maps"
-          onclick="sandboxEstimateRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Est.</button>
+          onclick="event.stopPropagation();sandboxEstimateRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Est.</button>
         ${
           canOptimize
             ? `<button class="sandbox-group-action" title="Optimize stop order via Google Maps"
-          onclick="sandboxOptimizeRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Opt.</button>`
+          onclick="event.stopPropagation();sandboxOptimizeRoute('${escapeHtml(g.source_account_id)}','${escapeHtml(g.day_of_week)}')">Opt.</button>`
             : ""
         }
       `
@@ -4938,6 +4938,17 @@ function decodePolyline(encoded) {
   return coords;
 }
 
+// Decode each segment polyline and concatenate coordinate arrays.
+// Encoded polylines use delta encoding so strings cannot be concatenated —
+// decoding each separately and merging the lat/lng arrays is the correct approach.
+function mergeSegmentPolylines(segments) {
+  const coords = [];
+  for (const seg of segments || []) {
+    if (seg.polyline) coords.push(...decodePolyline(seg.polyline));
+  }
+  return coords;
+}
+
 function sandboxSelectGroup(techId, day) {
   const key = `${techId}/${day}`;
   sandbox.activeGroupKey = key;
@@ -4945,13 +4956,36 @@ function sandboxSelectGroup(techId, day) {
   document.querySelectorAll(".sandbox-group").forEach((el) => {
     el.classList.toggle("is-active-group", el.dataset.tech === techId && el.dataset.day === day);
   });
-  // Draw the stored polyline for this group if one exists
+  // Draw the stored route for this group (coords array attached when Est. was run)
   const est = sandbox.estimates[key];
-  if (est?.polyline) {
-    sandboxDrawPolyline(est.polyline);
+  const coords = est?._coords;
+  if (coords?.length >= 2) {
+    sandboxDrawCoords(coords);
   } else {
     sandboxDrawPolyline(null);
   }
+}
+
+function sandboxDrawCoords(coords) {
+  if (sandbox.polylineLayer) {
+    sandbox.polylineLayer.remove();
+    sandbox.polylineLayer = null;
+  }
+  if (!coords?.length || !sandbox.map) return;
+  sandbox.polylineLayer = L.polyline(coords, {
+    color: "#1d7fc0",
+    weight: 4,
+    opacity: 0.85,
+    dashArray: null,
+  }).addTo(sandbox.map);
+  const bounds = sandbox.polylineLayer.getBounds();
+  const latSpan = bounds.getNorth() - bounds.getSouth();
+  const lngSpan = bounds.getEast() - bounds.getWest();
+  if (latSpan > 10 || lngSpan > 15) {
+    showToast("⚠ Route has a stop with bad GPS coordinates — map zoom skipped.", 6000);
+    return;
+  }
+  sandbox.map.fitBounds(bounds, { padding: [32, 32] });
 }
 
 function sandboxDrawPolyline(encodedPolyline) {
@@ -4990,6 +5024,8 @@ async function sandboxEstimateRoute(techId, day) {
       `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/routes/${encodeURIComponent(techId)}/${encodeURIComponent(day)}/estimate`,
       { method: "POST", body: JSON.stringify({ source_type: "scenario" }) },
     );
+    // Merge segment polylines into a single coords array and attach for later reuse
+    result._coords = mergeSegmentPolylines(result.segments);
     sandbox.estimates[`${techId}/${day}`] = result;
     showToast(
       `Route estimate: ${result.total_distance_miles} mi · ${result.total_duration_minutes} min drive`,
@@ -4998,7 +5034,7 @@ async function sandboxEstimateRoute(techId, day) {
     // Re-render route list to show updated estimate badge (soft, no API reload)
     const allGroups = sandboxGetActiveData();
     renderSandboxRouteList(sandboxFilterGroups(allGroups));
-    // Select this group and draw its polyline
+    // Select this group and draw its route
     sandboxSelectGroup(techId, day);
   } catch (err) {
     setStatus("Error", "critical");

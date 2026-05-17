@@ -17,7 +17,7 @@ Open Sentinel in your browser and click **Routes → Route Sandbox** in the left
 |---|---|
 | **Toolbar** (top) | Current scenario name, scenario picker, action buttons |
 | **Left panel** | Route groups — one card per tech/day combination |
-| **Center map** | All stops plotted. Drive route overlaid after running an estimate. |
+| **Center map** | All stops plotted. Click a route group header to overlay its driving route. |
 | **Bottom panel** | Comparison results, update packets, stop detail |
 | **Right drawer** | Stop detail when you click a stop |
 
@@ -47,7 +47,8 @@ Open the scenario, click the **⋯** menu in the toolbar, and select **Delete**.
 
 Each card in the left panel represents one tech's route for one day of the week.
 
-- Click a card header to **expand or collapse** the stop list.
+- **Click a card header** to select that route — the driving path draws on the map (if an estimate has been run for it) and the card is highlighted with a blue left border.
+- Switching the **Tech** or **Day** filter clears the active route from the map automatically.
 - **Color coding:**
   - Viewing all techs → each tech gets a unique color.
   - Viewing one tech / all days → each day of the week gets a unique color.
@@ -74,10 +75,12 @@ Drag a stop and drop it onto a different card's header. The stop moves to the bo
 
 Get a real Google Maps driving estimate for any route group.
 
-1. Expand a route group.
-2. Click the **Est.** button next to the group header.
-3. Wait a moment — Sentinel calls Google Maps and calculates the total drive distance and time for the stops in order.
-4. A badge appears on the group header: `🗺 42.3 mi · 87 min drive`
+1. Click the **Est.** button next to any route group header.
+2. Wait a moment — Sentinel calls Google Maps and calculates the total drive distance and time for the stops in order.
+3. A badge appears on the group header: `🗺 42.3 mi · 87 min drive`
+4. The driving path draws on the map automatically and that route group becomes the active selection.
+
+To switch which route is shown on the map, just click a different group's header. The previous route clears and the new one draws (if it has an estimate).
 
 **Notes:**
 - Results are cached. Running Est. again on the same route reuses cached route segments where possible.
@@ -146,7 +149,7 @@ When you're happy with the scenario, generate a checklist for making the changes
 
 - **You can have multiple scenarios at once.** Name them clearly — "Current", "Option A", "Summer Plan" etc.
 - **Scenarios don't expire.** Come back to a scenario days later and your changes are still there.
-- **Estimates persist.** Once you run Est. on a route group, the mileage badge stays until you move stops.
+- **Estimates persist.** Once you run Est. on a route group, the mileage badge and driving route stay saved. Click the group header any time to redraw it on the map.
 - **Stale estimate badges should be refreshed** before using mileage/time for a final route comparison.
 - **Nothing goes to Skimmer automatically.** The only way Skimmer is updated is when you manually make changes using the printed packet.
 - **The sandbox is safe to experiment in.** Move stops around, optimize routes, compare options — then delete the scenario if you decide not to use it.
