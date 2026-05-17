@@ -4830,9 +4830,9 @@ function renderSandboxPlanPanel(result) {
   const summary = result.summary || {};
   const planId = result.change_plan_id;
 
-  // Build tech name lookup from already-loaded sandbox groups
+  // Build tech name lookup from already-loaded route groups
   const techNameMap = {};
-  for (const g of sandbox.groups || []) {
+  for (const g of (sandbox.currentRoutes || {}).route_groups || []) {
     if (!techNameMap[g.source_account_id]) {
       techNameMap[g.source_account_id] = g.tech_name || g.source_account_id;
     }
