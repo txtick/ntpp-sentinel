@@ -1515,8 +1515,8 @@ textarea {
 .sandbox-shell {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 160px);
-  min-height: 560px;
+  height: calc(100vh - 120px);
+  min-height: 600px;
   gap: 0;
 }
 
@@ -1578,8 +1578,8 @@ textarea {
 }
 
 .sandbox-map-container {
-  height: 440px;
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 420px;
   position: relative;
   background: #e8f0f7;
 }
