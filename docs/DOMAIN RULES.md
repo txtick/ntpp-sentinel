@@ -65,6 +65,7 @@ This document captures business behavior that should remain stable unless intent
 - Start/end drive should not influence weighted route mileage unless explicitly enabled for that technician.
 - Google Maps route estimates and optimization must be explicit user actions, never automatic page-load or drag/drop side effects.
 - Google Maps optimization must remain disabled unless `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`; applying an optimization preview only reorders `route_scenario_assignments`.
+- Route estimates default to traffic-unaware planning unless `GOOGLE_MAPS_TRAFFIC_MODE` is intentionally set to a traffic-aware mode.
 
 ## Filter Clean Logic
 

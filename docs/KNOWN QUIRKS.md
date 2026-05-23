@@ -33,6 +33,7 @@ Examples:
 - Google Maps optimization is disabled unless `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`. Mileage estimates can still run with `GOOGLE_MAPS_SERVER_API_KEY`, but paid calls are protected by Sentinel's daily request and matrix-element counters.
 - Static Maps packet images are not enabled yet because a normal Static Maps URL carries the server API key. Do not return server-key-bearing map URLs to the frontend; implement a backend image proxy first if printable maps are needed.
 - Route estimate rows are marked stale after sandbox assignment moves, reorders, or applied optimization. Stale estimates remain visible as historical context but should be refreshed before comparing savings.
+- Route estimates default to `GOOGLE_MAPS_TRAFFIC_MODE=unaware`, which sends `TRAFFIC_UNAWARE` to Google Routes. Traffic-aware planning must be explicitly enabled and labeled so operators know the estimate depends on current/departure traffic.
 
 ## Psycopg
 

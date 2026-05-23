@@ -26,6 +26,11 @@ GEOCODING_BASE = "https://maps.googleapis.com/maps/api/geocode/json"
 STATIC_MAP_BASE = "https://maps.googleapis.com/maps/api/staticmap"
 
 COORD_PRECISION = 5   # decimal places for cache key normalisation
+TRAFFIC_MODE_TO_ROUTING_PREFERENCE = {
+    "unaware": "TRAFFIC_UNAWARE",
+    "aware": "TRAFFIC_AWARE",
+    "aware_optimal": "TRAFFIC_AWARE_OPTIMAL",
+}
 
 
 def cache_ttl_days() -> int:
@@ -37,6 +42,15 @@ def cache_ttl_days() -> int:
 
 def optimization_enabled() -> bool:
     return os.getenv("GOOGLE_MAPS_ENABLE_OPTIMIZATION", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def traffic_mode() -> str:
+    value = os.getenv("GOOGLE_MAPS_TRAFFIC_MODE", "unaware").strip().lower()
+    return value if value in TRAFFIC_MODE_TO_ROUTING_PREFERENCE else "unaware"
+
+
+def routing_preference() -> str:
+    return TRAFFIC_MODE_TO_ROUTING_PREFERENCE[traffic_mode()]
 
 
 def server_configured() -> bool:
@@ -134,6 +148,7 @@ def compute_route(
     intermediates: Optional[List[Dict]] = None,
     optimize_waypoint_order: bool = False,
     travel_mode: str = "DRIVE",
+    route_traffic_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Call Google Routes API v2.
@@ -148,12 +163,13 @@ def compute_route(
     """
     if not server_configured():
         raise RuntimeError("GOOGLE_MAPS_SERVER_API_KEY is not configured")
+    configured_traffic_mode = route_traffic_mode if route_traffic_mode in TRAFFIC_MODE_TO_ROUTING_PREFERENCE else traffic_mode()
 
     body: Dict[str, Any] = {
         "origin": {"location": {"latLng": {"latitude": origin_lat, "longitude": origin_lng}}},
         "destination": {"location": {"latLng": {"latitude": dest_lat, "longitude": dest_lng}}},
         "travelMode": travel_mode,
-        "routingPreference": "TRAFFIC_UNAWARE",
+        "routingPreference": TRAFFIC_MODE_TO_ROUTING_PREFERENCE[configured_traffic_mode],
         "computeAlternativeRoutes": False,
         "languageCode": "en-US",
         "units": "IMPERIAL",
@@ -213,6 +229,8 @@ def compute_route(
         "polyline": (route.get("polyline") or {}).get("encodedPolyline", ""),
         "optimized_waypoint_order": route.get("optimizedIntermediateWaypointIndex") or [],
         "legs": legs,
+        "traffic_mode": configured_traffic_mode,
+        "routing_preference": TRAFFIC_MODE_TO_ROUTING_PREFERENCE[configured_traffic_mode],
     }
 
 

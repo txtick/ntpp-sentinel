@@ -464,12 +464,14 @@ GOOGLE_MAPS_ENABLE_OPTIMIZATION=false
 GOOGLE_MAPS_CACHE_TTL_DAYS=30
 GOOGLE_MAPS_DAILY_REQUEST_LIMIT=500
 GOOGLE_MAPS_DAILY_MATRIX_ELEMENT_LIMIT=3000
+GOOGLE_MAPS_TRAFFIC_MODE=unaware
 ```
 
 Notes:
 
 - `GOOGLE_MAPS_SERVER_API_KEY` is backend-only. Never put it in frontend config or browser-visible URLs.
 - Optimization remains disabled unless `GOOGLE_MAPS_ENABLE_OPTIMIZATION=true`.
+- Route estimates default to `GOOGLE_MAPS_TRAFFIC_MODE=unaware`. Use `aware` or `aware_optimal` only when operators intentionally want traffic-aware planning estimates.
 - The current Leaflet map does not need `GOOGLE_MAPS_BROWSER_API_KEY`.
 - Verify safe config flags without exposing keys:
 

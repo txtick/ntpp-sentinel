@@ -205,6 +205,7 @@ def test_maps_status_does_not_expose_google_api_keys(monkeypatch):
     assert status["server_maps_configured"] is True
     assert status["browser_maps_configured"] is True
     assert status["optimization_enabled"] is False
+    assert status["traffic_mode"] == "unaware"
     assert "browser_maps_api_key" not in status
     assert "server-secret-key" not in serialized
     assert "browser-public-key" not in serialized
@@ -268,3 +269,48 @@ def test_google_maps_usage_counter_updates_when_under_limit(monkeypatch):
 
     assert cur.updated[0] == 3
     assert cur.updated[1] == 5
+
+
+def test_google_maps_traffic_mode_controls_routing_preference(monkeypatch):
+    captured = {}
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "routes": [
+                    {
+                        "distanceMeters": 1609,
+                        "duration": "600s",
+                        "optimizedIntermediateWaypointIndex": [0],
+                        "polyline": {"encodedPolyline": "abc"},
+                        "legs": [],
+                    }
+                ]
+            }
+
+    def _fake_post(url, json=None, headers=None, timeout=None):
+        captured["json"] = json
+        captured["headers"] = headers
+        return _Response()
+
+    monkeypatch.setenv("GOOGLE_MAPS_SERVER_API_KEY", "server-secret-key")
+    monkeypatch.setenv("GOOGLE_MAPS_TRAFFIC_MODE", "aware_optimal")
+    monkeypatch.setattr(google_maps.httpx, "post", _fake_post)
+
+    result = google_maps.compute_route(33.1, -96.8, 33.2, -96.9)
+
+    assert captured["json"]["routingPreference"] == "TRAFFIC_AWARE_OPTIMAL"
+    assert "routes.optimizedIntermediateWaypointIndex" in captured["headers"]["X-Goog-FieldMask"]
+    assert result["traffic_mode"] == "aware_optimal"
+    assert result["routing_preference"] == "TRAFFIC_AWARE_OPTIMAL"
+    assert "server-secret-key" not in str(result)
+
+
+def test_google_maps_invalid_traffic_mode_defaults_unaware(monkeypatch):
+    monkeypatch.setenv("GOOGLE_MAPS_TRAFFIC_MODE", "surprise")
+
+    assert google_maps.traffic_mode() == "unaware"
+    assert google_maps.routing_preference() == "TRAFFIC_UNAWARE"

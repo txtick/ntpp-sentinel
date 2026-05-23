@@ -24,6 +24,7 @@ from services.route_sandbox import (
     generate_change_plan,
     get_change_plan,
     get_comparison,
+    geocode_route_address,
     get_maps_status,
     get_route_estimates,
     get_scenario,
@@ -1313,10 +1314,7 @@ async def api_geocode(request: Request):
     address = (body.get("address") or "").strip()
     if not address:
         raise HTTPException(status_code=400, detail="address is required")
-    from services.google_maps import geocode, server_configured
-    if not server_configured():
-        raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
-    result = geocode(address)
+    result = geocode_route_address(address)
     if not result:
         raise HTTPException(status_code=404, detail="Address could not be geocoded")
     return result

@@ -85,6 +85,7 @@ To switch which route is shown on the map, just click a different group's header
 - Results are cached. Running Est. again on the same route reuses cached route segments where possible.
 - If you've moved or reordered stops after an estimate, the mileage badge is marked stale until you refresh the estimate.
 - If a stop doesn't have GPS coordinates on file, Sentinel shows a warning and skips only the affected drive segment in the estimate.
+- Estimates are typical road estimates by default. If traffic-aware estimates are enabled, Sentinel labels them so you know current/departure traffic is part of the result.
 - Est. requires the Google Maps server key to be configured in Sentinel. If you don't see the Est. button, contact your administrator.
 
 ---
@@ -143,21 +144,30 @@ Click **Approve Scenario**. Sentinel runs validation automatically — if anythi
 > Once approved, the scenario is read-only. You cannot move stops or re-run optimization.
 
 ### Step 3 — Generate the packet
-Click **Generate Manual Update Packet**. The map is replaced by a full checklist of every change: stops that moved tech or day, stops that were added or removed, and stops whose position within a route changed.
+Click **Generate Manual Update Packet**. The map is replaced by a checklist of every change.
 
-At the top of the packet you have three options:
+The packet is organized by **tech and day** — one section per route you need to open in Skimmer. Each section tells you exactly which route to navigate to and what to do there:
+
+| Change type | What to do in Skimmer |
+|---|---|
+| **Reorder** | Routes → Route Builder → select tech & day → drag stop to the listed position |
+| **Move to different tech/day** | Find the stop on the current route → click **···** → **Move to Different Day/Tech** → then drag it to the right position on the destination route |
+| **Delete** | Find the stop → click **···** → **Delete Route Assignment** |
+| **Add** | Click **+ Add Route Assignment** → search for the customer |
+
+At the top of the packet:
 - **Approve Packet** — locks the packet and marks it ready to execute
 - **Print Packet** — opens the print dialog so you can print or save as PDF
 - **Export CSV** — downloads a spreadsheet version of the change list
 
 ### Step 4 — Work through the list in Skimmer
-Open Skimmer in another tab and make each change one at a time, following the packet.
+Open Skimmer → Routes → Route Builder in another tab. Work through the packet one section at a time — each section is one tech/day route.
 
-As you finish each item, return to Sentinel and mark it **Done**. If you decide to skip a change, mark it **Skipped**.
+After completing each change in Skimmer, return to Sentinel and click **✓ Done** next to that item. Use **Skip** if you decide not to make a particular change.
 
-You don't have to complete the whole list in one sitting — your progress is saved and you can come back to the packet view at any time.
+You don't have to finish in one sitting — your progress is saved and you can return to the packet view at any time.
 
-Click **← Back to Map** when you want to return to the route map view.
+Click **← Back to Map** to leave the packet view and return to the route map.
 
 ---
 

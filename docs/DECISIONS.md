@@ -84,6 +84,8 @@ Keep entries short, but do not skip them.
   - Reason: optimization can generate paid Google Maps calls and change sandbox stop order, so it should require an explicit operational choice even though it never writes to Skimmer.
 - Route Sandbox Google Maps usage is capped inside Sentinel with daily request and route-matrix element limits.
   - Reason: Google Cloud quotas are not enough protection against accidental repeated estimate/optimization clicks in the dashboard.
+- Route Sandbox Google Maps estimates default to traffic-unaware routing.
+  - Reason: default planning should be stable and repeatable; traffic-aware estimates can be enabled deliberately with `GOOGLE_MAPS_TRAFFIC_MODE`.
 - Skimmer API is the preferred live source when current-week route counts matter.
 - Nightly Skimmer DB is preferred when the API does not include the needed data.
 - Normalized Postgres is Sentinel's working analytics model, not the upstream source of truth.

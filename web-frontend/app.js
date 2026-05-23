@@ -4355,8 +4355,9 @@ function renderSandboxRouteList(groups) {
 
       const estKey = `${g.source_account_id}/${g.day_of_week}`;
       const est = sandbox.estimates[estKey];
+      const estLabel = est?.estimate_type_label || "Typical road estimate";
       const estMeta = est
-        ? `<span class="sandbox-est-badge${est.is_stale ? " is-stale" : ""}" title="Google Maps estimate${est.is_stale ? " is stale after route changes" : ""}">🗺 ${est.total_distance_miles} mi · ${est.total_duration_minutes} min drive${est.is_stale ? " · stale" : ""}</span>`
+        ? `<span class="sandbox-est-badge${est.is_stale ? " is-stale" : ""}" title="${escapeHtml(estLabel)}${est.is_stale ? " · stale after route changes" : ""}">🗺 ${est.total_distance_miles} mi · ${est.total_duration_minutes} min drive${est.traffic_mode && est.traffic_mode !== "unaware" ? " · traffic" : ""}${est.is_stale ? " · stale" : ""}</span>`
         : "";
 
       const canEstimate =
@@ -4424,48 +4425,50 @@ function wireSandboxDragDrop(container) {
       if (!sandbox.dragSourceId || !sandbox.activeScenarioId) return;
       const account = list.dataset.account;
       const day = list.dataset.day;
-      const orderedIds = [...list.querySelectorAll(".sandbox-stop-row")]
-        .map((el) => el.dataset.aid)
-        .filter(Boolean);
-      const srcIdx = orderedIds.indexOf(sandbox.dragSourceId);
-      const target = e.target.closest(".sandbox-stop-row");
-      if (target && target.dataset.aid !== sandbox.dragSourceId) {
-        const tgtIdx = orderedIds.indexOf(target.dataset.aid);
-        if (tgtIdx !== -1) {
-          orderedIds.splice(srcIdx, 1);
-          orderedIds.splice(tgtIdx, 0, sandbox.dragSourceId);
-        }
-      }
       try {
-        await api(
-          `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/reorder`,
-          {
-            method: "POST",
-            body: JSON.stringify({ ordered_ids: orderedIds.map(Number) }),
-          },
-        );
-        // If drop target is a different group, also move
         const srcRow = container.querySelector(
           `[data-aid="${sandbox.dragSourceId}"]`,
         );
-        if (srcRow) {
-          const srcList = srcRow.closest(".sandbox-stop-list");
+        const srcList = srcRow?.closest(".sandbox-stop-list");
+        const isDifferentGroup =
+          srcList &&
+          (srcList.dataset.account !== account || srcList.dataset.day !== day);
+        if (isDifferentGroup) {
+          await api(
+            `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                assignment_id: Number(sandbox.dragSourceId),
+                source_account_id: account,
+                day_of_week: day,
+              }),
+            },
+          );
+        } else {
+          const orderedIds = [...list.querySelectorAll(".sandbox-stop-row")]
+            .map((el) => el.dataset.aid)
+            .filter(Boolean);
+          const srcIdx = orderedIds.indexOf(sandbox.dragSourceId);
+          const target = e.target.closest(".sandbox-stop-row");
           if (
-            srcList &&
-            (srcList.dataset.account !== account || srcList.dataset.day !== day)
+            srcIdx !== -1 &&
+            target &&
+            target.dataset.aid !== sandbox.dragSourceId
           ) {
-            await api(
-              `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/move`,
-              {
-                method: "POST",
-                body: JSON.stringify({
-                  assignment_id: Number(sandbox.dragSourceId),
-                  source_account_id: account,
-                  day_of_week: day,
-                }),
-              },
-            );
+            const tgtIdx = orderedIds.indexOf(target.dataset.aid);
+            if (tgtIdx !== -1) {
+              orderedIds.splice(srcIdx, 1);
+              orderedIds.splice(tgtIdx, 0, sandbox.dragSourceId);
+            }
           }
+          await api(
+            `/api/routes/sandbox/scenarios/${sandbox.activeScenarioId}/assignments/reorder`,
+            {
+              method: "POST",
+              body: JSON.stringify({ ordered_ids: orderedIds.map(Number) }),
+            },
+          );
         }
         await sandboxSoftRefresh();
       } catch (err) {
@@ -4613,7 +4616,9 @@ function renderSandboxToolbar() {
           renderSandboxValidationModal(validation);
           return;
         }
-      } catch (_) { /* ignore — approval request below will also fail with a message */ }
+      } catch {
+        // Approval request below will also fail with a message.
+      }
       if (
         !confirm(
           "Approve this scenario? This locks the scenario for generating a manual update packet.",
@@ -4838,30 +4843,58 @@ function renderSandboxPlanPanel(result) {
     }
   }
   function tn(accountId) {
-    return accountId ? (techNameMap[accountId] || accountId) : "—";
+    return accountId ? techNameMap[accountId] || accountId : "—";
   }
 
   // Group items by the route where the action is performed in Skimmer:
   //   reorder / move-out / remove → current tech/day (you find the stop there and act on it)
   //   add                         → proposed tech/day (you add the stop there)
-  const DAY_ORD = { Monday: 0, Tuesday: 1, Wednesday: 2, Thursday: 3, Friday: 4, Saturday: 5, Sunday: 6 };
+  const DAY_ORD = {
+    Monday: 0,
+    Tuesday: 1,
+    Wednesday: 2,
+    Thursday: 3,
+    Friday: 4,
+    Saturday: 5,
+    Sunday: 6,
+  };
   const sectionMap = new Map();
   function getSection(accountId, day) {
     const key = `${accountId}|${day}`;
     if (!sectionMap.has(key)) {
-      sectionMap.set(key, { accountId, techName: tn(accountId), day, reorders: [], moves: [], removes: [], adds: [] });
+      sectionMap.set(key, {
+        accountId,
+        techName: tn(accountId),
+        day,
+        reorders: [],
+        moves: [],
+        removes: [],
+        adds: [],
+      });
     }
     return sectionMap.get(key);
   }
   for (const item of items) {
     if (item.change_type === "create_assignment") {
-      getSection(item.source_account_id_proposed, item.day_of_week_proposed).adds.push(item);
+      getSection(
+        item.source_account_id_proposed,
+        item.day_of_week_proposed,
+      ).adds.push(item);
     } else if (item.change_type === "delete_assignment") {
-      getSection(item.source_account_id_current, item.day_of_week_current).removes.push(item);
+      getSection(
+        item.source_account_id_current,
+        item.day_of_week_current,
+      ).removes.push(item);
     } else if (item.change_type === "update_assignment") {
-      getSection(item.source_account_id_current, item.day_of_week_current).moves.push(item);
+      getSection(
+        item.source_account_id_current,
+        item.day_of_week_current,
+      ).moves.push(item);
     } else if (item.change_type === "reorder_stop") {
-      getSection(item.source_account_id_current, item.day_of_week_current).reorders.push(item);
+      getSection(
+        item.source_account_id_current,
+        item.day_of_week_current,
+      ).reorders.push(item);
     }
   }
   const sections = [...sectionMap.values()].sort((a, b) => {
@@ -4869,8 +4902,12 @@ function renderSandboxPlanPanel(result) {
     return t !== 0 ? t : (DAY_ORD[a.day] ?? 99) - (DAY_ORD[b.day] ?? 99);
   });
   for (const s of sections) {
-    s.reorders.sort((a, b) => (a.stop_order_proposed ?? 999) - (b.stop_order_proposed ?? 999));
-    s.adds.sort((a, b) => (a.stop_order_proposed ?? 999) - (b.stop_order_proposed ?? 999));
+    s.reorders.sort(
+      (a, b) => (a.stop_order_proposed ?? 999) - (b.stop_order_proposed ?? 999),
+    );
+    s.adds.sort(
+      (a, b) => (a.stop_order_proposed ?? 999) - (b.stop_order_proposed ?? 999),
+    );
   }
 
   function planItemRow(item, actionText) {
@@ -4890,43 +4927,68 @@ function renderSandboxPlanPanel(result) {
       </div>`;
   }
 
-  const sectionsHtml = sections.map((sec) => {
-    const parts = [];
-    if (sec.reorders.length) {
-      parts.push(`<div class="sandbox-plan-action-group">
+  const sectionsHtml = sections
+    .map((sec) => {
+      const parts = [];
+      if (sec.reorders.length) {
+        parts.push(`<div class="sandbox-plan-action-group">
         <div class="sandbox-plan-action-label">Drag stops to new positions</div>
-        ${sec.reorders.map((item) =>
-          planItemRow(item, `→ drag to stop #${item.stop_order_proposed ?? "?"}  <span class="muted" style="font-size:11px">(currently #${item.stop_order_current ?? "?"})</span>`)
-        ).join("")}
+        ${sec.reorders
+          .map((item) =>
+            planItemRow(
+              item,
+              `→ drag to stop #${item.stop_order_proposed ?? "?"}  <span class="muted" style="font-size:11px">(currently #${item.stop_order_current ?? "?"})</span>`,
+            ),
+          )
+          .join("")}
       </div>`);
-    }
-    if (sec.moves.length) {
-      parts.push(`<div class="sandbox-plan-action-group">
+      }
+      if (sec.moves.length) {
+        parts.push(`<div class="sandbox-plan-action-group">
         <div class="sandbox-plan-action-label">Click ··· → "Move to Different Day/Tech"</div>
-        ${sec.moves.map((item) => {
-          const destTech = escapeHtml(tn(item.source_account_id_proposed));
-          const destDay = escapeHtml(sandboxDayLabel(item.day_of_week_proposed || ""));
-          const destPos = item.stop_order_proposed != null ? `, then drag to stop #${item.stop_order_proposed} on that route` : "";
-          return planItemRow(item, `→ move to ${destTech} / ${destDay}${destPos}`);
-        }).join("")}
+        ${sec.moves
+          .map((item) => {
+            const destTech = escapeHtml(tn(item.source_account_id_proposed));
+            const destDay = escapeHtml(
+              sandboxDayLabel(item.day_of_week_proposed || ""),
+            );
+            const destPos =
+              item.stop_order_proposed != null
+                ? `, then drag to stop #${item.stop_order_proposed} on that route`
+                : "";
+            return planItemRow(
+              item,
+              `→ move to ${destTech} / ${destDay}${destPos}`,
+            );
+          })
+          .join("")}
       </div>`);
-    }
-    if (sec.removes.length) {
-      parts.push(`<div class="sandbox-plan-action-group">
+      }
+      if (sec.removes.length) {
+        parts.push(`<div class="sandbox-plan-action-group">
         <div class="sandbox-plan-action-label">Click ··· → "Delete Route Assignment"</div>
         ${sec.removes.map((item) => planItemRow(item, "→ delete this stop")).join("")}
       </div>`);
-    }
-    if (sec.adds.length) {
-      parts.push(`<div class="sandbox-plan-action-group">
+      }
+      if (sec.adds.length) {
+        parts.push(`<div class="sandbox-plan-action-group">
         <div class="sandbox-plan-action-label">Click "+ Add Route Assignment" and search for the customer</div>
-        ${sec.adds.map((item) =>
-          planItemRow(item, `→ add at stop #${item.stop_order_proposed ?? "?"}`)
-        ).join("")}
+        ${sec.adds
+          .map((item) =>
+            planItemRow(
+              item,
+              `→ add at stop #${item.stop_order_proposed ?? "?"}`,
+            ),
+          )
+          .join("")}
       </div>`);
-    }
-    const changeCount = sec.reorders.length + sec.moves.length + sec.removes.length + sec.adds.length;
-    return `
+      }
+      const changeCount =
+        sec.reorders.length +
+        sec.moves.length +
+        sec.removes.length +
+        sec.adds.length;
+      return `
       <div class="sandbox-plan-section">
         <div class="sandbox-plan-section-header">
           <span class="sandbox-group-dot" style="background:${sandboxTechColor(sec.accountId)}"></span>
@@ -4938,7 +5000,8 @@ function renderSandboxPlanPanel(result) {
         <div class="sandbox-plan-section-hint">Open Skimmer → Routes → Route Builder → <strong>${escapeHtml(sec.techName)}</strong> → <strong>${escapeHtml(sandboxDayLabel(sec.day))}</strong></div>
         ${parts.join("")}
       </div>`;
-  }).join("");
+    })
+    .join("");
 
   panel.innerHTML = `
     <div class="sandbox-section-header">
@@ -5055,7 +5118,10 @@ function sandboxSelectGroup(techId, day) {
   sandbox.activeGroupKey = key;
   // Update active styling
   document.querySelectorAll(".sandbox-group").forEach((el) => {
-    el.classList.toggle("is-active-group", el.dataset.tech === techId && el.dataset.day === day);
+    el.classList.toggle(
+      "is-active-group",
+      el.dataset.tech === techId && el.dataset.day === day,
+    );
   });
   // Draw the stored route for this group (coords array attached when Est. was run)
   const est = sandbox.estimates[key];
@@ -5083,7 +5149,10 @@ function sandboxDrawCoords(coords) {
   const latSpan = bounds.getNorth() - bounds.getSouth();
   const lngSpan = bounds.getEast() - bounds.getWest();
   if (latSpan > 10 || lngSpan > 15) {
-    showToast("⚠ Route has a stop with bad GPS coordinates — map zoom skipped.", 6000);
+    showToast(
+      "⚠ Route has a stop with bad GPS coordinates — map zoom skipped.",
+      6000,
+    );
     return;
   }
   sandbox.map.fitBounds(bounds, { padding: [32, 32] });
@@ -5111,7 +5180,10 @@ function sandboxDrawPolyline(encodedPolyline) {
   const latSpan = bounds.getNorth() - bounds.getSouth();
   const lngSpan = bounds.getEast() - bounds.getWest();
   if (latSpan > 10 || lngSpan > 15) {
-    showToast("⚠ Route has a stop with bad GPS coordinates — map zoom skipped. Check the warnings in the estimate result.", 6000);
+    showToast(
+      "⚠ Route has a stop with bad GPS coordinates — map zoom skipped. Check the warnings in the estimate result.",
+      6000,
+    );
     return;
   }
   sandbox.map.fitBounds(bounds, { padding: [32, 32] });
@@ -5193,6 +5265,7 @@ function sandboxShowOptimizeModal(preview, techId, day) {
           <div class="sandbox-stat"><strong>${preview.stops_reordered ?? 0}</strong><span>Stops Reordered</span></div>
           ${preview.skipped_count > 0 ? `<div class="sandbox-stat"><strong style="color:var(--gold)">${preview.skipped_count}</strong><span>Skipped (no GPS)</span></div>` : ""}
         </div>
+        <p class="muted" style="margin:0 0 10px;font-size:12px">${escapeHtml(preview.estimate_type_label || "Typical road estimate")}</p>
         ${preview.warnings?.length ? `<div class="sandbox-plan-notice" style="margin-bottom:12px">${preview.warnings.map((w) => escapeHtml(w)).join("<br>")}</div>` : ""}
         <p class="muted" style="margin:0 0 10px;font-size:13px">Proposed stop order after optimization:</p>
         <div style="max-height:300px;overflow-y:auto">
@@ -5311,8 +5384,12 @@ function _loadGoogleMapsScript(browserKey) {
   if (window.google?.maps?.places?.Autocomplete) return Promise.resolve();
   if (document.getElementById("gmap-places-script")) {
     return new Promise((resolve, reject) => {
-      document.getElementById("gmap-places-script").addEventListener("load", resolve);
-      document.getElementById("gmap-places-script").addEventListener("error", reject);
+      document
+        .getElementById("gmap-places-script")
+        .addEventListener("load", resolve);
+      document
+        .getElementById("gmap-places-script")
+        .addEventListener("error", reject);
     });
   }
   return new Promise((resolve, reject) => {
@@ -5416,16 +5493,8 @@ async function loadRouteTechSettings(_force = false) {
       </div>
     </div>`;
 
-  // Load Places API and init autocomplete on every address input
-  const mapsStatus = sandbox.mapsStatus || await api("/api/routes/maps/status").catch(() => null);
-  const browserKey = mapsStatus?.browser_maps_api_key;
-  if (browserKey) {
-    _loadGoogleMapsScript(browserKey).then(() => {
-      knownTechs.forEach((tech) => {
-        _initAddressAutocomplete(`tp-addr-${tech.source_account_id}`);
-      });
-    }).catch(() => {});
-  }
+  // Address fields intentionally remain plain text unless a future browser-map
+  // workflow explicitly needs the Google browser key.
 }
 
 async function saveTechProfile(techId) {

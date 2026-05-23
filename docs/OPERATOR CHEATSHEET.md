@@ -83,6 +83,7 @@ Route optimization stays disabled unless this is set and `web-backend` is restar
 
 ```bash
 GOOGLE_MAPS_ENABLE_OPTIMIZATION=true
+GOOGLE_MAPS_TRAFFIC_MODE=unaware
 ```
 
 ## Manual Pollen Snapshot

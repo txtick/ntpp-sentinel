@@ -497,12 +497,10 @@ def upsert_technician_profile(technician_id: str, payload: Dict[str, Any]) -> Di
     addr = data.get("home_address")
     if addr and data.get("home_latitude") is None and data.get("home_longitude") is None:
         try:
-            from services import google_maps
-            if google_maps.server_configured():
-                geo = google_maps.geocode(addr)
-                if geo:
-                    data["home_latitude"] = geo["lat"]
-                    data["home_longitude"] = geo["lng"]
+            geo = geocode_route_address(addr)
+            if geo:
+                data["home_latitude"] = geo["lat"]
+                data["home_longitude"] = geo["lng"]
         except Exception:
             _logger.exception("Geocode failed for home_address during profile save")
 
@@ -550,6 +548,9 @@ def backfill_technician_home_coords() -> Dict[str, Any]:
             tech_id = row["technician_id"]
             addr = row["home_address"]
             try:
+                with conn.cursor() as cur:
+                    _check_and_record_google_maps_usage(cur, request_count=1, matrix_element_count=0)
+                conn.commit()
                 geo = google_maps.geocode(addr)
                 if geo:
                     with conn.cursor() as cur:
@@ -562,10 +563,10 @@ def backfill_technician_home_coords() -> Dict[str, Any]:
                             (geo["lat"], geo["lng"], tech_id),
                         )
                     conn.commit()
-                    _logger.info("Geocoded home for tech %s → (%.4f, %.4f)", tech_id, geo["lat"], geo["lng"])
+                    _logger.info("Geocoded route start/end location for tech %s", tech_id)
                     updated += 1
                 else:
-                    _logger.warning("Geocode returned nothing for tech %s address: %s", tech_id, addr)
+                    _logger.warning("Geocode returned nothing for tech %s route profile address", tech_id)
                     failed += 1
             except Exception:
                 _logger.exception("Geocode failed for tech %s", tech_id)
@@ -978,21 +979,15 @@ def validate_scenario(scenario_id: int) -> Dict[str, Any]:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} is missing a technician."})
             if stop.get("day_of_week") not in valid_days:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} has invalid day: {stop.get('day_of_week') or 'blank'}."})
-            # Track by (location, tech/day group) — same location in different techs is valid
-            # (e.g. maintenance tech + repair tech both visiting the same pool)
             seen_locations.setdefault(loc, []).append(key)
 
-    # Flag a location only if it appears TWICE within the same tech/day group
-    # (a genuine scheduling mistake). Cross-tech duplicates are intentional —
-    # e.g. one tech does weekly maintenance and another handles repairs at the same pool.
+    # A sandbox route scenario assigns each pool to one planned route slot. Work-order
+    # exceptions should be represented outside this scenario table, not as duplicates.
     for loc, groups in seen_locations.items():
-        if not loc:
-            continue
-        same_group_dupes = [g for g in set(groups) if groups.count(g) > 1]
-        if same_group_dupes:
+        if loc and len(groups) > 1:
             all_errors.append({
-                "group": same_group_dupes[0],
-                "message": f"Service location appears more than once in the same route group: {', '.join(same_group_dupes)}",
+                "group": "global",
+                "message": f"Service location {loc} appears in multiple route groups: {', '.join(groups)}",
             })
 
     return {
@@ -1499,11 +1494,12 @@ def get_maps_status() -> Dict[str, Any]:
     return {
         "server_maps_configured": google_maps.server_configured(),
         "browser_maps_configured": google_maps.browser_configured(),
-        "browser_maps_api_key": google_maps.browser_api_key() or None,
         "optimization_enabled": google_maps.server_configured() and google_maps.optimization_enabled(),
         "daily_request_limit": _google_maps_daily_request_limit(),
         "daily_matrix_element_limit": _google_maps_daily_matrix_element_limit(),
         "cache_ttl_days": google_maps.cache_ttl_days(),
+        "traffic_mode": google_maps.traffic_mode(),
+        "routing_preference": google_maps.routing_preference(),
     }
 
 
@@ -1548,6 +1544,21 @@ def _check_and_record_google_maps_usage(cur, request_count: int = 1, matrix_elem
         """,
         (next_requests, next_matrix, today),
     )
+
+
+def geocode_route_address(address: str) -> Optional[Dict[str, Any]]:
+    """Geocode a route-planning address with app-level usage limits enforced."""
+    from services import google_maps
+
+    if not google_maps.server_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
+    if not str(address or "").strip():
+        raise HTTPException(status_code=400, detail="address is required")
+    with pg() as conn:
+        with conn.cursor() as cur:
+            _check_and_record_google_maps_usage(cur, request_count=1, matrix_element_count=0)
+        conn.commit()
+    return google_maps.geocode(str(address).strip())
 
 
 def _get_cached_segment(cur, origin_hash: str, dest_hash: str, mode: str = "DRIVE") -> Optional[Dict]:
@@ -1649,6 +1660,9 @@ def calculate_route_estimate(
     if source_type not in {"scenario", "current"}:
         raise HTTPException(status_code=400, detail="source_type must be scenario or current")
     day_of_week = _require_valid_day(day_of_week)
+    route_traffic_mode = google_maps.traffic_mode()
+    routing_preference = google_maps.routing_preference()
+    cache_mode = f"DRIVE:{route_traffic_mode}"
 
     stops = _stops_for_route(scenario_id, source_type, technician_id, day_of_week, source_system)
     if not stops:
@@ -1755,7 +1769,7 @@ def calculate_route_estimate(
                     pt_to["lat"], pt_to["lng"],
                 )
                 with conn.cursor() as cur:
-                    cached = None if force_refresh else _get_cached_segment(cur, oh, dh)
+                    cached = None if force_refresh else _get_cached_segment(cur, oh, dh, mode=cache_mode)
                 if cached:
                     seg.update({
                         "distance_meters": cached["distance_meters"],
@@ -1771,6 +1785,7 @@ def calculate_route_estimate(
                     result = google_maps.compute_route(
                         pt_from["lat"], pt_from["lng"],
                         pt_to["lat"], pt_to["lng"],
+                        route_traffic_mode=route_traffic_mode,
                     )
                     request_count += 1
                     if result.get("error"):
@@ -1789,6 +1804,7 @@ def calculate_route_estimate(
                                 pt_to["lat"], pt_to["lng"],
                                 seg["distance_meters"], seg["duration_seconds"],
                                 seg["polyline"],
+                                mode=cache_mode,
                             )
                         conn.commit()
 
@@ -1878,6 +1894,10 @@ def calculate_route_estimate(
         "stop_count": len(stops),
         "total_distance_miles": _mi(total_distance_m),
         "total_duration_minutes": _min(total_duration_s),
+        "total_with_start_end_distance_miles": _mi(total_distance_m),
+        "total_with_start_end_duration_minutes": _min(total_duration_s),
+        "total_without_start_end_distance_miles": _mi(c2c_distance_m),
+        "total_without_start_end_duration_minutes": _min(c2c_duration_s),
         "customer_to_customer_distance_miles": _mi(c2c_distance_m),
         "customer_to_customer_duration_minutes": _min(c2c_duration_s),
         "start_to_first_distance_miles": _mi(start_to_first_m),
@@ -1888,6 +1908,9 @@ def calculate_route_estimate(
         "total_work_duration_minutes": _min(total_work_s),
         "request_count": request_count,
         "cache_hit_count": cache_hit_count,
+        "traffic_mode": route_traffic_mode,
+        "routing_preference": routing_preference,
+        "estimate_type_label": "Typical road estimate" if route_traffic_mode == "unaware" else "Traffic-aware estimate",
         "warnings": warnings,
         "segments": [
             {
@@ -1955,8 +1978,12 @@ def get_route_estimates(
         r["day_of_week"] = r.get("service_day")
         r["total_distance_miles"] = _mi(r.pop("total_distance_meters", None))
         r["total_duration_minutes"] = _min(r.pop("total_duration_seconds", None))
+        r["total_with_start_end_distance_miles"] = r["total_distance_miles"]
+        r["total_with_start_end_duration_minutes"] = r["total_duration_minutes"]
         r["customer_to_customer_distance_miles"] = _mi(r.pop("customer_to_customer_distance_meters", None))
         r["customer_to_customer_duration_minutes"] = _min(r.pop("customer_to_customer_duration_seconds", None))
+        r["total_without_start_end_distance_miles"] = r["customer_to_customer_distance_miles"]
+        r["total_without_start_end_duration_minutes"] = r["customer_to_customer_duration_minutes"]
         r["start_to_first_distance_miles"] = _mi(r.pop("start_to_first_distance_meters", None))
         r["start_to_first_duration_minutes"] = _min(r.pop("start_to_first_duration_seconds", None))
         r["last_to_end_distance_miles"] = _mi(r.pop("last_to_end_distance_meters", None))
@@ -1986,6 +2013,7 @@ def optimize_route_order(
     if not google_maps.optimization_enabled():
         raise HTTPException(status_code=403, detail="Route optimization is disabled in Sentinel")
     day_of_week = _require_valid_day(day_of_week)
+    route_traffic_mode = google_maps.traffic_mode()
 
     stops = _stops_for_route(scenario_id, "scenario", technician_id, day_of_week)
     if len(stops) < 3:
@@ -2041,6 +2069,7 @@ def optimize_route_order(
         start_lat, start_lng, end_lat, end_lng,
         intermediates=current_intermediates,
         optimize_waypoint_order=False,
+        route_traffic_mode=route_traffic_mode,
     )
     if current_result.get("error"):
         raise HTTPException(status_code=502, detail=f"Google Maps error: {current_result['error']}")
@@ -2049,6 +2078,7 @@ def optimize_route_order(
         start_lat, start_lng, end_lat, end_lng,
         intermediates=intermediates,
         optimize_waypoint_order=True,
+        route_traffic_mode=route_traffic_mode,
     )
 
     if result.get("error"):
@@ -2103,6 +2133,9 @@ def optimize_route_order(
         "estimated_miles_saved": round((current_dist_m - optimized_dist_m) / 1609.34, 1),
         "estimated_minutes_saved": round((current_dur_s - optimized_dur_s) / 60),
         "stops_reordered": reordered_count,
+        "traffic_mode": route_traffic_mode,
+        "routing_preference": google_maps.routing_preference(),
+        "estimate_type_label": "Typical road estimate" if route_traffic_mode == "unaware" else "Traffic-aware estimate",
         "polyline": result.get("polyline", ""),
         "warnings": [],
     }
