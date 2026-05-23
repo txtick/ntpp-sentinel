@@ -979,11 +979,15 @@ def validate_scenario(scenario_id: int) -> Dict[str, Any]:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} is missing a technician."})
             if stop.get("day_of_week") not in valid_days:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} has invalid day: {stop.get('day_of_week') or 'blank'}."})
-            seen_locations.setdefault(loc, []).append(key)
+            # Key by (location, tech) so the same pool under different techs
+            # (e.g. maintenance + repair) is not treated as a duplicate.
+            combo = f"{loc}::{stop.get('source_account_id', '')}"
+            seen_locations.setdefault(combo, []).append(key)
 
-    # A sandbox route scenario assigns each pool to one planned route slot. Work-order
-    # exceptions should be represented outside this scenario table, not as duplicates.
-    for loc, groups in seen_locations.items():
+    # Flag only if the SAME tech has the same location in multiple route groups.
+    # Cross-tech duplicates (maintenance tech + repair tech at the same pool) are valid.
+    for combo, groups in seen_locations.items():
+        loc = combo.split("::")[0]
         if loc and len(groups) > 1:
             all_errors.append({
                 "group": "global",
