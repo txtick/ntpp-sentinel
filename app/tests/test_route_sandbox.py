@@ -314,3 +314,31 @@ def test_google_maps_invalid_traffic_mode_defaults_unaware(monkeypatch):
 
     assert google_maps.traffic_mode() == "unaware"
     assert google_maps.routing_preference() == "TRAFFIC_UNAWARE"
+
+
+def test_route_maps_schema_has_performance_indexes():
+    schema = (Path(__file__).resolve().parents[1] / "pg.py").read_text()
+
+    assert "idx_route_estimate_runs_latest" in schema
+    assert "idx_route_distance_cache_expires" in schema
+    assert "idx_route_scenarios_status_updated" in schema
+
+
+def test_route_sandbox_load_does_not_auto_trigger_expensive_maps_calls():
+    frontend = (Path(__file__).resolve().parents[2] / "web-frontend" / "app.js").read_text()
+    load_section = frontend.split("async function loadRouteSandbox", 1)[1].split(
+        "// ── Google Places address autocomplete",
+        1,
+    )[0]
+
+    assert 'method: "POST"' not in load_section
+    assert "/optimize" not in load_section
+
+
+def test_route_scenario_detail_uses_batched_technician_profiles():
+    service = (Path(__file__).resolve().parents[1] / "services" / "route_sandbox.py").read_text()
+
+    assert "def _technician_profiles_by_id" in service
+    scenario_section = service.split("def get_scenario", 1)[1].split("def update_scenario", 1)[0]
+    assert "profiles_by_id = _technician_profiles_by_id" in scenario_section
+    assert "get_technician_profile(" not in scenario_section

@@ -727,7 +727,19 @@ def ensure_route_maps_schema() -> None:
                 ON route_estimate_runs(scenario_id, technician_id, service_day)
                 """
             )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_estimate_runs_latest
+                ON route_estimate_runs(scenario_id, status, technician_id, service_day, created_at DESC)
+                """
+            )
             cur.execute("ALTER TABLE route_estimate_runs ADD COLUMN IF NOT EXISTS is_stale BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_distance_cache_expires
+                ON route_distance_cache(expires_at)
+                """
+            )
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS route_google_usage_daily (
@@ -767,6 +779,181 @@ def ensure_route_maps_schema() -> None:
                 """
                 CREATE INDEX IF NOT EXISTS idx_route_estimate_segments_run
                 ON route_estimate_segments(estimate_run_id, sequence)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_scenarios_status_updated
+                ON route_scenarios(status, updated_at DESC)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_route_change_plan_items_plan_status
+                ON route_change_plan_items(change_plan_id, status)
+                """
+            )
+        conn.commit()
+
+
+def ensure_sales_assist_schema() -> None:
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_quote (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_quote_id TEXT NOT NULL,
+                    source_customer_id TEXT,
+                    quote_number INTEGER,
+                    quote_date TIMESTAMPTZ,
+                    expiration_date TIMESTAMPTZ,
+                    sent_date TIMESTAMPTZ,
+                    status TEXT,
+                    total_amount NUMERIC,
+                    subtotal_amount NUMERIC,
+                    tax_amount NUMERIC,
+                    discount_flat NUMERIC,
+                    discount_percent NUMERIC,
+                    discount_total NUMERIC,
+                    customer_display_name TEXT,
+                    customer_address TEXT,
+                    customer_city TEXT,
+                    customer_state TEXT,
+                    customer_zip TEXT,
+                    message TEXT,
+                    internal_notes TEXT,
+                    reject_reason TEXT,
+                    is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+                    job_id TEXT,
+                    company_id TEXT,
+                    source_created_at TIMESTAMPTZ,
+                    source_updated_at TIMESTAMPTZ,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_quote_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_quote_customer
+                ON sk_quote(source_system, source_customer_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_quote_status
+                ON sk_quote(source_system, status, quote_date DESC)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_quote_location (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_quote_location_id TEXT NOT NULL,
+                    source_quote_id TEXT NOT NULL,
+                    source_service_location_id TEXT,
+                    address TEXT,
+                    city TEXT,
+                    state TEXT,
+                    zip TEXT,
+                    tax_group_id TEXT,
+                    tax_group_name TEXT,
+                    tax_rate NUMERIC,
+                    company_id TEXT,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_quote_location_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_quote_location_quote
+                ON sk_quote_location(source_system, source_quote_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_quote_item (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_quote_item_id TEXT NOT NULL,
+                    source_quote_location_id TEXT NOT NULL,
+                    source_quote_id TEXT,
+                    item_name TEXT,
+                    description TEXT,
+                    quantity NUMERIC,
+                    unit_price NUMERIC,
+                    total_price NUMERIC,
+                    sequence INTEGER,
+                    is_taxable BOOLEAN,
+                    source_product_id TEXT,
+                    source_work_order_type_id TEXT,
+                    company_id TEXT,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_quote_item_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_quote_item_quote
+                ON sk_quote_item(source_system, source_quote_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_quote_item_location
+                ON sk_quote_item(source_system, source_quote_location_id)
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS quote_ai_sales_notes (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_quote_id TEXT NOT NULL,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_quote_hash TEXT NOT NULL,
+                    ai_model TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    sales_notes_json JSONB,
+                    generated_at TIMESTAMPTZ,
+                    stale_at TIMESTAMPTZ,
+                    error_message TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_quote_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS quote_sales_activities (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_quote_id TEXT NOT NULL,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_customer_id TEXT,
+                    activity_type TEXT NOT NULL,
+                    activity_note TEXT,
+                    created_by TEXT,
+                    follow_up_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_quote_sales_activities_quote
+                ON quote_sales_activities(source_system, source_quote_id, created_at DESC)
                 """
             )
         conn.commit()

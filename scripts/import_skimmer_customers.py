@@ -638,6 +638,14 @@ TABLE_NAME_ALIASES = {
     "workordertypes": "work_order_types",
     "work_order_type": "work_order_types",
     "work_order_types": "work_order_types",
+    "quote": "quotes",
+    "quotes": "quotes",
+    "quotelocation": "quote_locations",
+    "quote_location": "quote_locations",
+    "quote_locations": "quote_locations",
+    "quoteitem": "quote_items",
+    "quote_item": "quote_items",
+    "quote_items": "quote_items",
 }
 
 
@@ -1079,6 +1087,252 @@ def import_service_stop_entries(pg_conn, sqlite_conn, source_system="skimmer"):
     return imported
 
 
+QUOTE_UPSERT_SQL = """
+    INSERT INTO sk_quote (
+        source_system, source_quote_id, source_customer_id, quote_number,
+        quote_date, expiration_date, sent_date, status, total_amount,
+        subtotal_amount, tax_amount, discount_flat, discount_percent,
+        discount_total, customer_display_name, customer_address,
+        customer_city, customer_state, customer_zip, message,
+        internal_notes, reject_reason, is_archived, job_id, company_id,
+        source_created_at, source_updated_at, is_deleted, raw_json
+    ) VALUES (
+        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+    )
+    ON CONFLICT (source_system, source_quote_id) DO UPDATE SET
+        source_customer_id = EXCLUDED.source_customer_id,
+        quote_number = EXCLUDED.quote_number,
+        quote_date = EXCLUDED.quote_date,
+        expiration_date = EXCLUDED.expiration_date,
+        sent_date = EXCLUDED.sent_date,
+        status = EXCLUDED.status,
+        total_amount = EXCLUDED.total_amount,
+        subtotal_amount = EXCLUDED.subtotal_amount,
+        tax_amount = EXCLUDED.tax_amount,
+        discount_flat = EXCLUDED.discount_flat,
+        discount_percent = EXCLUDED.discount_percent,
+        discount_total = EXCLUDED.discount_total,
+        customer_display_name = EXCLUDED.customer_display_name,
+        customer_address = EXCLUDED.customer_address,
+        customer_city = EXCLUDED.customer_city,
+        customer_state = EXCLUDED.customer_state,
+        customer_zip = EXCLUDED.customer_zip,
+        message = EXCLUDED.message,
+        internal_notes = EXCLUDED.internal_notes,
+        reject_reason = EXCLUDED.reject_reason,
+        is_archived = EXCLUDED.is_archived,
+        job_id = EXCLUDED.job_id,
+        company_id = EXCLUDED.company_id,
+        source_created_at = EXCLUDED.source_created_at,
+        source_updated_at = EXCLUDED.source_updated_at,
+        is_deleted = EXCLUDED.is_deleted,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+QUOTE_LOCATION_UPSERT_SQL = """
+    INSERT INTO sk_quote_location (
+        source_system, source_quote_location_id, source_quote_id,
+        source_service_location_id, address, city, state, zip,
+        tax_group_id, tax_group_name, tax_rate, company_id, raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_quote_location_id) DO UPDATE SET
+        source_quote_id = EXCLUDED.source_quote_id,
+        source_service_location_id = EXCLUDED.source_service_location_id,
+        address = EXCLUDED.address,
+        city = EXCLUDED.city,
+        state = EXCLUDED.state,
+        zip = EXCLUDED.zip,
+        tax_group_id = EXCLUDED.tax_group_id,
+        tax_group_name = EXCLUDED.tax_group_name,
+        tax_rate = EXCLUDED.tax_rate,
+        company_id = EXCLUDED.company_id,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+QUOTE_ITEM_UPSERT_SQL = """
+    INSERT INTO sk_quote_item (
+        source_system, source_quote_item_id, source_quote_location_id,
+        source_quote_id, item_name, description, quantity, unit_price,
+        total_price, sequence, is_taxable, source_product_id,
+        source_work_order_type_id, company_id, raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_quote_item_id) DO UPDATE SET
+        source_quote_location_id = EXCLUDED.source_quote_location_id,
+        source_quote_id = EXCLUDED.source_quote_id,
+        item_name = EXCLUDED.item_name,
+        description = EXCLUDED.description,
+        quantity = EXCLUDED.quantity,
+        unit_price = EXCLUDED.unit_price,
+        total_price = EXCLUDED.total_price,
+        sequence = EXCLUDED.sequence,
+        is_taxable = EXCLUDED.is_taxable,
+        source_product_id = EXCLUDED.source_product_id,
+        source_work_order_type_id = EXCLUDED.source_work_order_type_id,
+        company_id = EXCLUDED.company_id,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
+def _quote_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "CustomerId"),
+        row_get(row, "QuoteNumber"),
+        row_get(row, "QuoteDate"),
+        row_get(row, "ExpirationDate"),
+        row_get(row, "SentDate"),
+        row_get(row, "Status"),
+        row_get(row, "Total"),
+        row_get(row, "Subtotal"),
+        row_get(row, "TaxAmount"),
+        row_get(row, "DiscountFlat"),
+        row_get(row, "DiscountPercent"),
+        row_get(row, "DiscountTotal"),
+        row_get(row, "CustomerDisplayName"),
+        row_get(row, "CustomerAddress"),
+        row_get(row, "CustomerCity"),
+        row_get(row, "CustomerState"),
+        row_get(row, "CustomerZip"),
+        row_get(row, "Message"),
+        row_get(row, "InternalNotes"),
+        row_get(row, "RejectReason"),
+        bool(row_get(row, "IsArchived")),
+        row_get(row, "JobId"),
+        row_get(row, "CompanyId"),
+        row_get(row, "CreatedAt"),
+        row_get(row, "UpdatedAt"),
+        bool(row_get(row, "Deleted")),
+        row_json(row),
+    )
+
+
+def _quote_location_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "QuoteId"),
+        row_get(row, "ServiceLocationId"),
+        row_get(row, "ServiceLocationAddress"),
+        row_get(row, "ServiceLocationCity"),
+        row_get(row, "ServiceLocationState"),
+        row_get(row, "ServiceLocationZip"),
+        row_get(row, "TaxGroupId"),
+        row_get(row, "ServiceLocationTaxGroupName"),
+        row_get(row, "ServiceLocationTaxGroupRate"),
+        row_get(row, "CompanyId"),
+        row_json(row),
+    )
+
+
+def _quote_item_params(row, quote_id_map, source_system="skimmer"):
+    # Resolve the QuoteId through QuoteLocationId
+    ql_id = row_get(row, "QuoteLocationId")
+    source_quote_id = quote_id_map.get(str(ql_id or ""))
+    return (
+        source_system,
+        row["id"],
+        ql_id,
+        source_quote_id,
+        row_get(row, "Item"),
+        row_get(row, "Description"),
+        row_get(row, "Quantity"),
+        row_get(row, "Rate"),
+        row_get(row, "Cost"),
+        row_get(row, "Sequence"),
+        bool(row_get(row, "IsTaxable")) if row_get(row, "IsTaxable") is not None else None,
+        row_get(row, "ProductId"),
+        row_get(row, "WorkOrderTypeId"),
+        row_get(row, "CompanyId"),
+        row_json(row),
+    )
+
+
+def import_quotes(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        """SELECT id, QuoteNumber, QuoteDate, ExpirationDate, SentDate, CustomerId,
+                  CustomerDisplayName, CustomerAddress, CustomerCity, CustomerState,
+                  CustomerZip, Total, Subtotal, TaxAmount, Status, DiscountFlat,
+                  DiscountPercent, DiscountTotal, Message, InternalNotes, RejectReason,
+                  IsArchived, JobId, CompanyId, CreatedAt, UpdatedAt, Deleted
+           FROM Quote""",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            QUOTE_UPSERT_SQL,
+            [_quote_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(f"quotes chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}")
+    log(f"quotes imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}")
+    return imported
+
+
+def import_quote_locations(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        """SELECT id, QuoteId, ServiceLocationId, ServiceLocationAddress, ServiceLocationCity,
+                  ServiceLocationState, ServiceLocationZip, TaxGroupId,
+                  ServiceLocationTaxGroupName, ServiceLocationTaxGroupRate, CompanyId
+           FROM QuoteLocation""",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            QUOTE_LOCATION_UPSERT_SQL,
+            [_quote_location_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(f"quote_locations chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}")
+    log(f"quote_locations imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}")
+    return imported
+
+
+def import_quote_items(pg_conn, sqlite_conn, source_system="skimmer"):
+    # Build QuoteLocationId → QuoteId map from the database so items can be linked to quotes
+    quote_id_map = {}
+    sqlite_cur = sqlite_conn.cursor()
+    sqlite_cur.execute("SELECT id, QuoteId FROM QuoteLocation")
+    for row in sqlite_cur.fetchall():
+        if row["id"] and row["QuoteId"]:
+            quote_id_map[str(row["id"])] = str(row["QuoteId"])
+
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        """SELECT id, QuoteLocationId, Item, Description, Quantity, Rate, Cost,
+                  Sequence, IsTaxable, ProductId, WorkOrderTypeId, CompanyId
+           FROM QuoteItem""",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            QUOTE_ITEM_UPSERT_SQL,
+            [_quote_item_params(row, quote_id_map, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(f"quote_items chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}")
+    log(f"quote_items imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}")
+    return imported
+
+
 def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
     imported = 0
     identity_count = 0
@@ -1179,6 +1433,12 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
                 counts["entry_descriptions_imported"] = import_entry_descriptions(pg_conn, sqlite_conn, source_system=source_system)
             if "service_stop_entries" in normalized_tables:
                 counts["service_stop_entries_imported"] = import_service_stop_entries(pg_conn, sqlite_conn, source_system=source_system)
+            if "quotes" in normalized_tables:
+                counts["quotes_imported"] = import_quotes(pg_conn, sqlite_conn, source_system=source_system)
+            if "quote_locations" in normalized_tables:
+                counts["quote_locations_imported"] = import_quote_locations(pg_conn, sqlite_conn, source_system=source_system)
+            if "quote_items" in normalized_tables:
+                counts["quote_items_imported"] = import_quote_items(pg_conn, sqlite_conn, source_system=source_system)
             pg_conn.commit()
         except Exception as exc:
             pg_conn.rollback()
@@ -1232,6 +1492,9 @@ def main():
             "work_orders",
             "entry_descriptions",
             "service_stop_entries",
+            "quotes",
+            "quote_locations",
+            "quote_items",
         ]
 
     counts = import_skimmer_data(args.sqlite, tables, source_system=args.source_system)

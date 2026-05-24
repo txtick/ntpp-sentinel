@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import os
+import time
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -587,6 +588,42 @@ def get_technician_profile(technician_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def _technician_profiles_by_id(technician_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch non-private route profile fields for a batch of technician IDs."""
+    ids = sorted({str(t or "").strip() for t in technician_ids if str(t or "").strip()})
+    if not ids:
+        return {}
+    _require_postgres()
+    with pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    technician_id,
+                    display_name,
+                    home_latitude,
+                    home_longitude,
+                    default_start_location_type,
+                    default_end_location_type,
+                    custom_start_latitude,
+                    custom_start_longitude,
+                    custom_end_latitude,
+                    custom_end_longitude,
+                    include_start_drive_in_metrics,
+                    include_end_drive_in_metrics,
+                    is_active,
+                    notes,
+                    created_at,
+                    updated_at
+                FROM technician_route_profiles
+                WHERE technician_id = ANY(%s)
+                """,
+                (ids,),
+            )
+            rows = cur.fetchall()
+    return {str(r["technician_id"]): dict(r) for r in rows}
+
+
 # ── Scenarios ─────────────────────────────────────────────────────────────────
 
 def list_scenarios() -> Dict[str, Any]:
@@ -660,9 +697,10 @@ def get_scenario(scenario_id: int) -> Dict[str, Any]:
         groups[key]["stops"].append({**a})
 
     route_groups = []
+    profiles_by_id = _technician_profiles_by_id([g["source_account_id"] for g in groups.values()])
     for g in sorted(groups.values(), key=lambda x: (x["tech_name"], DAY_ORDER.get(x["day_of_week"], 99))):
         stops = sorted(g["stops"], key=lambda s: s.get("stop_order") or 9999)
-        profile = get_technician_profile(g["source_account_id"])
+        profile = profiles_by_id.get(g["source_account_id"])
         metrics = _build_route_metrics(stops, profile)
         warnings = _build_route_warnings(stops, profile)
         route_groups.append({**g, "stops": stops, "metrics": metrics, "warnings": warnings})
@@ -979,15 +1017,9 @@ def validate_scenario(scenario_id: int) -> Dict[str, Any]:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} is missing a technician."})
             if stop.get("day_of_week") not in valid_days:
                 all_errors.append({"group": key, "message": f"{stop.get('customer_name') or loc or 'Assignment'} has invalid day: {stop.get('day_of_week') or 'blank'}."})
-            # Key by (location, tech) so the same pool under different techs
-            # (e.g. maintenance + repair) is not treated as a duplicate.
-            combo = f"{loc}::{stop.get('source_account_id', '')}"
-            seen_locations.setdefault(combo, []).append(key)
+            seen_locations.setdefault(loc, []).append(key)
 
-    # Flag only if the SAME tech has the same location in multiple route groups.
-    # Cross-tech duplicates (maintenance tech + repair tech at the same pool) are valid.
-    for combo, groups in seen_locations.items():
-        loc = combo.split("::")[0]
+    for loc, groups in seen_locations.items():
         if loc and len(groups) > 1:
             all_errors.append({
                 "group": "global",
@@ -1663,6 +1695,7 @@ def calculate_route_estimate(
         raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
     if source_type not in {"scenario", "current"}:
         raise HTTPException(status_code=400, detail="source_type must be scenario or current")
+    started = time.monotonic()
     day_of_week = _require_valid_day(day_of_week)
     route_traffic_mode = google_maps.traffic_mode()
     routing_preference = google_maps.routing_preference()
@@ -1890,6 +1923,22 @@ def calculate_route_estimate(
     def _min(s: Optional[int]) -> Optional[int]:
         return round((s or 0) / 60) if s is not None else None
 
+    _logger.info(
+        "route_estimate_complete scenario_id=%s source_type=%s technician_id=%s day=%s "
+        "stop_count=%s request_count=%s cache_hit_count=%s warning_count=%s "
+        "traffic_mode=%s duration_ms=%s",
+        scenario_id,
+        source_type,
+        technician_id,
+        day_of_week,
+        len(stops),
+        request_count,
+        cache_hit_count,
+        len(warnings),
+        route_traffic_mode,
+        round((time.monotonic() - started) * 1000),
+    )
+
     return {
         "ok": True,
         "run_id": run_id,
@@ -2016,6 +2065,7 @@ def optimize_route_order(
         raise HTTPException(status_code=400, detail="GOOGLE_MAPS_SERVER_API_KEY is not configured")
     if not google_maps.optimization_enabled():
         raise HTTPException(status_code=403, detail="Route optimization is disabled in Sentinel")
+    started = time.monotonic()
     day_of_week = _require_valid_day(day_of_week)
     route_traffic_mode = google_maps.traffic_mode()
 
@@ -2112,6 +2162,18 @@ def optimize_route_order(
         1
         for idx, stop in enumerate(full_optimized)
         if idx >= len(valid_stops) or stop.get("id") != valid_stops[idx].get("id")
+    )
+
+    _logger.info(
+        "route_optimization_preview scenario_id=%s technician_id=%s day=%s stop_count=%s "
+        "request_count=2 stops_reordered=%s traffic_mode=%s duration_ms=%s",
+        scenario_id,
+        technician_id,
+        day_of_week,
+        len(stops),
+        reordered_count,
+        route_traffic_mode,
+        round((time.monotonic() - started) * 1000),
     )
 
     return {

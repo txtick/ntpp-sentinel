@@ -11,6 +11,15 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from services.sales_assist import (
+    create_activity as sa_create_activity,
+    generate_ai_notes as sa_generate_ai_notes,
+    get_ai_notes as sa_get_ai_notes,
+    get_quote_detail as sa_get_quote_detail,
+    list_activities as sa_list_activities,
+    list_quotes as sa_list_quotes,
+    mark_ai_notes_stale as sa_mark_ai_notes_stale,
+)
 from services.route_sandbox import (
     apply_optimized_order,
     approve_change_plan,
@@ -41,7 +50,7 @@ from services.route_sandbox import (
     upsert_technician_profile,
     validate_scenario,
 )
-from pg import ensure_route_maps_schema
+from pg import ensure_route_maps_schema, ensure_sales_assist_schema
 from services.dashboard_backend import (
     create_alert_reminder,
     get_dashboard_summary,
@@ -448,6 +457,7 @@ def _startup() -> None:
         ensure_web_backend_schema()
         ensure_route_sandbox_schema()
         ensure_route_maps_schema()
+        ensure_sales_assist_schema()
         try:
             result = backfill_technician_home_coords()
             if result.get("updated"):
@@ -1367,3 +1377,85 @@ async def api_apply_optimized_order(request: Request, scenario_id: int, technici
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="ordered_assignment_ids must be integers")
     return apply_optimized_order(scenario_id, technician_id, day, parsed_ids)
+
+
+# ── Sales Assist ──────────────────────────────────────────────────────────────
+
+@app.get("/api/sales-assist/quotes")
+def api_sa_list_quotes(
+    request: Request,
+    status: str = "",
+    city: str = "",
+    min_amount: float = None,
+    max_amount: float = None,
+    age_min_days: int = None,
+    age_max_days: int = None,
+    active_customer_only: int = 0,
+    overdue_follow_up_only: int = 0,
+    search: str = "",
+    sort: str = "priority",
+    limit: int = 50,
+    offset: int = 0,
+):
+    _dashboard_read_auth_or_401(request)
+    statuses = [s.strip() for s in status.split(",") if s.strip()] if status else None
+    return sa_list_quotes(
+        statuses=statuses,
+        city=city or None,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        age_min_days=age_min_days,
+        age_max_days=age_max_days,
+        active_customer_only=bool(active_customer_only),
+        overdue_follow_up_only=bool(overdue_follow_up_only),
+        search=search or None,
+        sort=sort,
+        limit=min(limit, 200),
+        offset=offset,
+    )
+
+
+@app.get("/api/sales-assist/quotes/{quote_id}")
+def api_sa_get_quote(request: Request, quote_id: str):
+    _dashboard_read_auth_or_401(request)
+    result = sa_get_quote_detail(quote_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    return result
+
+
+@app.get("/api/sales-assist/quotes/{quote_id}/ai-notes")
+def api_sa_get_ai_notes(request: Request, quote_id: str):
+    _dashboard_read_auth_or_401(request)
+    return sa_get_ai_notes(quote_id) or {}
+
+
+@app.post("/api/sales-assist/quotes/{quote_id}/ai-notes/generate")
+def api_sa_generate_ai_notes(request: Request, quote_id: str):
+    _dashboard_mutation_auth_or_401(request)
+    return sa_generate_ai_notes(quote_id)
+
+
+@app.post("/api/sales-assist/quotes/{quote_id}/ai-notes/mark-stale")
+def api_sa_mark_ai_notes_stale(request: Request, quote_id: str):
+    _dashboard_mutation_auth_or_401(request)
+    sa_mark_ai_notes_stale(quote_id)
+    return {"ok": True}
+
+
+@app.get("/api/sales-assist/quotes/{quote_id}/activities")
+def api_sa_list_activities(request: Request, quote_id: str):
+    _dashboard_read_auth_or_401(request)
+    return {"activities": sa_list_activities(quote_id)}
+
+
+@app.post("/api/sales-assist/quotes/{quote_id}/activities")
+async def api_sa_create_activity(request: Request, quote_id: str):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    body["quote_id"] = quote_id
+    try:
+        result = sa_create_activity(quote_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result

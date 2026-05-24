@@ -198,6 +198,7 @@ const viewMeta = {
   settings: { kicker: "Settings", title: "Alert Rule Configuration" },
   "route-sandbox": { kicker: "Routes", title: "Route Sandbox" },
   "route-tech-settings": { kicker: "Routes", title: "Tech Route Settings" },
+  "sales-assist": { kicker: "Sales", title: "Sales Assist — Quote Pipeline" },
 };
 
 const filters = {
@@ -1382,6 +1383,12 @@ function renderFilters() {
     els.filters.innerHTML = "";
     return;
   }
+
+  if (state.view === "sales-assist") {
+    setLayout("single");
+    els.filters.innerHTML = "";
+    return;
+  }
 }
 
 async function loadCurrentView(force = false) {
@@ -1401,6 +1408,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "route-sandbox") await loadRouteSandbox(force);
     if (state.view === "route-tech-settings")
       await loadRouteTechSettings(force);
+    if (state.view === "sales-assist") await loadSalesAssist(force);
     setStatus("Live", "info");
   } catch (error) {
     setStatus("Error", "critical");
@@ -4697,7 +4705,7 @@ function renderSandboxFilters(groups) {
       const filtered = sandboxFilterGroups(sandboxGetActiveData());
       renderSandboxFilters(filtered);
       renderSandboxRouteList(filtered);
-      sandboxRenderMap(sandbox.techProfiles || []);
+      renderSandboxMap_deferred(sandbox.techProfiles || []);
     });
 
   document
@@ -4709,7 +4717,7 @@ function renderSandboxFilters(groups) {
       const filtered = sandboxFilterGroups(sandboxGetActiveData());
       renderSandboxFilters(filtered);
       renderSandboxRouteList(filtered);
-      sandboxRenderMap(sandbox.techProfiles || []);
+      renderSandboxMap_deferred(sandbox.techProfiles || []);
     });
 }
 
@@ -5531,6 +5539,580 @@ async function saveTechProfile(techId) {
     });
   }, "Tech profile saved");
 }
+
+// ── Sales Assist ─────────────────────────────────────────────────────────────
+
+const salesAssist = {
+  quotes: [],
+  selectedQuoteId: null,
+  filters: {
+    status: "Sent,Draft",
+    city: "",
+    search: "",
+    sort: "priority",
+    min_amount: "",
+    max_amount: "",
+    active_customer_only: 0,
+    overdue_follow_up_only: 0,
+  },
+  aiNotes: {},
+  activities: {},
+  loadingAi: new Set(),
+};
+
+const SA_ACTIVITY_LABELS = {
+  called: "Called",
+  voicemail: "Left Voicemail",
+  texted: "Texted",
+  emailed: "Emailed",
+  interested: "Customer Interested",
+  not_interested: "Not Interested",
+  waiting_on_customer: "Waiting on Customer",
+  follow_up_scheduled: "Follow-Up Scheduled",
+  note: "Note",
+  skipped: "Skipped",
+};
+
+async function loadSalesAssist(_force = false) {
+  const qs = new URLSearchParams();
+  if (salesAssist.filters.status) qs.set("status", salesAssist.filters.status);
+  if (salesAssist.filters.city) qs.set("city", salesAssist.filters.city);
+  if (salesAssist.filters.search) qs.set("search", salesAssist.filters.search);
+  if (salesAssist.filters.sort) qs.set("sort", salesAssist.filters.sort);
+  if (salesAssist.filters.min_amount) qs.set("min_amount", salesAssist.filters.min_amount);
+  if (salesAssist.filters.max_amount) qs.set("max_amount", salesAssist.filters.max_amount);
+  if (salesAssist.filters.active_customer_only) qs.set("active_customer_only", "1");
+  if (salesAssist.filters.overdue_follow_up_only) qs.set("overdue_follow_up_only", "1");
+  qs.set("limit", "100");
+
+  const data = await api(`/api/sales-assist/quotes?${qs}`);
+  salesAssist.quotes = data.quotes || [];
+  renderSalesAssist(data);
+}
+
+function renderSalesAssist(data) {
+  const quotes = data.quotes || [];
+  const total = data.total || 0;
+
+  els.mainPanel.innerHTML = `
+    <div class="sa-layout">
+      <div class="sa-list-col">
+        ${renderSaFilters()}
+        <div class="sa-list-header">
+          <span class="muted" style="font-size:13px">${total} quote${total !== 1 ? "s" : ""}</span>
+        </div>
+        <div id="sa-quote-list" class="sa-quote-list">
+          ${quotes.length === 0
+            ? `<div class="empty-state">No quotes match your filters.</div>`
+            : quotes.map(renderSaQuoteCard).join("")}
+        </div>
+      </div>
+      <div class="sa-detail-col" id="sa-detail-col">
+        <div class="empty-state" style="margin-top:80px">Select a quote to view details and AI sales notes.</div>
+      </div>
+    </div>`;
+
+  document.getElementById("sa-filter-form")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    saApplyFilters();
+  });
+  document.getElementById("sa-filter-reset")?.addEventListener("click", saResetFilters);
+}
+
+function renderSaFilters() {
+  const f = salesAssist.filters;
+  return `
+    <form id="sa-filter-form" class="sa-filters">
+      <input class="input sa-search" placeholder="Search customer or quote #" value="${escapeHtml(f.search)}" id="sa-search" />
+      <div class="sa-filter-row">
+        <select id="sa-status" class="input sa-select">
+          <option value="Sent,Draft" ${f.status === "Sent,Draft" ? "selected" : ""}>Open (Sent + Draft)</option>
+          <option value="Sent" ${f.status === "Sent" ? "selected" : ""}>Sent only</option>
+          <option value="Draft" ${f.status === "Draft" ? "selected" : ""}>Draft only</option>
+          <option value="Expired" ${f.status === "Expired" ? "selected" : ""}>Expired</option>
+          <option value="Sent,Draft,Expired" ${f.status === "Sent,Draft,Expired" ? "selected" : ""}>All Open + Expired</option>
+          <option value="Approved" ${f.status === "Approved" ? "selected" : ""}>Approved</option>
+          <option value="" ${!f.status ? "selected" : ""}>All statuses</option>
+        </select>
+        <select id="sa-sort" class="input sa-select">
+          <option value="priority" ${f.sort === "priority" ? "selected" : ""}>Priority</option>
+          <option value="newest" ${f.sort === "newest" ? "selected" : ""}>Newest</option>
+          <option value="oldest" ${f.sort === "oldest" ? "selected" : ""}>Oldest</option>
+          <option value="highest_amount" ${f.sort === "highest_amount" ? "selected" : ""}>Highest Amount</option>
+          <option value="no_recent_follow_up" ${f.sort === "no_recent_follow_up" ? "selected" : ""}>No Recent Follow-Up</option>
+        </select>
+      </div>
+      <div class="sa-filter-row">
+        <input class="input sa-narrow" placeholder="City" value="${escapeHtml(f.city)}" id="sa-city" />
+        <input class="input sa-narrow" placeholder="Min $" type="number" value="${f.min_amount}" id="sa-min-amount" style="width:80px" />
+        <input class="input sa-narrow" placeholder="Max $" type="number" value="${f.max_amount}" id="sa-max-amount" style="width:80px" />
+      </div>
+      <div class="sa-filter-row">
+        <label class="sa-check-label">
+          <input type="checkbox" id="sa-active-only" ${f.active_customer_only ? "checked" : ""} />
+          Active customers only
+        </label>
+        <label class="sa-check-label">
+          <input type="checkbox" id="sa-overdue-only" ${f.overdue_follow_up_only ? "checked" : ""} />
+          No follow-up scheduled
+        </label>
+      </div>
+      <div class="sa-filter-row">
+        <button type="submit" class="button button-primary" style="font-size:13px">Search</button>
+        <button type="button" id="sa-filter-reset" class="button button-secondary" style="font-size:13px">Reset</button>
+      </div>
+    </form>`;
+}
+
+function saApplyFilters() {
+  salesAssist.filters.search = document.getElementById("sa-search")?.value.trim() || "";
+  salesAssist.filters.status = document.getElementById("sa-status")?.value || "";
+  salesAssist.filters.sort = document.getElementById("sa-sort")?.value || "priority";
+  salesAssist.filters.city = document.getElementById("sa-city")?.value.trim() || "";
+  salesAssist.filters.min_amount = document.getElementById("sa-min-amount")?.value || "";
+  salesAssist.filters.max_amount = document.getElementById("sa-max-amount")?.value || "";
+  salesAssist.filters.active_customer_only = document.getElementById("sa-active-only")?.checked ? 1 : 0;
+  salesAssist.filters.overdue_follow_up_only = document.getElementById("sa-overdue-only")?.checked ? 1 : 0;
+  loadSalesAssist(true);
+}
+
+function saResetFilters() {
+  salesAssist.filters = {
+    status: "Sent,Draft", city: "", search: "", sort: "priority",
+    min_amount: "", max_amount: "", active_customer_only: 0, overdue_follow_up_only: 0,
+  };
+  loadSalesAssist(true);
+}
+
+function saPriorityColor(score) {
+  if (score >= 70) return "#ef4444";
+  if (score >= 45) return "#f59e0b";
+  return "#6b7280";
+}
+
+function saStatusBadge(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "sent") return badge("Sent", "info");
+  if (s === "draft") return badge("Draft", "muted");
+  if (s === "approved") return badge("Approved", "success");
+  if (s === "rejected") return badge("Rejected", "critical");
+  if (s === "expired") return badge("Expired", "warning");
+  if (s === "archived") return badge("Archived", "muted");
+  return badge(status || "Unknown", "muted");
+}
+
+function renderSaQuoteCard(q) {
+  const isSelected = salesAssist.selectedQuoteId === q.source_quote_id;
+  const scoreColor = saPriorityColor(q.priority_score || 0);
+  const amount = q.total_amount != null ? currency(q.total_amount) : "—";
+  const age = q.age_days != null ? `${q.age_days}d` : "";
+  const badges = [];
+  if (q.is_active_customer) badges.push(`<span class="sa-badge sa-badge-active">Active Customer</span>`);
+  if (parseFloat(q.total_amount) >= 2000) badges.push(`<span class="sa-badge sa-badge-high-value">High Value</span>`);
+  if (q.expiration_date) {
+    const daysLeft = Math.round((new Date(q.expiration_date) - new Date()) / 86400000);
+    if (daysLeft >= 0 && daysLeft <= 7) badges.push(`<span class="sa-badge sa-badge-urgent">Expires ${daysLeft}d</span>`);
+  }
+  if (!q.last_activity_at) badges.push(`<span class="sa-badge sa-badge-nocontact">No Contact</span>`);
+
+  return `
+    <div class="sa-quote-card ${isSelected ? "is-selected" : ""}" onclick="saSelectQuote(${JSON.stringify(q.source_quote_id)})">
+      <div class="sa-card-top">
+        <div class="sa-card-name">${escapeHtml(q.customer_display_name || "Unknown Customer")}</div>
+        <div class="sa-card-amount">${escapeHtml(amount)}</div>
+      </div>
+      <div class="sa-card-meta">
+        ${saStatusBadge(q.status)}
+        ${age ? `<span class="muted" style="font-size:11px">${escapeHtml(age)} old</span>` : ""}
+        ${escapeHtml(q.customer_city || "")}
+      </div>
+      <div class="sa-card-badges">${badges.join("")}</div>
+      <div class="sa-priority-bar">
+        <span class="sa-priority-dot" style="background:${scoreColor}"></span>
+        <span class="sa-priority-label" style="color:${scoreColor}">Priority ${q.priority_score || 0}</span>
+      </div>
+    </div>`;
+}
+
+async function saSelectQuote(quoteId) {
+  salesAssist.selectedQuoteId = quoteId;
+  // Re-render cards to update selection highlight
+  document.querySelectorAll(".sa-quote-card").forEach((el) => {
+    const id = el.getAttribute("onclick")?.match(/'([^']+)'/)?.[1];
+    el.classList.toggle("is-selected", id === quoteId);
+  });
+
+  const detailCol = document.getElementById("sa-detail-col");
+  if (!detailCol) return;
+  detailCol.innerHTML = `<div class="empty-state">Loading…</div>`;
+
+  const [detail, activities, aiNotes] = await Promise.all([
+    api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}`),
+    api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/activities`),
+    api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/ai-notes`),
+  ]);
+
+  salesAssist.activities[quoteId] = activities.activities || [];
+  salesAssist.aiNotes[quoteId] = aiNotes;
+  detailCol.innerHTML = renderSaDetail(detail, activities.activities || [], aiNotes);
+  attachSaDetailHandlers(quoteId, detail);
+}
+
+function renderSaDetail(q, activities, aiNotes) {
+  const phone = q.customer_mobile || q.customer_phone || "";
+  const amount = q.total_amount != null ? currency(q.total_amount) : "—";
+  const subtotal = q.subtotal_amount != null ? currency(q.subtotal_amount) : null;
+  const tax = q.tax_amount != null && q.tax_amount > 0 ? currency(q.tax_amount) : null;
+
+  const lineItems = (q.line_items || []).map((item, i) => `
+    <tr>
+      <td>${escapeHtml(item.item_name || "Item")}</td>
+      <td style="color:#6b7280;font-size:12px">${escapeHtml(item.description || "")}</td>
+      <td style="text-align:right">${item.quantity ?? 1}</td>
+      <td style="text-align:right">${item.unit_price != null ? currency(item.unit_price) : "—"}</td>
+      <td style="text-align:right;font-weight:600">${item.total_price != null ? currency(item.total_price) : "—"}</td>
+    </tr>`).join("");
+
+  const pool = q.pool_info;
+  let poolSection = "";
+  if (pool) {
+    const equip = Array.isArray(pool.equipment_items) ? pool.equipment_items : [];
+    poolSection = `
+      <div class="sa-section">
+        <div class="sa-section-title">Pool Information</div>
+        ${pool.gallons ? `<div class="sa-kv"><span>Size</span><span>${pool.gallons.toLocaleString()} gallons</span></div>` : ""}
+        ${pool.notes ? `<div class="sa-kv"><span>Notes</span><span>${escapeHtml(pool.notes)}</span></div>` : ""}
+        ${pool.sl_notes ? `<div class="sa-kv"><span>Location notes</span><span>${escapeHtml(pool.sl_notes)}</span></div>` : ""}
+        ${equip.length > 0 ? `
+          <div class="sa-kv"><span>Equipment</span><span>${equip.slice(0, 6).map((e) => {
+            if (typeof e !== "object") return escapeHtml(String(e));
+            const parts = [e.Brand || e.brand, e.Model || e.model, e.Type || e.type || e.EquipmentType].filter(Boolean);
+            return escapeHtml(parts.join(" ") || "Unknown");
+          }).join("<br>")}</span></div>` : ""}
+      </div>`;
+  }
+
+  const workOrders = (q.recent_work_orders || []).map((wo) => `
+    <div style="font-size:12px;margin-bottom:6px;padding:6px 0;border-bottom:1px solid #f1f5f9">
+      <span class="muted">${escapeHtml(wo.service_date ? String(wo.service_date).slice(0, 10) : "")}</span>
+      ${wo.work_order_type ? `<span style="margin-left:6px;font-weight:500">[${escapeHtml(wo.work_order_type)}]</span>` : ""}
+      ${wo.work_performed ? `<div style="margin-top:3px">${escapeHtml(wo.work_performed.slice(0, 120))}</div>` : ""}
+    </div>`).join("");
+
+  const activityList = activities.length === 0
+    ? `<div class="muted" style="font-size:12px">No activity recorded yet.</div>`
+    : activities.map((a) => `
+      <div class="sa-activity-item">
+        <span class="sa-activity-type">${escapeHtml(SA_ACTIVITY_LABELS[a.activity_type] || a.activity_type)}</span>
+        <span class="sa-activity-ts muted">${escapeHtml(String(a.created_at || "").slice(0, 16).replace("T", " "))}</span>
+        ${a.activity_note ? `<div class="sa-activity-note">${escapeHtml(a.activity_note)}</div>` : ""}
+        ${a.follow_up_at ? `<div class="muted" style="font-size:11px">Follow-up: ${escapeHtml(String(a.follow_up_at).slice(0, 10))}</div>` : ""}
+      </div>`).join("");
+
+  const aiSection = renderSaAiNotes(q.source_quote_id, aiNotes);
+
+  return `
+    <div class="sa-detail">
+      <div class="sa-detail-header">
+        <div>
+          <div class="sa-detail-name">${escapeHtml(q.customer_display_name || "Unknown Customer")}</div>
+          <div class="sa-detail-meta">
+            Quote #${q.quote_number || "—"} · ${saStatusBadge(q.status)} · ${escapeHtml(amount)}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${phone ? `<a href="tel:${escapeHtml(phone)}" class="button button-primary" style="font-size:12px">Call ${escapeHtml(phone)}</a>` : ""}
+        </div>
+      </div>
+
+      <div class="sa-detail-body">
+        <div class="sa-section">
+          <div class="sa-section-title">Customer</div>
+          ${phone ? `<div class="sa-kv"><span>Phone</span><span>${escapeHtml(phone)}</span></div>` : ""}
+          ${q.customer_email ? `<div class="sa-kv"><span>Email</span><span>${escapeHtml(q.customer_email)}</span></div>` : ""}
+          ${q.customer_address ? `<div class="sa-kv"><span>Address</span><span>${escapeHtml([q.customer_address, q.customer_city, q.customer_state].filter(Boolean).join(", "))}</span></div>` : ""}
+          ${q.customer_status ? `<div class="sa-kv"><span>Status</span><span>${escapeHtml(q.customer_status)}${q.is_active_customer ? ' · <strong>Active service customer</strong>' : ""}</span></div>` : ""}
+        </div>
+
+        <div class="sa-section">
+          <div class="sa-section-title">Quote Details</div>
+          <div class="sa-kv"><span>Quote date</span><span>${escapeHtml(q.quote_date || "—")}</span></div>
+          ${q.expiration_date ? `<div class="sa-kv"><span>Expires</span><span>${escapeHtml(q.expiration_date)}</span></div>` : ""}
+          ${q.sent_date ? `<div class="sa-kv"><span>Sent</span><span>${escapeHtml(q.sent_date)}</span></div>` : ""}
+          ${q.reject_reason ? `<div class="sa-kv"><span>Rejection reason</span><span>${escapeHtml(q.reject_reason)}</span></div>` : ""}
+        </div>
+
+        ${q.message ? `
+          <div class="sa-section">
+            <div class="sa-section-title">Customer Message</div>
+            <div style="font-size:13px;white-space:pre-wrap">${escapeHtml(q.message)}</div>
+          </div>` : ""}
+
+        ${q.internal_notes ? `
+          <div class="sa-section">
+            <div class="sa-section-title">Internal Notes</div>
+            <div style="font-size:13px;white-space:pre-wrap">${escapeHtml(q.internal_notes)}</div>
+          </div>` : ""}
+
+        ${lineItems ? `
+          <div class="sa-section">
+            <div class="sa-section-title">Line Items</div>
+            <table class="sa-items-table">
+              <thead>
+                <tr><th>Item</th><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit</th><th style="text-align:right">Total</th></tr>
+              </thead>
+              <tbody>${lineItems}</tbody>
+              <tfoot>
+                ${subtotal && subtotal !== amount ? `<tr><td colspan="4" style="text-align:right;color:#6b7280">Subtotal</td><td style="text-align:right">${escapeHtml(subtotal)}</td></tr>` : ""}
+                ${tax ? `<tr><td colspan="4" style="text-align:right;color:#6b7280">Tax</td><td style="text-align:right">${escapeHtml(tax)}</td></tr>` : ""}
+                <tr><td colspan="4" style="text-align:right;font-weight:700">Total</td><td style="text-align:right;font-weight:700">${escapeHtml(amount)}</td></tr>
+              </tfoot>
+            </table>
+          </div>` : ""}
+
+        ${poolSection}
+
+        ${workOrders ? `
+          <div class="sa-section">
+            <div class="sa-section-title">Recent Service History</div>
+            ${workOrders || '<div class="muted" style="font-size:12px">No recent work orders found.</div>'}
+          </div>` : ""}
+
+        ${aiSection}
+
+        <div class="sa-section" id="sa-activity-section">
+          <div class="sa-section-title">Follow-Up Activity</div>
+          ${renderSaActivityForm(q.source_quote_id)}
+          <div id="sa-activity-list">${activityList}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSaAiNotes(quoteId, aiNotes) {
+  const hasKey = !!document.cookie; // placeholder — actual check is ANTHROPIC_API_KEY on backend
+  const status = aiNotes?.status;
+  const notes = aiNotes?.sales_notes_json;
+  const isGenerating = status === "generating" || salesAssist.loadingAi.has(quoteId);
+  const isError = status === "error";
+  const hasNotes = status === "completed" && notes;
+
+  let content = "";
+
+  if (isGenerating) {
+    content = `<div class="muted" style="font-size:13px">Generating AI sales notes… this may take 10–30 seconds. Refresh when done.</div>`;
+  } else if (isError) {
+    content = `<div style="color:#ef4444;font-size:12px">Error generating notes: ${escapeHtml(aiNotes?.error_message || "Unknown error")}</div>`;
+  } else if (hasNotes) {
+    content = renderSaNotesContent(notes);
+  } else {
+    content = `<div class="muted" style="font-size:13px">No AI sales notes generated yet. Click Generate to create them.</div>`;
+  }
+
+  const staleAt = aiNotes?.stale_at;
+  const staleWarning = staleAt
+    ? `<div class="sa-ai-stale-warning">Quote data changed since notes were generated — consider regenerating.</div>`
+    : "";
+
+  const confidenceBadge = hasNotes && notes?.confidence
+    ? `${badge(
+        notes.confidence === "high" ? "High Confidence" : notes.confidence === "medium" ? "Medium Confidence" : "Low Confidence",
+        notes.confidence === "high" ? "info" : notes.confidence === "medium" ? "warning" : "critical"
+      )}`
+    : "";
+
+  return `
+    <div class="sa-section sa-ai-section">
+      <div class="sa-section-title" style="display:flex;align-items:center;gap:8px">
+        AI Sales Notes ${confidenceBadge}
+        <div style="margin-left:auto;display:flex;gap:6px">
+          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopyCallScript(${JSON.stringify(quoteId)})" style="font-size:11px">Copy Call Script</button>` : ""}
+          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopySms(${JSON.stringify(quoteId)})" style="font-size:11px">Copy SMS</button>` : ""}
+          <button class="button button-secondary" onclick="saGenerateAiNotes(${JSON.stringify(quoteId)})" style="font-size:11px" ${isGenerating ? "disabled" : ""}>
+            ${hasNotes ? "Regenerate" : "Generate"}
+          </button>
+        </div>
+      </div>
+      ${staleWarning}
+      <div id="sa-ai-content-${CSS.escape(quoteId)}">${content}</div>
+    </div>`;
+}
+
+function renderSaNotesContent(notes) {
+  const section = (title, items, opts = {}) => {
+    if (!items || (Array.isArray(items) && items.length === 0)) return "";
+    const listItems = Array.isArray(items)
+      ? items.map((item) => {
+          if (typeof item === "object" && item.objection) {
+            return `<li class="sa-objection"><strong>${escapeHtml(item.objection)}</strong><div style="margin-top:3px;color:#374151">${escapeHtml(item.suggested_response || "")}</div></li>`;
+          }
+          return `<li>${escapeHtml(String(item))}</li>`;
+        }).join("")
+      : `<p>${escapeHtml(String(items))}</p>`;
+    const tag = Array.isArray(items) ? "ul" : "div";
+    const cls = opts.warning ? " sa-claims-avoid" : "";
+    return `
+      <details class="sa-notes-detail" ${opts.open ? "open" : ""}>
+        <summary class="sa-notes-summary">${title}</summary>
+        <${tag} class="sa-notes-list${cls}">${listItems}</${tag}>
+      </details>`;
+  };
+
+  return `
+    ${notes.summary ? `<div class="sa-notes-summary-box">${escapeHtml(notes.summary)}</div>` : ""}
+    ${notes.problem_solved ? `<div class="sa-notes-problem">Problem solved: ${escapeHtml(notes.problem_solved)}</div>` : ""}
+    ${section("Confirmed Quote Facts", notes.confirmed_quote_facts, { open: true })}
+    ${section("General Talking Points", notes.general_talking_points, { open: true })}
+    ${section("Efficiency Benefits", notes.efficiency_points)}
+    ${section("Reliability Benefits", notes.reliability_points)}
+    ${section("Comfort & Convenience", notes.comfort_convenience_points)}
+    ${section("Risks of Waiting", notes.risks_of_waiting)}
+    ${section("Likely Objections & Responses", notes.likely_objections)}
+    ${notes.call_opening ? `
+      <details class="sa-notes-detail" open>
+        <summary class="sa-notes-summary">Suggested Call Opening</summary>
+        <div class="sa-script-block" id="sa-call-opening-${CSS.escape(salesAssist.selectedQuoteId || "")}">${escapeHtml(notes.call_opening)}</div>
+      </details>` : ""}
+    ${notes.closing_script ? `
+      <details class="sa-notes-detail">
+        <summary class="sa-notes-summary">Suggested Close</summary>
+        <div class="sa-script-block">${escapeHtml(notes.closing_script)}</div>
+      </details>` : ""}
+    ${notes.sms_follow_up ? `
+      <details class="sa-notes-detail">
+        <summary class="sa-notes-summary">SMS Follow-Up Template</summary>
+        <div class="sa-script-block" id="sa-sms-${CSS.escape(salesAssist.selectedQuoteId || "")}">${escapeHtml(notes.sms_follow_up)}</div>
+      </details>` : ""}
+    ${notes.email_follow_up ? `
+      <details class="sa-notes-detail">
+        <summary class="sa-notes-summary">Email Follow-Up Template</summary>
+        <div class="sa-script-block">${escapeHtml(notes.email_follow_up)}</div>
+      </details>` : ""}
+    ${section("Questions to Ask Before Closing", notes.questions_to_ask)}
+    ${notes.claims_to_avoid?.length ? section("Claims to Avoid", notes.claims_to_avoid, { warning: true }) : ""}
+    ${notes.missing_information?.length ? `
+      <details class="sa-notes-detail">
+        <summary class="sa-notes-summary">Missing Information</summary>
+        <ul class="sa-notes-list sa-missing-info">
+          ${notes.missing_information.map((m) => `<li>${escapeHtml(String(m))}</li>`).join("")}
+        </ul>
+      </details>` : ""}`;
+}
+
+function renderSaActivityForm(quoteId) {
+  return `
+    <div class="sa-activity-form" id="sa-activity-form">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'called')">Called</button>
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'voicemail')">Voicemail</button>
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'texted')">Texted</button>
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'emailed')">Emailed</button>
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'interested')">Interested</button>
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'not_interested')">Not Interested</button>
+        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'waiting_on_customer')">Waiting</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <input id="sa-note-input" class="input" placeholder="Add a note…" style="flex:1;font-size:13px" />
+        <button class="button button-secondary" style="font-size:12px" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'note', true)">Add Note</button>
+      </div>
+    </div>`;
+}
+
+async function saLogActivity(quoteId, type, useNoteInput = false) {
+  const note = useNoteInput
+    ? (document.getElementById("sa-note-input")?.value.trim() || "")
+    : "";
+  if (type === "note" && !note) {
+    showToast("Enter a note first.");
+    return;
+  }
+  await api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/activities`, {
+    method: "POST",
+    body: JSON.stringify({ activity_type: type, activity_note: note || null }),
+  });
+  if (useNoteInput) {
+    const inp = document.getElementById("sa-note-input");
+    if (inp) inp.value = "";
+  }
+  const updated = await api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/activities`);
+  salesAssist.activities[quoteId] = updated.activities || [];
+  const listEl = document.getElementById("sa-activity-list");
+  if (listEl) {
+    listEl.innerHTML = (updated.activities || []).length === 0
+      ? `<div class="muted" style="font-size:12px">No activity recorded yet.</div>`
+      : (updated.activities || []).map((a) => `
+        <div class="sa-activity-item">
+          <span class="sa-activity-type">${escapeHtml(SA_ACTIVITY_LABELS[a.activity_type] || a.activity_type)}</span>
+          <span class="sa-activity-ts muted">${escapeHtml(String(a.created_at || "").slice(0, 16).replace("T", " "))}</span>
+          ${a.activity_note ? `<div class="sa-activity-note">${escapeHtml(a.activity_note)}</div>` : ""}
+        </div>`).join("");
+  }
+  showToast(`Logged: ${SA_ACTIVITY_LABELS[type] || type}`);
+}
+
+async function saGenerateAiNotes(quoteId) {
+  salesAssist.loadingAi.add(quoteId);
+  const contentEl = document.getElementById(`sa-ai-content-${CSS.escape(quoteId)}`);
+  if (contentEl) contentEl.innerHTML = `<div class="muted" style="font-size:13px">Generating AI sales notes… this may take 10–30 seconds.</div>`;
+
+  try {
+    const result = await api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/ai-notes/generate`, { method: "POST" });
+    salesAssist.loadingAi.delete(quoteId);
+    if (result.status === "completed" || result.notes) {
+      salesAssist.aiNotes[quoteId] = { status: "completed", sales_notes_json: result.notes };
+    } else if (result.status === "already_current") {
+      const existing = await api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/ai-notes`);
+      salesAssist.aiNotes[quoteId] = existing;
+    } else {
+      salesAssist.aiNotes[quoteId] = { status: "error", error_message: result.error };
+    }
+  } catch (err) {
+    salesAssist.loadingAi.delete(quoteId);
+    salesAssist.aiNotes[quoteId] = { status: "error", error_message: err.message };
+  }
+  const aiNotes = salesAssist.aiNotes[quoteId] || {};
+  if (contentEl) {
+    const notes = aiNotes.sales_notes_json;
+    if (notes) {
+      contentEl.innerHTML = renderSaNotesContent(notes);
+    } else {
+      contentEl.innerHTML = `<div style="color:#ef4444;font-size:12px">Error: ${escapeHtml(aiNotes.error_message || "Unknown error")}</div>`;
+    }
+  }
+}
+
+function saCopyCallScript(quoteId) {
+  const notes = salesAssist.aiNotes[quoteId]?.sales_notes_json;
+  if (!notes) return showToast("No AI notes available.");
+  const text = [
+    notes.call_opening,
+    "",
+    "Key talking points:",
+    ...(notes.confirmed_quote_facts || []).map((f) => `• ${f}`),
+    ...(notes.general_talking_points || []).slice(0, 3).map((f) => `• ${f}`),
+    "",
+    notes.closing_script,
+  ].filter((l) => l != null).join("\n");
+  navigator.clipboard.writeText(text).then(() => showToast("Call script copied.")).catch(() => showToast("Copy failed."));
+}
+
+function saCopySms(quoteId) {
+  const notes = salesAssist.aiNotes[quoteId]?.sales_notes_json;
+  if (!notes?.sms_follow_up) return showToast("No SMS template available.");
+  navigator.clipboard.writeText(notes.sms_follow_up).then(() => showToast("SMS template copied.")).catch(() => showToast("Copy failed."));
+}
+
+function attachSaDetailHandlers(_quoteId, _detail) {
+  // Placeholder — event listeners attached inline via onclick
+}
+
+window.saSelectQuote = saSelectQuote;
+window.saGenerateAiNotes = saGenerateAiNotes;
+window.saLogActivity = saLogActivity;
+window.saCopyCallScript = saCopyCallScript;
+window.saCopySms = saCopySms;
+window.saApplyFilters = saApplyFilters;
+window.saResetFilters = saResetFilters;
 
 window.sandboxMoveStop = sandboxMoveStop;
 window.sandboxCloseDetail = sandboxCloseDetail;

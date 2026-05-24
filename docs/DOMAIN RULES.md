@@ -60,6 +60,7 @@ This document captures business behavior that should remain stable unless intent
 - Sentinel must not write route assignment or stop changes back to Skimmer.
 - Approved scenarios generate a Manual Skimmer Update Packet for humans to apply in Skimmer.
 - Manual checklist completion tracks human progress only; it must not mutate Skimmer/current route tables.
+- A scenario is invalid if the same service location/pool appears in more than one route group.
 - Technician home/start/end route settings are Sentinel-only and must not be pushed to Skimmer unless a future confirmed Skimmer field and explicit requirement exist.
 - Technician start/end mileage should report stop-to-stop miles separately from start-to-first-stop, last-stop-to-end, total with start/end, and total without start/end.
 - Start/end drive should not influence weighted route mileage unless explicitly enabled for that technician.
