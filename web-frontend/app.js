@@ -5887,7 +5887,6 @@ function renderSaDetail(q, activities, aiNotes) {
 }
 
 function renderSaAiNotes(quoteId, aiNotes) {
-  const hasKey = !!document.cookie; // placeholder — actual check is ANTHROPIC_API_KEY on backend
   const status = aiNotes?.status;
   const notes = aiNotes?.sales_notes_json;
   const isGenerating = status === "generating" || salesAssist.loadingAi.has(quoteId);
@@ -5897,36 +5896,36 @@ function renderSaAiNotes(quoteId, aiNotes) {
   let content = "";
 
   if (isGenerating) {
-    content = `<div class="muted" style="font-size:13px">Generating AI sales notes… this may take 10–30 seconds. Refresh when done.</div>`;
+    content = `<div class="muted" style="font-size:14px;padding:16px 0">Generating AI sales notes… this may take 15–30 seconds.</div>`;
   } else if (isError) {
-    content = `<div style="color:#ef4444;font-size:12px">Error generating notes: ${escapeHtml(aiNotes?.error_message || "Unknown error")}</div>`;
+    content = `<div style="color:#ef4444;font-size:13px;padding:8px 0">Error: ${escapeHtml(aiNotes?.error_message || "Unknown error")}</div>`;
   } else if (hasNotes) {
-    content = renderSaNotesContent(notes);
+    content = renderSaNotesContent(notes, quoteId);
   } else {
-    content = `<div class="muted" style="font-size:13px">No AI sales notes generated yet. Click Generate to create them.</div>`;
+    content = `<div class="muted" style="font-size:14px;padding:16px 0">No AI sales notes yet. Click <strong>Generate AI Notes</strong> to create quote-specific coaching notes.</div>`;
   }
 
   const staleAt = aiNotes?.stale_at;
   const staleWarning = staleAt
-    ? `<div class="sa-ai-stale-warning">Quote data changed since notes were generated — consider regenerating.</div>`
+    ? `<div class="sa-ai-stale-warning">⚠ Quote data changed since notes were generated — regenerate for updated notes.</div>`
     : "";
 
-  const confidenceBadge = hasNotes && notes?.confidence
-    ? `${badge(
-        notes.confidence === "high" ? "High Confidence" : notes.confidence === "medium" ? "Medium Confidence" : "Low Confidence",
-        notes.confidence === "high" ? "info" : notes.confidence === "medium" ? "warning" : "critical"
-      )}`
+  const conf = hasNotes ? (notes?.confidence || "") : "";
+  const confLabel = conf === "high" ? "High Confidence" : conf === "medium" ? "Med Confidence" : conf === "low" ? "Low Confidence" : "";
+  const confColor = conf === "high" ? "#16a34a" : conf === "medium" ? "#d97706" : conf === "low" ? "#dc2626" : "#6b7280";
+  const confidenceBadge = confLabel
+    ? `<span style="font-size:11px;font-weight:700;color:${confColor};background:${confColor}18;padding:2px 7px;border-radius:10px">${confLabel}</span>`
     : "";
 
   return `
     <div class="sa-section sa-ai-section">
-      <div class="sa-section-title" style="display:flex;align-items:center;gap:8px">
+      <div class="sa-section-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         AI Sales Notes ${confidenceBadge}
-        <div style="margin-left:auto;display:flex;gap:6px">
-          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopyCallScript('${quoteId}')" style="font-size:11px">Copy Call Script</button>` : ""}
-          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopySms('${quoteId}')" style="font-size:11px">Copy SMS</button>` : ""}
-          <button class="button button-secondary" onclick="saGenerateAiNotes('${quoteId}')" style="font-size:11px" ${isGenerating ? "disabled" : ""}>
-            ${hasNotes ? "Regenerate" : "Generate"}
+        <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopyCallScript('${quoteId}')" style="font-size:12px">Copy Call Script</button>` : ""}
+          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopySms('${quoteId}')" style="font-size:12px">Copy SMS</button>` : ""}
+          <button class="button button-secondary" onclick="saGenerateAiNotes('${quoteId}')" style="font-size:12px" ${isGenerating ? "disabled" : ""}>
+            ${hasNotes ? "Regenerate" : "Generate AI Notes"}
           </button>
         </div>
       </div>
@@ -5935,19 +5934,21 @@ function renderSaAiNotes(quoteId, aiNotes) {
     </div>`;
 }
 
-function renderSaNotesContent(notes) {
+function renderSaNotesContent(notes, quoteId) {
+  const qid = quoteId || salesAssist.selectedQuoteId || "";
+
   const section = (title, items, opts = {}) => {
     if (!items || (Array.isArray(items) && items.length === 0)) return "";
     const listItems = Array.isArray(items)
       ? items.map((item) => {
           if (typeof item === "object" && item.objection) {
-            return `<li class="sa-objection"><strong>${escapeHtml(item.objection)}</strong><div style="margin-top:3px;color:#374151">${escapeHtml(item.suggested_response || "")}</div></li>`;
+            return `<li class="sa-objection"><strong>${escapeHtml(item.objection)}</strong><div style="margin-top:4px;color:#374151">${escapeHtml(item.suggested_response || "")}</div></li>`;
           }
           return `<li>${escapeHtml(String(item))}</li>`;
         }).join("")
-      : `<p>${escapeHtml(String(items))}</p>`;
+      : `<p style="margin:4px 0">${escapeHtml(String(items))}</p>`;
     const tag = Array.isArray(items) ? "ul" : "div";
-    const cls = opts.warning ? " sa-claims-avoid" : "";
+    const cls = opts.cls ? ` ${opts.cls}` : "";
     return `
       <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">${title}</summary>
@@ -5955,38 +5956,67 @@ function renderSaNotesContent(notes) {
       </details>`;
   };
 
+  const scriptBlock = (id, text) =>
+    `<div class="sa-script-block"${id ? ` id="${id}"` : ""}>${escapeHtml(text)}</div>`;
+
+  // Support both new schema fields and old field names for backward compat
+  const summary = notes.quote_summary || notes.summary || "";
+  const whatSolving = notes.what_we_are_solving || notes.problem_solved || "";
+  const positioning = notes.sales_positioning || "";
+  const benefits = notes.customer_benefits || [];
+  const effPoints = notes.efficiency_reliability_points
+    || [...(notes.efficiency_points || []), ...(notes.reliability_points || []), ...(notes.comfort_convenience_points || [])];
+  const categories = notes.quote_categories || [];
+  const confExp = notes.confidence_explanation || "";
+  const generalPoints = notes.general_talking_points || [];
+
+  const categoryChips = categories.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px">
+        ${categories.map(c => `<span style="font-size:11px;padding:2px 9px;border-radius:10px;background:#e0f2fe;color:#0369a1;font-weight:600" title="${escapeHtml(c.reason || "")}">${escapeHtml(c.category || "")}</span>`).join("")}
+      </div>`
+    : "";
+
+  const confCallout = confExp
+    ? `<div style="font-size:12px;color:#6b7280;margin-bottom:12px;font-style:italic">${escapeHtml(confExp)}</div>`
+    : "";
+
   return `
-    ${notes.summary ? `<div class="sa-notes-summary-box">${escapeHtml(notes.summary)}</div>` : ""}
-    ${notes.problem_solved ? `<div class="sa-notes-problem">Problem solved: ${escapeHtml(notes.problem_solved)}</div>` : ""}
-    ${section("Confirmed Quote Facts", notes.confirmed_quote_facts, { open: true })}
-    ${section("General Talking Points", notes.general_talking_points, { open: true })}
-    ${section("Efficiency Benefits", notes.efficiency_points)}
-    ${section("Reliability Benefits", notes.reliability_points)}
-    ${section("Comfort & Convenience", notes.comfort_convenience_points)}
+    ${categoryChips}
+    ${summary ? `<div class="sa-notes-summary-box">${escapeHtml(summary)}</div>` : ""}
+    ${whatSolving ? `<div class="sa-notes-problem"><strong>What we’re solving:</strong> ${escapeHtml(whatSolving)}</div>` : ""}
+    ${confCallout}
+    ${section("Confirmed Quote Facts", notes.confirmed_quote_facts)}
+    ${positioning ? `
+      <details class="sa-notes-detail" open>
+        <summary class="sa-notes-summary">Sales Positioning</summary>
+        <p class="sa-notes-list" style="margin:6px 0 8px">${escapeHtml(positioning)}</p>
+      </details>` : ""}
+    ${section("Customer Benefits", benefits.length ? benefits : generalPoints)}
+    ${section("Efficiency & Reliability Points", effPoints)}
     ${section("Risks of Waiting", notes.risks_of_waiting)}
     ${section("Likely Objections & Responses", notes.likely_objections)}
     ${notes.call_opening ? `
       <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">Suggested Call Opening</summary>
-        <div class="sa-script-block" id="sa-call-opening-${CSS.escape(salesAssist.selectedQuoteId || "")}">${escapeHtml(notes.call_opening)}</div>
+        ${scriptBlock(`sa-call-opening-${CSS.escape(qid)}`, notes.call_opening)}
       </details>` : ""}
     ${notes.closing_script ? `
       <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">Suggested Close</summary>
-        <div class="sa-script-block">${escapeHtml(notes.closing_script)}</div>
+        ${scriptBlock("", notes.closing_script)}
       </details>` : ""}
     ${notes.sms_follow_up ? `
       <details class="sa-notes-detail" open>
-        <summary class="sa-notes-summary">SMS Follow-Up Template</summary>
-        <div class="sa-script-block" id="sa-sms-${CSS.escape(salesAssist.selectedQuoteId || "")}">${escapeHtml(notes.sms_follow_up)}</div>
+        <summary class="sa-notes-summary">SMS Follow-Up</summary>
+        ${scriptBlock(`sa-sms-${CSS.escape(qid)}`, notes.sms_follow_up)}
       </details>` : ""}
     ${notes.email_follow_up ? `
       <details class="sa-notes-detail" open>
-        <summary class="sa-notes-summary">Email Follow-Up Template</summary>
-        <div class="sa-script-block">${escapeHtml(notes.email_follow_up)}</div>
+        <summary class="sa-notes-summary">Email Follow-Up</summary>
+        ${scriptBlock("", notes.email_follow_up)}
       </details>` : ""}
     ${section("Questions to Ask Before Closing", notes.questions_to_ask)}
-    ${notes.claims_to_avoid?.length ? section("Claims to Avoid", notes.claims_to_avoid, { warning: true }) : ""}
+    ${notes.claims_to_avoid?.length ? section("⚠ Claims to Avoid", notes.claims_to_avoid, { cls: "sa-claims-avoid" }) : ""}
     ${notes.missing_information?.length ? `
       <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">Missing Information</summary>
@@ -5995,6 +6025,7 @@ function renderSaNotesContent(notes) {
         </ul>
       </details>` : ""}`;
 }
+
 
 function renderSaActivityForm(quoteId) {
   return `
@@ -6050,7 +6081,7 @@ async function saLogActivity(quoteId, type, useNoteInput = false) {
 async function saGenerateAiNotes(quoteId) {
   salesAssist.loadingAi.add(quoteId);
   const contentEl = document.getElementById(`sa-ai-content-${CSS.escape(quoteId)}`);
-  if (contentEl) contentEl.innerHTML = `<div class="muted" style="font-size:13px">Generating AI sales notes… this may take 10–30 seconds.</div>`;
+  if (contentEl) contentEl.innerHTML = `<div class="muted" style="font-size:14px;padding:16px 0">Generating AI sales notes… this may take 15–30 seconds.</div>`;
 
   try {
     const result = await api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}/ai-notes/generate`, { method: "POST" });
@@ -6071,9 +6102,9 @@ async function saGenerateAiNotes(quoteId) {
   if (contentEl) {
     const notes = aiNotes.sales_notes_json;
     if (notes) {
-      contentEl.innerHTML = renderSaNotesContent(notes);
+      contentEl.innerHTML = renderSaNotesContent(notes, quoteId);
     } else {
-      contentEl.innerHTML = `<div style="color:#ef4444;font-size:12px">Error: ${escapeHtml(aiNotes.error_message || "Unknown error")}</div>`;
+      contentEl.innerHTML = `<div style="color:#ef4444;font-size:13px">Error: ${escapeHtml(aiNotes.error_message || "Unknown error")}</div>`;
     }
   }
 }

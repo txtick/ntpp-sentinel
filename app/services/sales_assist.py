@@ -538,138 +538,215 @@ def list_activities(source_quote_id: str) -> list:
 
 # ── AI notes ────────────────────────────────────────────────────────────────
 
-_AI_SYSTEM_PROMPT = """You are a sales assistant for North Texas Pool Pros, a residential pool maintenance and repair company in the Dallas–Fort Worth area.
-Your job is to help salespeople understand and effectively present quotes to customers when calling them.
+_AI_SYSTEM_PROMPT = """You are a sales coach for North Texas Pool Pros, a residential pool maintenance and repair company in the Dallas–Fort Worth area.
 
-RULES — follow these strictly:
-- Do NOT invent model-specific equipment features unless the model is specified in the quote data
-- Do NOT claim exact energy savings percentages unless supported by the quote data
-- Do NOT claim warranty terms unless the quote data specifies them
-- Do NOT claim rebates or incentives unless confirmed in the quote data
-- Do NOT say equipment is unsafe unless source data explicitly supports that conclusion
-- Clearly distinguish between confirmed facts from the quote and general pool industry talking points
-- Keep tone professional, helpful, and consultative — never high-pressure
-- If model or SKU is missing, note that model-specific benefits should be confirmed before quoting them
-- Do NOT pressure customers; the goal is to help them understand value
+Your job: given a quote's actual line items and customer context, produce specific, quote-grounded sales coaching notes for a salesperson making a follow-up call.
 
-Return ONLY a valid JSON object matching this schema exactly — no markdown, no explanation:
+═══════════════════════════════════════════════════
+RULE #1 — BE LINE-ITEM SPECIFIC. THIS IS NON-NEGOTIABLE.
+═══════════════════════════════════════════════════
+Every section must be grounded in the ACTUAL line items from this quote.
+- If a line item is "Drain & Clean", explain what a drain and clean does and why a customer needs it — not "regular maintenance helps your pool."
+- If a line item is "Sand Media", explain what sand media is, why it is replaced, and what problem it solves.
+- If a line item is "Variable Speed Pump", explain energy efficiency and quieter operation — but only if it is actually a variable speed pump.
+- If a line item is "Salt Cell", explain chlorine generation and reduced manual chlorine dependency.
+- If a line item is "Heater Repair", focus on comfort, usability, extending swim season.
+- If a line item is vague (e.g., "Misc. Labor", "Misc. Plumbing"), acknowledge the vagueness and mark what you are inferring vs. what is confirmed.
+Do NOT produce generic talking points that would apply to any pool quote. Talking points must reference the actual items in this quote.
+
+═══════════════════════════════════════════════════
+RULE #2 — GUARDRAILS. NEVER do the following:
+═══════════════════════════════════════════════════
+- Do NOT claim exact energy savings percentages unless the equipment model and operating assumptions are in the quote
+- Do NOT claim warranty terms unless the quote explicitly states them
+- Do NOT claim rebates or incentives unless confirmed
+- Do NOT say equipment is unsafe unless technician notes or source data explicitly support that
+- Do NOT claim the work is urgently needed unless the quote notes or service history confirm it
+- Do NOT invent model-specific features unless the brand and model are in the quote data
+- Do NOT use phrases like "regular maintenance helps prolong equipment life" for repair/replacement quotes
+
+═══════════════════════════════════════════════════
+RULE #3 — QUOTE CATEGORY INFERENCE
+═══════════════════════════════════════════════════
+Inspect the line items and infer the quote category or categories. Use these categories (a quote may have multiple):
+drain_and_clean, filter_cleaning, filter_media_replacement, pump_repair, pump_replacement,
+variable_speed_pump_upgrade, cleaner_repair, salt_system_repair, salt_cell_replacement,
+automation_repair, heater_repair, plumbing_repair, leak_related_repair, light_repair,
+algae_treatment, green_to_clean, general_labor, equipment_replacement, misc_repair,
+maintenance, unknown_or_unclear
+
+TONE: Professional, consultative, helpful. Never high-pressure. Sound like a real person, not a script.
+
+Return ONLY a valid JSON object. No markdown. No explanation text outside the JSON.
+
+JSON SCHEMA (every field required):
 {
-  "summary": "string — 2-3 sentence plain-English description of what this quote covers",
-  "problem_solved": "string — what customer problem or need this quote addresses",
-  "confirmed_quote_facts": ["string", ...],
-  "general_talking_points": ["string", ...],
-  "efficiency_points": ["string", ...],
-  "reliability_points": ["string", ...],
-  "comfort_convenience_points": ["string", ...],
-  "risks_of_waiting": ["string", ...],
-  "likely_objections": [{"objection": "string", "suggested_response": "string"}, ...],
-  "call_opening": "string — suggested opening line for the sales call",
-  "closing_script": "string — suggested close to the call",
-  "sms_follow_up": "string — suggested SMS message to send after the call",
-  "email_follow_up": "string — suggested follow-up email body (short)",
-  "questions_to_ask": ["string", ...],
-  "claims_to_avoid": ["string — things NOT to say unless you can confirm them"],
+  "quote_summary": "2-4 sentences: what is this quote actually for? Reference the specific line items.",
+  "quote_categories": [{"category": "string from list above", "reason": "which line item(s) triggered this"}],
+  "what_we_are_solving": "The specific customer problem these line items address. Be cautious if data is vague.",
+  "confirmed_quote_facts": [
+    "Only facts directly from the quote — line items, quantities, prices, totals, quote age, customer status"
+  ],
+  "sales_positioning": "How the salesperson should frame this quote. Be specific to the work being done.",
+  "customer_benefits": [
+    "Specific benefit tied to this quote's actual line items. No generic pool advice."
+  ],
+  "efficiency_reliability_points": [
+    "Efficiency or reliability point specific to this quote type. Omit if not applicable."
+  ],
+  "risks_of_waiting": [
+    "Honest, specific risk of deferring this work. No scare tactics. Omit if genuinely low urgency."
+  ],
+  "likely_objections": [
+    {
+      "objection": "Realistic objection a customer might raise about THIS quote",
+      "suggested_response": "Response that references the actual line items"
+    }
+  ],
+  "call_opening": "A natural, specific opening for this customer and quote. Use the customer's first name and reference the specific work.",
+  "closing_script": "A friendly, direct close that references the work.",
+  "sms_follow_up": "A specific SMS — do NOT use generic pool maintenance wording unless this is a maintenance quote.",
+  "email_follow_up": "A short, specific email body referencing the actual work.",
+  "questions_to_ask": [
+    "A specific question to help close or clarify this particular quote"
+  ],
+  "claims_to_avoid": [
+    "Something NOT to say — always populate this section with at least 3 items specific to this quote"
+  ],
+  "missing_information": [
+    "Specific data that is absent from this quote and would help the salesperson — e.g., technician diagnosis, equipment brand/model, reason for replacement"
+  ],
   "confidence": "high|medium|low",
-  "missing_information": ["string — data that would make these notes more accurate"]
+  "confidence_explanation": "Why this confidence level? e.g., 'Medium — line items are specific but descriptions are blank, so some assumptions were made.'"
 }"""
+
+
+def _item_line_total(item: dict) -> float:
+    qty = float(item.get("quantity") or 1)
+    unit = float(item.get("unit_price") or 0)
+    return qty * unit
 
 
 def _build_quote_prompt(quote: dict, items: list, pool_info: Optional[dict], work_orders: list) -> str:
     customer_name = quote.get("customer_display_name") or "Unknown Customer"
+    first_name = (quote.get("customer_first_name") or customer_name.split()[0] if customer_name else "Customer")
     city = quote.get("customer_city") or ""
-    status_label = "active recurring service customer" if quote.get("is_active_customer") else (
-        quote.get("customer_status") or "unknown status"
+    is_active = quote.get("is_active_customer")
+    status_label = "active recurring service customer" if is_active else (
+        quote.get("customer_status") or "unknown — may be a new or one-time customer"
     )
-
-    phone = quote.get("customer_phone") or quote.get("customer_mobile") or ""
     total = float(quote.get("total_amount") or 0)
 
     lines = [
-        f"CUSTOMER INFORMATION:",
-        f"Name: {customer_name}",
-        f"City: {city}",
-        f"Customer Status: {status_label}",
-    ]
-    if phone:
-        lines.append(f"Phone: [redacted for AI]")
-
-    lines += [
+        "CUSTOMER:",
+        f"  Name: {customer_name}",
+        f"  First name (for scripts): {first_name}",
+        f"  City: {city or 'unknown'}",
+        f"  Customer status: {status_label}",
         "",
-        f"QUOTE DETAILS:",
-        f"Quote Number: #{quote.get('quote_number')}",
-        f"Status: {quote.get('status')}",
-        f"Quote Date: {quote.get('quote_date') or 'Unknown'}",
-        f"Expiration Date: {quote.get('expiration_date') or 'Not specified'}",
-        f"Total: ${total:,.2f}",
+        "QUOTE:",
+        f"  Quote number: #{quote.get('quote_number')}",
+        f"  Status: {quote.get('status')}",
+        f"  Quote date: {quote.get('quote_date') or 'unknown'}",
+        f"  Sent date: {quote.get('sent_date') or 'unknown'}",
+        f"  Expiration date: {quote.get('expiration_date') or 'none set'}",
+        f"  Total: ${total:,.2f}",
+        f"  Tax: ${float(quote.get('tax_amount') or 0):,.2f}",
+        f"  Subtotal: ${float(quote.get('subtotal_amount') or 0):,.2f}",
     ]
-
-    if quote.get("message"):
-        lines += ["", f"CUSTOMER-FACING MESSAGE:", quote["message"]]
 
     if quote.get("internal_notes"):
-        lines += ["", f"INTERNAL NOTES:", quote["internal_notes"]]
+        lines += ["", f"INTERNAL NOTES FROM OFFICE/TECH:", f"  {quote['internal_notes']}"]
+
+    if quote.get("message"):
+        lines += ["", "CUSTOMER-FACING QUOTE MESSAGE (what the customer saw):", f"  {quote['message']}"]
 
     if items:
-        lines += ["", "LINE ITEMS:"]
+        lines += ["", f"LINE ITEMS ({len(items)} total):"]
+        blank_desc_count = 0
         for i, item in enumerate(items, 1):
-            name = item.get("item_name") or "Item"
-            desc = item.get("description") or ""
-            qty = item.get("quantity") or 1
-            price = float(item.get("total_price") or item.get("unit_price") or 0)
-            line = f"{i}. {name}"
-            if desc:
-                line += f" — {desc}"
-            line += f" (qty {qty}, ${price:,.2f})"
+            name = (item.get("item_name") or "Unnamed item").strip()
+            desc = (item.get("description") or "").strip()
+            qty = float(item.get("quantity") or 1)
+            unit = float(item.get("unit_price") or 0)
+            line_total = qty * unit
+            taxable = "taxable" if item.get("is_taxable") else "non-taxable"
+            line = f"  {i}. {name}"
+            if desc and desc.lower() != name.lower():
+                line += f" — description: {desc}"
+            else:
+                blank_desc_count += 1
+                line += " — [no description provided]"
+            if qty != 1:
+                line += f" | qty: {qty} × ${unit:,.2f} = ${line_total:,.2f}"
+            else:
+                line += f" | ${line_total:,.2f}"
+            line += f" ({taxable})"
             lines.append(line)
+        if blank_desc_count > 0:
+            lines.append(f"  NOTE: {blank_desc_count} of {len(items)} line item(s) have no description. Infer carefully from item names but mark assumptions.")
+    else:
+        lines.append("")
+        lines.append("LINE ITEMS: None available — the quote has no line items on file. Treat as unknown scope.")
 
     if pool_info:
-        lines += ["", "POOL INFORMATION:"]
+        lines += ["", "POOL / LOCATION ON FILE:"]
         if pool_info.get("gallons"):
-            lines.append(f"Pool size: {pool_info['gallons']} gallons")
-        if pool_info.get("name"):
-            lines.append(f"Pool name: {pool_info['name']}")
+            lines.append(f"  Pool size: {pool_info['gallons']} gallons")
+        if pool_info.get("baseline_filter_pressure"):
+            lines.append(f"  Baseline filter pressure: {pool_info['baseline_filter_pressure']} PSI")
         equipment = pool_info.get("equipment_items")
         if equipment:
             if isinstance(equipment, str):
                 try:
                     equipment = json.loads(equipment)
                 except Exception:
-                    pass
+                    equipment = None
             if isinstance(equipment, list) and equipment:
-                lines.append("Equipment on file:")
-                for eq in equipment[:8]:
+                lines.append("  Equipment on file:")
+                for eq in equipment[:10]:
                     if isinstance(eq, dict):
                         brand = eq.get("Brand") or eq.get("brand") or ""
                         model = eq.get("Model") or eq.get("model") or ""
                         eq_type = eq.get("Type") or eq.get("type") or eq.get("EquipmentType") or ""
                         parts = [p for p in [brand, model, eq_type] if p]
                         if parts:
-                            lines.append(f"  - {' '.join(parts)}")
+                            lines.append(f"    - {' '.join(parts)}")
         if pool_info.get("notes"):
-            lines.append(f"Pool notes: {pool_info['notes']}")
+            lines.append(f"  Pool notes: {pool_info['notes']}")
         if pool_info.get("sl_notes"):
-            lines.append(f"Location notes: {pool_info['sl_notes']}")
+            lines.append(f"  Location notes: {pool_info['sl_notes']}")
 
     if work_orders:
         lines += ["", "RECENT SERVICE HISTORY (most recent first):"]
         for wo in work_orders[:5]:
-            date = _fmt_date(wo.get("service_date")) or "Unknown date"
+            date = _fmt_date(wo.get("service_date")) or "unknown date"
             wt = wo.get("work_order_type") or ""
-            needed = wo.get("work_needed") or ""
-            performed = wo.get("work_performed") or ""
-            notes = wo.get("notes") or ""
-            entry = f"- {date}"
+            needed = (wo.get("work_needed") or "").strip()
+            performed = (wo.get("work_performed") or "").strip()
+            notes = (wo.get("notes") or "").strip()
+            entry = f"  - {date}"
             if wt:
                 entry += f" [{wt}]"
             if needed:
-                entry += f": Needed — {needed[:100]}"
+                entry += f" | Needed: {needed[:120]}"
             if performed:
-                entry += f"; Done — {performed[:100]}"
+                entry += f" | Done: {performed[:120]}"
             if notes:
-                entry += f"; Notes — {notes[:80]}"
+                entry += f" | Notes: {notes[:100]}"
             lines.append(entry)
+    else:
+        lines += ["", "RECENT SERVICE HISTORY: None available."]
 
-    lines += ["", "Generate sales notes as JSON per the schema provided."]
+    lines += [
+        "",
+        "━━━ TASK ━━━",
+        "Generate sales coaching notes for a salesperson calling this customer about this quote.",
+        "Ground every section in the ACTUAL line items above.",
+        "If line item descriptions are blank, infer from item names but flag your assumptions.",
+        "Do NOT produce generic pool advice. Produce advice specific to what is in this quote.",
+        "Return JSON only.",
+    ]
     return "\n".join(lines)
 
 
@@ -681,7 +758,7 @@ def _quote_hash(quote: dict, items: list) -> str:
             {
                 "name": i.get("item_name") or "",
                 "qty": str(i.get("quantity") or ""),
-                "price": str(i.get("total_price") or ""),
+                "unit_price": str(i.get("unit_price") or ""),
             }
             for i in sorted(items, key=lambda x: x.get("sequence") or 0)
         ],
