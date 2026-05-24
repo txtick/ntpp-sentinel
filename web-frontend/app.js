@@ -5949,7 +5949,7 @@ function renderSaNotesContent(notes) {
     const tag = Array.isArray(items) ? "ul" : "div";
     const cls = opts.warning ? " sa-claims-avoid" : "";
     return `
-      <details class="sa-notes-detail" ${opts.open ? "open" : ""}>
+      <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">${title}</summary>
         <${tag} class="sa-notes-list${cls}">${listItems}</${tag}>
       </details>`;
@@ -5971,24 +5971,24 @@ function renderSaNotesContent(notes) {
         <div class="sa-script-block" id="sa-call-opening-${CSS.escape(salesAssist.selectedQuoteId || "")}">${escapeHtml(notes.call_opening)}</div>
       </details>` : ""}
     ${notes.closing_script ? `
-      <details class="sa-notes-detail">
+      <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">Suggested Close</summary>
         <div class="sa-script-block">${escapeHtml(notes.closing_script)}</div>
       </details>` : ""}
     ${notes.sms_follow_up ? `
-      <details class="sa-notes-detail">
+      <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">SMS Follow-Up Template</summary>
         <div class="sa-script-block" id="sa-sms-${CSS.escape(salesAssist.selectedQuoteId || "")}">${escapeHtml(notes.sms_follow_up)}</div>
       </details>` : ""}
     ${notes.email_follow_up ? `
-      <details class="sa-notes-detail">
+      <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">Email Follow-Up Template</summary>
         <div class="sa-script-block">${escapeHtml(notes.email_follow_up)}</div>
       </details>` : ""}
     ${section("Questions to Ask Before Closing", notes.questions_to_ask)}
     ${notes.claims_to_avoid?.length ? section("Claims to Avoid", notes.claims_to_avoid, { warning: true }) : ""}
     ${notes.missing_information?.length ? `
-      <details class="sa-notes-detail">
+      <details class="sa-notes-detail" open>
         <summary class="sa-notes-summary">Missing Information</summary>
         <ul class="sa-notes-list sa-missing-info">
           ${notes.missing_information.map((m) => `<li>${escapeHtml(String(m))}</li>`).join("")}
