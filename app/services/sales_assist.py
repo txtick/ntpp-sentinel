@@ -203,7 +203,11 @@ def list_quotes(
             {_safe_ts.format(col='q.sent_date')} AS sent_date,
             q.total_amount,
             q.subtotal_amount,
-            q.customer_display_name,
+            COALESCE(
+                NULLIF(TRIM(q.customer_display_name), ''),
+                NULLIF(TRIM(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,'')), ''),
+                c.company_name
+            ) AS customer_display_name,
             q.customer_city,
             q.customer_state,
             q.customer_zip,
@@ -328,10 +332,16 @@ def get_quote_detail(source_quote_id: str) -> dict:
                          THEN q.expiration_date ELSE NULL END AS expiration_date,
                     CASE WHEN q.sent_date IS NOT NULL AND EXTRACT(YEAR FROM q.sent_date) < 10000
                          THEN q.sent_date ELSE NULL END AS sent_date,
+                    COALESCE(
+                        NULLIF(TRIM(q.customer_display_name), ''),
+                        NULLIF(TRIM(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,'')), ''),
+                        c.company_name
+                    ) AS customer_display_name,
                     c.phone AS customer_phone,
                     c.mobile_phone AS customer_mobile,
                     c.email AS customer_email,
                     c.customer_status,
+                    c.company_name AS customer_company_name,
                     c.first_name AS customer_first_name,
                     c.last_name AS customer_last_name,
                     EXISTS(

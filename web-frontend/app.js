@@ -5716,7 +5716,7 @@ function renderSaQuoteCard(q) {
   if (!q.last_activity_at) badges.push(`<span class="sa-badge sa-badge-nocontact">No Contact</span>`);
 
   return `
-    <div class="sa-quote-card ${isSelected ? "is-selected" : ""}" onclick="saSelectQuote(${JSON.stringify(q.source_quote_id)})">
+    <div class="sa-quote-card ${isSelected ? "is-selected" : ""}" onclick="saSelectQuote('${q.source_quote_id}')">
       <div class="sa-card-top">
         <div class="sa-card-name">${escapeHtml(q.customer_display_name || "Unknown Customer")}</div>
         <div class="sa-card-amount">${escapeHtml(amount)}</div>
@@ -5926,9 +5926,9 @@ function renderSaAiNotes(quoteId, aiNotes) {
       <div class="sa-section-title" style="display:flex;align-items:center;gap:8px">
         AI Sales Notes ${confidenceBadge}
         <div style="margin-left:auto;display:flex;gap:6px">
-          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopyCallScript(${JSON.stringify(quoteId)})" style="font-size:11px">Copy Call Script</button>` : ""}
-          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopySms(${JSON.stringify(quoteId)})" style="font-size:11px">Copy SMS</button>` : ""}
-          <button class="button button-secondary" onclick="saGenerateAiNotes(${JSON.stringify(quoteId)})" style="font-size:11px" ${isGenerating ? "disabled" : ""}>
+          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopyCallScript('${quoteId}')" style="font-size:11px">Copy Call Script</button>` : ""}
+          ${hasNotes ? `<button class="button button-secondary sa-copy-btn" onclick="saCopySms('${quoteId}')" style="font-size:11px">Copy SMS</button>` : ""}
+          <button class="button button-secondary" onclick="saGenerateAiNotes('${quoteId}')" style="font-size:11px" ${isGenerating ? "disabled" : ""}>
             ${hasNotes ? "Regenerate" : "Generate"}
           </button>
         </div>
@@ -6003,17 +6003,17 @@ function renderSaActivityForm(quoteId) {
   return `
     <div class="sa-activity-form" id="sa-activity-form">
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'called')">Called</button>
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'voicemail')">Voicemail</button>
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'texted')">Texted</button>
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'emailed')">Emailed</button>
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'interested')">Interested</button>
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'not_interested')">Not Interested</button>
-        <button class="sa-action-btn" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'waiting_on_customer')">Waiting</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'called')">Called</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'voicemail')">Voicemail</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'texted')">Texted</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'emailed')">Emailed</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'interested')">Interested</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'not_interested')">Not Interested</button>
+        <button class="sa-action-btn" onclick="saLogActivity('${quoteId}', 'waiting_on_customer')">Waiting</button>
       </div>
       <div style="display:flex;gap:6px">
         <input id="sa-note-input" class="input" placeholder="Add a note…" style="flex:1;font-size:13px" />
-        <button class="button button-secondary" style="font-size:12px" onclick="saLogActivity(${JSON.stringify(quoteId)}, 'note', true)">Add Note</button>
+        <button class="button button-secondary" style="font-size:12px" onclick="saLogActivity('${quoteId}', 'note', true)">Add Note</button>
       </div>
     </div>`;
 }

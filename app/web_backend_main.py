@@ -1389,7 +1389,7 @@ def api_sa_list_quotes(
     min_amount: float = None,
     max_amount: float = None,
     age_min_days: int = None,
-    age_max_days: int = None,
+    age_max_days: int = 30,
     active_customer_only: int = 0,
     overdue_follow_up_only: int = 0,
     search: str = "",
