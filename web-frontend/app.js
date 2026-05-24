@@ -5546,7 +5546,7 @@ const salesAssist = {
   quotes: [],
   selectedQuoteId: null,
   filters: {
-    status: "Sent,Draft",
+    status: "Sent",
     city: "",
     search: "",
     sort: "priority",
@@ -5626,12 +5626,9 @@ function renderSaFilters() {
       <input class="input sa-search" placeholder="Search customer or quote #" value="${escapeHtml(f.search)}" id="sa-search" />
       <div class="sa-filter-row">
         <select id="sa-status" class="input sa-select">
-          <option value="Sent,Draft" ${f.status === "Sent,Draft" ? "selected" : ""}>Open (Sent + Draft)</option>
-          <option value="Sent" ${f.status === "Sent" ? "selected" : ""}>Sent only</option>
-          <option value="Draft" ${f.status === "Draft" ? "selected" : ""}>Draft only</option>
-          <option value="Expired" ${f.status === "Expired" ? "selected" : ""}>Expired</option>
-          <option value="Sent,Draft,Expired" ${f.status === "Sent,Draft,Expired" ? "selected" : ""}>All Open + Expired</option>
+          <option value="Sent" ${f.status === "Sent" ? "selected" : ""}>Sent</option>
           <option value="Approved" ${f.status === "Approved" ? "selected" : ""}>Approved</option>
+          <option value="Rejected" ${f.status === "Rejected" ? "selected" : ""}>Rejected</option>
           <option value="" ${!f.status ? "selected" : ""}>All statuses</option>
         </select>
         <select id="sa-sort" class="input sa-select">

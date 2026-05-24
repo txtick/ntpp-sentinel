@@ -18,8 +18,8 @@ SALES_ASSIST_AI_MODEL = os.getenv("SALES_ASSIST_AI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 
-_OPEN_STATUSES = ("Sent", "Draft")
-_ALL_STATUSES = ("Sent", "Draft", "Expired", "Approved", "Rejected", "Archived")
+_OPEN_STATUSES = ("Sent",)
+_ALL_STATUSES = ("Sent", "Draft", "Approved", "Rejected", "Archived")
 
 
 # ── Priority scoring ────────────────────────────────────────────────────────
@@ -177,7 +177,14 @@ def list_quotes(
         params.append(max_amount)
 
     if search:
-        conditions.append("(q.customer_display_name ILIKE %s OR q.quote_number::text ILIKE %s)")
+        conditions.append("""(
+            COALESCE(
+                NULLIF(TRIM(q.customer_display_name), ''),
+                NULLIF(TRIM(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,'')), ''),
+                c.company_name
+            ) ILIKE %s
+            OR q.quote_number::text ILIKE %s
+        )""")
         params.extend([f"%{search}%", f"%{search}%"])
 
     now = datetime.now(timezone.utc)
