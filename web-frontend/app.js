@@ -5767,7 +5767,7 @@ function renderSaDetail(q, activities, aiNotes) {
       <td style="color:#6b7280;font-size:12px">${escapeHtml(item.description || "")}</td>
       <td style="text-align:right">${item.quantity ?? 1}</td>
       <td style="text-align:right">${item.unit_price != null ? currency(item.unit_price) : "—"}</td>
-      <td style="text-align:right;font-weight:600">${item.total_price != null ? currency(item.total_price) : "—"}</td>
+      <td style="text-align:right;font-weight:600">${item.unit_price != null && item.quantity != null ? currency(item.unit_price * item.quantity) : (item.total_price != null ? currency(item.total_price) : "—")}</td>
     </tr>`).join("");
 
   const pool = q.pool_info;

@@ -1257,7 +1257,8 @@ def _quote_item_params(row, quote_id_map, source_system="skimmer"):
         row_get(row, "Description"),
         row_get(row, "Quantity"),
         row_get(row, "Rate"),
-        row_get(row, "Cost"),
+        # total_price: Quantity * Rate (Cost is wholesale/internal cost, not the line total)
+        (row_get(row, "Quantity") or 0) * (row_get(row, "Rate") or 0) if row_get(row, "Rate") is not None else None,
         row_get(row, "Sequence"),
         bool(row_get(row, "IsTaxable")) if row_get(row, "IsTaxable") is not None else None,
         row_get(row, "ProductId"),
