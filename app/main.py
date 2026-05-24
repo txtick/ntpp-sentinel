@@ -2349,6 +2349,28 @@ async def skimmer_import_job(request: Request):
     return result
 
 
+@app.post("/jobs/skimmer_import_quotes")
+async def skimmer_import_quotes_job(request: Request):
+    """Import only quote tables (sk_quote, sk_quote_location, sk_quote_item) from the current Skimmer DB."""
+    _auth_or_401(request)
+    try:
+        open(SKIMMER_DB_PATH, "rb").close()
+    except FileNotFoundError:
+        raise HTTPException(status_code=422, detail="Skimmer DB not found")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Skimmer DB is not accessible: {exc}")
+    script = os.path.normpath(os.path.join(os.path.dirname(__file__), "scripts", "import_skimmer_customers.py"))
+    result = subprocess.run(
+        [sys.executable, script, "--tables", "quotes,quote_locations,quote_items", "--sqlite", SKIMMER_DB_PATH],
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=result.stderr.strip() or result.stdout.strip())
+    return {"status": "ok", "output": result.stdout.strip()}
+
+
 def _fetch_sk_customers(limit: int) -> List[Dict[str, Any]]:
     if not DATABASE_URL:
         raise HTTPException(status_code=500, detail="DATABASE_URL is not configured")
