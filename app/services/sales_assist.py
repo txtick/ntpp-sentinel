@@ -189,14 +189,18 @@ def list_quotes(
 
     where = " AND ".join(conditions)
 
+    # Skimmer encodes "no expiration" as year 10000 which psycopg cannot
+    # deserialize as a Python datetime. Clamp to NULL in the query.
+    _safe_ts = "CASE WHEN {col} IS NOT NULL AND EXTRACT(YEAR FROM {col}) < 10000 THEN {col} ELSE NULL END"
+
     sql = f"""
         SELECT
             q.source_quote_id,
             q.quote_number,
             q.status,
-            q.quote_date,
-            q.expiration_date,
-            q.sent_date,
+            {_safe_ts.format(col='q.quote_date')} AS quote_date,
+            {_safe_ts.format(col='q.expiration_date')} AS expiration_date,
+            {_safe_ts.format(col='q.sent_date')} AS sent_date,
             q.total_amount,
             q.subtotal_amount,
             q.customer_display_name,
@@ -310,7 +314,20 @@ def get_quote_detail(source_quote_id: str) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT q.*,
+                SELECT
+                    q.source_quote_id, q.source_customer_id, q.quote_number, q.status,
+                    q.total_amount, q.subtotal_amount, q.tax_amount,
+                    q.discount_flat, q.discount_percent, q.discount_total,
+                    q.customer_display_name, q.customer_address,
+                    q.customer_city, q.customer_state, q.customer_zip,
+                    q.message, q.internal_notes, q.reject_reason,
+                    q.is_archived, q.is_deleted, q.job_id,
+                    CASE WHEN q.quote_date IS NOT NULL AND EXTRACT(YEAR FROM q.quote_date) < 10000
+                         THEN q.quote_date ELSE NULL END AS quote_date,
+                    CASE WHEN q.expiration_date IS NOT NULL AND EXTRACT(YEAR FROM q.expiration_date) < 10000
+                         THEN q.expiration_date ELSE NULL END AS expiration_date,
+                    CASE WHEN q.sent_date IS NOT NULL AND EXTRACT(YEAR FROM q.sent_date) < 10000
+                         THEN q.sent_date ELSE NULL END AS sent_date,
                     c.phone AS customer_phone,
                     c.mobile_phone AS customer_mobile,
                     c.email AS customer_email,

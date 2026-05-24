@@ -1177,15 +1177,30 @@ QUOTE_ITEM_UPSERT_SQL = """
 """
 
 
+def _clamp_ts(val):
+    """Return None if the timestamp string represents a year >= 10000 (psycopg can't deserialize it)."""
+    if not val:
+        return None
+    s = str(val)
+    # Skimmer uses '10000-01-01...' to mean 'no expiration'
+    try:
+        year = int(s[:4])
+        if year >= 10000:
+            return None
+    except (ValueError, IndexError):
+        pass
+    return val
+
+
 def _quote_params(row, source_system="skimmer"):
     return (
         source_system,
         row["id"],
         row_get(row, "CustomerId"),
         row_get(row, "QuoteNumber"),
-        row_get(row, "QuoteDate"),
-        row_get(row, "ExpirationDate"),
-        row_get(row, "SentDate"),
+        _clamp_ts(row_get(row, "QuoteDate")),
+        _clamp_ts(row_get(row, "ExpirationDate")),
+        _clamp_ts(row_get(row, "SentDate")),
         row_get(row, "Status"),
         row_get(row, "Total"),
         row_get(row, "Subtotal"),
