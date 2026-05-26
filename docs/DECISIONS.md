@@ -73,6 +73,8 @@ Keep entries short, but do not skip them.
 
 ## Dashboard Reports
 
+- Dashboard active-customer and active-pool totals use weekly route-assigned pools, excluding `service-only` and `inspection` tags.
+  - Reason: the home dashboard should match maintained weekly pool service, not every non-inactive Skimmer customer or one-off quote/repair record.
 - Added a dedicated `Problem Pools` dashboard page backed by a backend-owned SQL view instead of frontend-only math.
   - Reason: chemical-cost review thresholds and leak dollars need one canonical calculation path that is easy to reuse for future notes/status/automation.
 - `Problem Pools` uses `20%` as the healthy target chemical-cost ratio and reports leak dollars above that target.

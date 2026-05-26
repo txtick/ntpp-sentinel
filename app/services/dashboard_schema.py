@@ -181,6 +181,38 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             """
         )
 
+        cur.execute(
+            """
+            CREATE OR REPLACE FUNCTION route_assignment_is_weekly(
+                frequency TEXT
+            ) RETURNS BOOLEAN
+            LANGUAGE SQL
+            IMMUTABLE
+            AS $$
+                SELECT CASE
+                    WHEN frequency IS NULL OR btrim(frequency) = '' THEN TRUE
+                    WHEN lower(btrim(frequency)) IN (
+                        'weekly',
+                        'week',
+                        'every week',
+                        'each week',
+                        'once a week',
+                        '1 week',
+                        '1x weekly',
+                        'weekly service'
+                    ) THEN TRUE
+                    WHEN lower(frequency) LIKE '%every week%' THEN TRUE
+                    WHEN lower(frequency) LIKE '%1 week%' THEN TRUE
+                    WHEN lower(frequency) LIKE '%weekly%'
+                         AND lower(frequency) NOT LIKE '%biweekly%'
+                         AND lower(frequency) NOT LIKE '%bi-weekly%'
+                         AND lower(frequency) NOT LIKE '%every other%' THEN TRUE
+                    ELSE FALSE
+                END
+            $$;
+            """
+        )
+
         cur.executemany(
             """
             INSERT INTO alert_rule_config (
@@ -1009,6 +1041,30 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
 
         cur.execute(
             """
+            CREATE OR REPLACE VIEW dashboard_weekly_service_pools_v AS
+            SELECT DISTINCT
+                c.id AS customer_id,
+                p.id AS pool_id,
+                p.source_system,
+                p.source_pool_id,
+                p.source_service_location_id
+            FROM pools p
+            JOIN customers c ON c.id = p.customer_id
+            JOIN service_location_technician_assignments a
+              ON a.source_system = p.source_system
+             AND a.source_service_location_id = p.source_service_location_id
+            WHERE c.is_operationally_active = TRUE
+              AND p.is_operationally_active = TRUE
+              AND NOT customer_has_tag(c.raw_json, 'service-only')
+              AND NOT customer_has_tag(c.raw_json, 'inspection')
+              AND a.is_deleted = FALSE
+              AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+              AND route_assignment_is_weekly(a.frequency)
+            """
+        )
+
+        cur.execute(
+            """
             CREATE OR REPLACE VIEW problem_pools_v AS
             WITH monthly_chemical_costs AS (
                 SELECT
@@ -1086,6 +1142,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                     mcc.latest_chemical_service_date
                 FROM pools p
                 JOIN customers c ON c.id = p.customer_id
+                JOIN dashboard_weekly_service_pools_v wsp ON wsp.pool_id = p.id
                 LEFT JOIN sk_service_location sl
                   ON sl.source_system = p.source_system
                  AND sl.source_location_id = p.source_service_location_id
@@ -1163,8 +1220,8 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
             SELECT
                 NOW() AS generated_at,
                 (SELECT completed_at FROM ingest_pipeline_runs WHERE success = TRUE ORDER BY started_at DESC LIMIT 1) AS last_successful_pipeline_at,
-                (SELECT COUNT(*) FROM customers WHERE is_operationally_active = TRUE) AS active_customer_count,
-                (SELECT COUNT(*) FROM pools p JOIN customers c ON c.id = p.customer_id WHERE c.is_operationally_active = TRUE) AS active_pool_count,
+                (SELECT COUNT(DISTINCT customer_id) FROM dashboard_weekly_service_pools_v) AS active_customer_count,
+                (SELECT COUNT(DISTINCT pool_id) FROM dashboard_weekly_service_pools_v) AS active_pool_count,
                 (SELECT COUNT(DISTINCT customer_id) FROM alert_instances WHERE status <> 'cleared' AND category = 'pool') AS customers_with_current_alerts,
                 (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND severity = 'critical') AS critical_current_alert_count,
                 (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND category = 'process') AS chemistry_trend_alert_count,

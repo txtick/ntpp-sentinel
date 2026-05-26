@@ -92,6 +92,8 @@ This page is meant to give you the numbers you need for Gusto without manually c
 
 The dashboard also includes a `Problem Pools` page for chemical-cost pricing review.
 
+The dashboard's active customer/pool totals are meant to represent weekly maintained pool service. One-off `service-only` customers and `inspection` prospects are excluded until they become active weekly route customers.
+
 What it shows:
 
 - monthly chemical cost for each active pool based on the last `30` days

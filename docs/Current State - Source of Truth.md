@@ -150,6 +150,7 @@ Current derived views:
 - `current_chemistry_alerts_v`
 - `chemistry_trend_alerts_v`
 - `revenue_opportunities_v`
+- `dashboard_weekly_service_pools_v`
 - `dashboard_summary_v`
 
 Ownership:
@@ -224,6 +225,12 @@ Current rule:
 
 Practically this currently behaves like:
 - `is_operationally_active = NOT is_inactive`
+
+Dashboard home active-customer and active-pool cards use a narrower weekly service scope:
+- current non-deleted route assignment
+- weekly or unknown/blank frequency
+- no `service-only` tag
+- no `inspection` tag
 
 ### inactive_since
 

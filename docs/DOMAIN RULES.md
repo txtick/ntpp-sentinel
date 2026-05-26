@@ -38,9 +38,19 @@ This document captures business behavior that should remain stable unless intent
   - `filter-cart`
   - `filter-de`
   - `filter-sand`
+  - `service-only`
+  - `inspection`
 
 ## Dashboard Reports
 
+- Dashboard active-customer and active-pool totals mean weekly maintained pool service:
+  - customer is operationally active
+  - pool has a current non-deleted route assignment
+  - route assignment frequency is weekly or blank/unknown
+  - customer is not tagged `service-only`
+  - customer is not tagged `inspection`
+- `service-only` customers are one-off repair/cleaning customers and should not count as weekly pools.
+- `inspection` customers are quote/inspection prospects for weekly service and should not count until they become active weekly route customers.
 - The dashboard `Problem Pools` page compares each pool's last-30-days chemical cost against its monthly service rate.
 - `chemical_percent = monthly_chemical_cost / monthly_service_rate`, displayed as a percentage with 1 decimal place.
 - Problem Pools flag thresholds:

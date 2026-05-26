@@ -60,6 +60,8 @@ This repository runs North Texas Pool Pros' internal Sentinel platform. This fil
 - `filter-cart`
 - `filter-de`
 - `filter-sand`
+- `service-only`
+- `inspection`
 
 If you discover more tag-driven behavior, document it in `docs/DOMAIN RULES.md` and `docs/DECISIONS.md`.
 

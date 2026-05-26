@@ -917,6 +917,12 @@ def ensure_operational_schema() -> None:
                 ON service_location_technician_assignments(source_system, technician_id)
                 """
             )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_service_location_technician_assignments_location_current
+                ON service_location_technician_assignments(source_system, source_service_location_id, is_deleted, end_date, frequency)
+                """
+            )
 
             cur.execute(
                 """
