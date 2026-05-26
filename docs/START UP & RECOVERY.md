@@ -422,6 +422,7 @@ Check important env values inside Sentinel:
 docker compose exec -T sentinel sh -lc 'echo "$WEBHOOK_SECRET" | wc -c'
 docker compose exec -T sentinel sh -lc 'echo "$GHL_TOKEN" | wc -c'
 docker compose exec -T sentinel sh -lc 'echo "$GHL_LOCATION_ID"'
+docker compose exec -T sentinel sh -lc 'echo "${GHL_CONTACT_URL_TEMPLATE:-default}"'
 docker compose exec -T sentinel sh -lc 'echo "$MANAGER_CONTACT_IDS"'
 docker compose exec -T sentinel sh -lc 'echo "$INTERNAL_CONTACT_IDS"'
 docker compose exec -T sentinel sh -lc 'echo "$INTERNAL_USER_IDS"'

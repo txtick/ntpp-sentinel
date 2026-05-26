@@ -66,6 +66,8 @@ Keep entries short, but do not skip them.
   - Reason: quote cleanup should not depend on somebody loading the dashboard or manually triggering a full alert refresh.
 - Sales Assist quote tables are included in the standard Skimmer ingest path.
   - Reason: Sales Assist reads `sk_quote` data from Postgres, so quote statuses such as approved/rejected must refresh with the normal Skimmer DB sync instead of relying on a separate manual quote import.
+- Sales Assist opens mapped quote customers in GHL rather than trying to initiate calls directly from Sentinel.
+  - Reason: GHL supports calling from its web/app dialer, while a normal `tel:` link may call from a salesperson's personal device number.
 
 ## Dashboard Reports
 

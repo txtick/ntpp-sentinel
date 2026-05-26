@@ -7,6 +7,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -17,9 +18,26 @@ logger = logging.getLogger("sales_assist")
 SALES_ASSIST_AI_MODEL = os.getenv("SALES_ASSIST_AI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+GHL_APP_BASE_URL = os.getenv("GHL_APP_BASE_URL", "https://app.gohighlevel.com").rstrip("/")
+GHL_CONTACT_URL_TEMPLATE = os.getenv("GHL_CONTACT_URL_TEMPLATE", "").strip()
 
 _OPEN_STATUSES = ("Sent",)
 _ALL_STATUSES = ("Sent", "Draft", "Approved", "Rejected", "Archived")
+
+
+def _ghl_contact_url(contact_id: Optional[str]) -> Optional[str]:
+    contact_id = str(contact_id or "").strip()
+    location_id = os.getenv("GHL_LOCATION_ID", "").strip()
+    if not contact_id or not location_id:
+        return None
+    safe_contact_id = quote(contact_id, safe="")
+    safe_location_id = quote(location_id, safe="")
+    if GHL_CONTACT_URL_TEMPLATE:
+        return GHL_CONTACT_URL_TEMPLATE.format(
+            contact_id=safe_contact_id,
+            location_id=safe_location_id,
+        )
+    return f"{GHL_APP_BASE_URL}/v2/location/{safe_location_id}/contacts/detail/{safe_contact_id}"
 
 
 # ── Priority scoring ────────────────────────────────────────────────────────
@@ -224,6 +242,7 @@ def list_quotes(
             c.mobile_phone AS customer_mobile,
             c.email AS customer_email,
             c.customer_status,
+            c.ghl_contact_id,
             EXISTS(
                 SELECT 1 FROM sk_route_assignment ra
                 JOIN sk_service_location sl
@@ -351,6 +370,7 @@ def get_quote_detail(source_quote_id: str) -> dict:
                     c.company_name AS customer_company_name,
                     c.first_name AS customer_first_name,
                     c.last_name AS customer_last_name,
+                    c.ghl_contact_id,
                     EXISTS(
                         SELECT 1 FROM sk_route_assignment ra
                         JOIN sk_service_location sl
@@ -451,6 +471,7 @@ def get_quote_detail(source_quote_id: str) -> dict:
 
     result = dict(quote)
     result["raw_json"] = None  # don't expose raw
+    result["ghl_contact_url"] = _ghl_contact_url(result.get("ghl_contact_id"))
     result["line_items"] = [dict(i) for i in items]
     result["pool_info"] = dict(pool_info) if pool_info else None
     if result.get("pool_info") and isinstance(result["pool_info"].get("equipment_items"), str):

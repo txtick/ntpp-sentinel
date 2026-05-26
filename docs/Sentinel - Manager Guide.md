@@ -120,6 +120,19 @@ Important detail:
 
 This page is meant to help managers quickly spot underpriced pools, unusually chemical-heavy pools, or accounts that need a service-plan conversation.
 
+## Sales Assist
+
+The dashboard includes a `Sales Assist` quote pipeline for following up on open Skimmer quotes.
+
+What it shows:
+
+- open quote status and amount from Skimmer quote data
+- customer contact details
+- quote line items and recent service context where available
+- AI sales notes when generated
+
+When the customer is mapped to a GHL contact, use `Open in GHL` to open the customer in HighLevel and place the call from GHL. The `Call from device` fallback uses the tablet or phone dialer and may not use the company GHL number.
+
 ## Dashboard Reminders
 
 Dashboard alerts can create tracked reminders in the dashboard backend.
