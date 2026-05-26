@@ -92,7 +92,7 @@ This page is meant to give you the numbers you need for Gusto without manually c
 
 The dashboard also includes a `Problem Pools` page for chemical-cost pricing review.
 
-The dashboard's active customer/pool totals are meant to represent weekly maintained pool service. One-off `service-only` customers and `inspection` prospects are excluded until they become active weekly route customers.
+The dashboard's active customer/pool totals are meant to represent weekly maintained pool service. One-off `service-only` customers and `inspection` prospects are excluded until they become active weekly route customers. The home dashboard's `Active Pools` number counts weekly service locations/stops, so a pool + spa at one stop does not double-count the home card.
 
 What it shows:
 

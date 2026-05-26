@@ -1221,7 +1221,7 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
                 NOW() AS generated_at,
                 (SELECT completed_at FROM ingest_pipeline_runs WHERE success = TRUE ORDER BY started_at DESC LIMIT 1) AS last_successful_pipeline_at,
                 (SELECT COUNT(DISTINCT customer_id) FROM dashboard_weekly_service_pools_v) AS active_customer_count,
-                (SELECT COUNT(DISTINCT pool_id) FROM dashboard_weekly_service_pools_v) AS active_pool_count,
+                (SELECT COUNT(DISTINCT source_service_location_id) FROM dashboard_weekly_service_pools_v) AS active_pool_count,
                 (SELECT COUNT(DISTINCT customer_id) FROM alert_instances WHERE status <> 'cleared' AND category = 'pool') AS customers_with_current_alerts,
                 (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND severity = 'critical') AS critical_current_alert_count,
                 (SELECT COUNT(*) FROM alert_instances WHERE status <> 'cleared' AND category = 'process') AS chemistry_trend_alert_count,

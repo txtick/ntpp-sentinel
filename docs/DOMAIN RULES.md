@@ -49,6 +49,7 @@ This document captures business behavior that should remain stable unless intent
   - route assignment frequency is weekly or blank/unknown
   - customer is not tagged `service-only`
   - customer is not tagged `inspection`
+- The dashboard home `Active Pools` card counts distinct weekly service locations/stops, not physical pool/spa/water-feature records.
 - `service-only` customers are one-off repair/cleaning customers and should not count as weekly pools.
 - `inspection` customers are quote/inspection prospects for weekly service and should not count until they become active weekly route customers.
 - The dashboard `Problem Pools` page compares each pool's last-30-days chemical cost against its monthly service rate.

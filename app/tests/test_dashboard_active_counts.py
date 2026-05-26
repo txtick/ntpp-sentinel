@@ -11,7 +11,7 @@ def test_dashboard_summary_counts_weekly_service_pools_not_all_active_records():
 
     assert "dashboard_weekly_service_pools_v" in summary_section
     assert "COUNT(DISTINCT customer_id)" in summary_section
-    assert "COUNT(DISTINCT pool_id)" in summary_section
+    assert "COUNT(DISTINCT source_service_location_id)" in summary_section
     assert "COUNT(*) FROM customers WHERE is_operationally_active = TRUE" not in summary_section
 
 

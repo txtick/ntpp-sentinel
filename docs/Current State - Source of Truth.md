@@ -231,6 +231,7 @@ Dashboard home active-customer and active-pool cards use a narrower weekly servi
 - weekly or unknown/blank frequency
 - no `service-only` tag
 - no `inspection` tag
+- `Active Pools` counts distinct weekly service locations/stops, not physical pool records
 
 ### inactive_since
 
