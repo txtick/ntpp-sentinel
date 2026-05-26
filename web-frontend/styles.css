@@ -2634,3 +2634,74 @@ textarea {
   font-size: 12px;
   padding-top: 2px;
 }
+
+/* ── Sales Assist mobile responsive ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sa-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+    min-height: 0;
+  }
+
+  /* On mobile: show list by default, show detail when a quote is selected */
+  .sa-detail-col {
+    display: none;
+    padding: 0 0 60px;
+  }
+
+  .sa-layout.sa-has-selection .sa-list-col {
+    display: none;
+  }
+
+  .sa-layout.sa-has-selection .sa-detail-col {
+    display: block;
+  }
+
+  /* Back button shown only on mobile */
+  .sa-back-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #2563eb;
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border, #e2e8f0);
+    width: 100%;
+    text-align: left;
+  }
+
+  /* Card sizing fixes */
+  .sa-card-name {
+    font-size: 14px;
+    max-width: calc(100% - 90px);
+  }
+
+  .sa-card-amount {
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .sa-detail-header {
+    padding: 12px 16px 10px;
+  }
+
+  .sa-detail-name {
+    font-size: 18px;
+  }
+
+  .sa-detail-body {
+    padding: 0 14px;
+  }
+}
+
+@media (min-width: 769px) {
+  /* Back button hidden on desktop */
+  .sa-back-btn {
+    display: none;
+  }
+}

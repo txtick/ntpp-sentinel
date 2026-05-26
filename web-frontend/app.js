@@ -5777,9 +5777,12 @@ async function saSelectQuote(quoteId) {
     el.classList.toggle("is-selected", id === quoteId);
   });
 
+  // Mobile: toggle layout to show detail panel
+  document.querySelector(".sa-layout")?.classList.add("sa-has-selection");
+
   const detailCol = document.getElementById("sa-detail-col");
   if (!detailCol) return;
-  detailCol.innerHTML = `<div class="empty-state">Loading…</div>`;
+  detailCol.innerHTML = `<button class="sa-back-btn" onclick="saBackToList()">← Back to quotes</button><div class="empty-state" style="margin-top:40px">Loading…</div>`;
 
   const [detail, activities, aiNotes] = await Promise.all([
     api(`/api/sales-assist/quotes/${encodeURIComponent(quoteId)}`),
@@ -5789,11 +5792,9 @@ async function saSelectQuote(quoteId) {
 
   salesAssist.activities[quoteId] = activities.activities || [];
   salesAssist.aiNotes[quoteId] = aiNotes;
-  detailCol.innerHTML = renderSaDetail(
-    detail,
-    activities.activities || [],
-    aiNotes,
-  );
+  detailCol.innerHTML =
+    `<button class="sa-back-btn" onclick="saBackToList()">← Back to quotes</button>` +
+    renderSaDetail(detail, activities.activities || [], aiNotes);
   attachSaDetailHandlers(quoteId, detail);
 }
 
@@ -6312,7 +6313,16 @@ function attachSaDetailHandlers(_quoteId, _detail) {
   // Placeholder — event listeners attached inline via onclick
 }
 
+function saBackToList() {
+  salesAssist.selectedQuoteId = null;
+  document.querySelector(".sa-layout")?.classList.remove("sa-has-selection");
+  document.querySelectorAll(".sa-quote-card").forEach((el) => el.classList.remove("is-selected"));
+  const detailCol = document.getElementById("sa-detail-col");
+  if (detailCol) detailCol.innerHTML = "";
+}
+
 window.saSelectQuote = saSelectQuote;
+window.saBackToList = saBackToList;
 window.saGenerateAiNotes = saGenerateAiNotes;
 window.saLogActivity = saLogActivity;
 window.saCopyCallScript = saCopyCallScript;
