@@ -58,6 +58,7 @@ This document captures business behavior that should remain stable unless intent
 - Standard Skimmer ingest must refresh quote tables so approved/rejected quotes leave the open quote pipeline after the next Skimmer DB sync.
 - The quote-only import job is a manual recovery path, not the normal freshness mechanism.
 - When a quote customer has a mapped `ghl_contact_id`, Sales Assist should open that contact in GHL instead of defaulting sales calls through the device dialer.
+- Quote expiration dates/status should not affect Sales Assist priority because expiration dates are not reliable in current Skimmer quoting habits.
 
 ## Route Sandbox
 

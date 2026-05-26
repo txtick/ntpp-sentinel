@@ -5738,15 +5738,6 @@ function renderSaQuoteCard(q) {
     );
   if (parseFloat(q.total_amount) >= 2000)
     badges.push(`<span class="sa-badge sa-badge-high-value">High Value</span>`);
-  if (q.expiration_date) {
-    const daysLeft = Math.round(
-      (new Date(q.expiration_date) - new Date()) / 86400000,
-    );
-    if (daysLeft >= 0 && daysLeft <= 7)
-      badges.push(
-        `<span class="sa-badge sa-badge-urgent">Expires ${daysLeft}d</span>`,
-      );
-  }
   if (!q.last_activity_at)
     badges.push(`<span class="sa-badge sa-badge-nocontact">No Contact</span>`);
 

@@ -68,6 +68,8 @@ Keep entries short, but do not skip them.
   - Reason: Sales Assist reads `sk_quote` data from Postgres, so quote statuses such as approved/rejected must refresh with the normal Skimmer DB sync instead of relying on a separate manual quote import.
 - Sales Assist opens mapped quote customers in GHL rather than trying to initiate calls directly from Sentinel.
   - Reason: GHL supports calling from its web/app dialer, while a normal `tel:` link may call from a salesperson's personal device number.
+- Sales Assist priority ignores quote expiration dates/status.
+  - Reason: technicians do not set quote expiration dates consistently enough for expiration to be a reliable follow-up signal.
 
 ## Dashboard Reports
 

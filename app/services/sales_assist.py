@@ -62,10 +62,6 @@ def _compute_priority(quote: dict, activities: list) -> tuple[int, list[str]]:
     elif status == "draft":
         score += 5
         reasons.append("Draft — not yet sent to customer")
-    elif status == "expired":
-        score += 8
-        reasons.append("Quote expired — may be re-engageable")
-
     quote_date = quote.get("quote_date")
     if quote_date:
         if isinstance(quote_date, str):
@@ -86,24 +82,6 @@ def _compute_priority(quote: dict, activities: list) -> tuple[int, list[str]]:
             elif age_days > 30:
                 score += 5
                 reasons.append(f"Quote is {age_days} days old — long-outstanding")
-
-    exp_date = quote.get("expiration_date")
-    if exp_date:
-        if isinstance(exp_date, str):
-            try:
-                exp_date = datetime.fromisoformat(exp_date.replace("Z", "+00:00"))
-            except Exception:
-                exp_date = None
-        if exp_date:
-            if exp_date.tzinfo is None:
-                exp_date = exp_date.replace(tzinfo=timezone.utc)
-            days_until_exp = (exp_date - now).days
-            if 0 <= days_until_exp <= 7:
-                score += 10
-                reasons.append(f"Quote expires in {days_until_exp} day(s)")
-            elif days_until_exp < 0:
-                score += 3
-                reasons.append(f"Quote expired {abs(days_until_exp)} day(s) ago")
 
     if quote.get("is_active_customer"):
         score += 20

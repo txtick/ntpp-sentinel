@@ -39,3 +39,23 @@ def test_sales_assist_frontend_prefers_ghl_open_action():
 
     assert "Open in GHL" in frontend
     assert "Call from device" in frontend
+
+
+def test_sales_assist_priority_ignores_expiration_fields():
+    base_score, base_reasons = sales_assist._compute_priority(
+        {"status": "Sent", "total_amount": 100},
+        [],
+    )
+    expiring_score, expiring_reasons = sales_assist._compute_priority(
+        {"status": "Sent", "total_amount": 100, "expiration_date": "2026-05-26T00:00:00+00:00"},
+        [],
+    )
+    expired_status_score, expired_status_reasons = sales_assist._compute_priority(
+        {"status": "Expired", "total_amount": 100, "expiration_date": "2026-01-01T00:00:00+00:00"},
+        [],
+    )
+
+    assert expiring_score == base_score
+    assert expiring_reasons == base_reasons
+    assert expired_status_score == 10
+    assert not any("expir" in reason.lower() for reason in expired_status_reasons)
