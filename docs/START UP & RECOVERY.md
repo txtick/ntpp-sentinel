@@ -131,6 +131,7 @@ Notes:
 - `dashboard/refresh` re-runs backend-owned dashboard alert detection and clears alert instances that no longer qualify
 - `dashboard/refresh` also runs reminder-side filter-clean quote detection, so quote reminders can auto-complete when a matching Skimmer quote exists
 - filter-clean quote reminders are also rechecked automatically by the dedicated `web-backend` quote-sync cron job during business hours
+- standard Skimmer ingest refreshes Sales Assist quote tables; use the quote-only import only as a recovery shortcut when quote status looks stale
 - manager summaries currently focus on overdue calls/texts plus escalated items; dashboard reminder pressure and `resolved since last summary` are omitted to keep SMS length reliable
 
 Manual dashboard alert refresh:
@@ -147,6 +148,16 @@ Manual filter-clean quote sync:
 docker compose exec -T web-backend curl -s -X POST \
   "http://localhost:8020/jobs/filter-clean/quote-sync" \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+```
+
+Manual Sales Assist quote table refresh:
+
+```bash
+docker compose exec -T sentinel sh -lc '
+curl -sS -X POST \
+  "http://localhost:8000/jobs/skimmer_import_quotes" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+'
 ```
 
 Manual pollen snapshot:

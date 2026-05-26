@@ -2313,7 +2313,7 @@ async def skimmer_link(request: Request):
     }
 
 
-_SKIMMER_IMPORT_TABLES_ALLOWED = {"all", "customers", "routes", "pools", "service_stops", "work_orders"}
+_SKIMMER_IMPORT_TABLES_ALLOWED = {"all", "customers", "routes", "pools", "service_stops", "work_orders", "quotes"}
 
 def _run_skimmer_import() -> dict:
     tables = os.getenv("SKIMMER_IMPORT_TABLES", "all").strip().lower()

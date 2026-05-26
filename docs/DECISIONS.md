@@ -64,6 +64,8 @@ Keep entries short, but do not skip them.
   - Reason: once the quote exists, the human follow-up debt is gone and should drop out of reminder pressure automatically.
 - Filter-clean quote reminder sync now has a dedicated background `web-backend` job in addition to the immediate post-notify check and dashboard refresh path.
   - Reason: quote cleanup should not depend on somebody loading the dashboard or manually triggering a full alert refresh.
+- Sales Assist quote tables are included in the standard Skimmer ingest path.
+  - Reason: Sales Assist reads `sk_quote` data from Postgres, so quote statuses such as approved/rejected must refresh with the normal Skimmer DB sync instead of relying on a separate manual quote import.
 
 ## Dashboard Reports
 

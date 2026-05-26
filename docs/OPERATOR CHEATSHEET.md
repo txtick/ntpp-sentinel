@@ -61,6 +61,17 @@ docker compose exec -T web-backend curl -s -X POST \
   -H "X-NTPP-Secret: $WEBHOOK_SECRET"
 ```
 
+Sales Assist quote table refresh:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T sentinel sh -lc '
+curl -sS -X POST \
+  "http://localhost:8000/jobs/skimmer_import_quotes" \
+  -H "X-NTPP-Secret: $WEBHOOK_SECRET"
+'
+```
+
 ## Dashboard Alert Refresh
 
 ```bash

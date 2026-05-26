@@ -105,6 +105,9 @@ Current production-compatible tables:
 - `sk_service_location`
 - `sk_entry_description`
 - `sk_service_stop_entry`
+- `sk_quote`
+- `sk_quote_location`
+- `sk_quote_item`
 
 Rules:
 - preserve compatibility

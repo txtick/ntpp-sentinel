@@ -52,6 +52,12 @@ This document captures business behavior that should remain stable unless intent
   - `monthly_leak = max(0, monthly_chemical_cost - (monthly_service_rate * 20%))`
 - Pools with missing or zero service rate stay visible on the report as `Missing Rate`, show `N/A` for percent, and are excluded from Watch/Problem/Critical totals.
 
+## Sales Assist
+
+- Sales Assist quote status comes from imported Skimmer quote tables: `sk_quote`, `sk_quote_location`, and `sk_quote_item`.
+- Standard Skimmer ingest must refresh quote tables so approved/rejected quotes leave the open quote pipeline after the next Skimmer DB sync.
+- The quote-only import job is a manual recovery path, not the normal freshness mechanism.
+
 ## Route Sandbox
 
 - Skimmer/current imported route data is the only production source of truth for routes.

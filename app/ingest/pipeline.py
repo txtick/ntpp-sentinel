@@ -140,6 +140,8 @@ REQUIRED_TABLE_COLUMNS: Dict[str, List[str]] = {
     ],
     "WorkOrderType": ["id", "Description", "DefaultWorkNeeded", "DefaultEmailHeader", "DefaultEmailMessage"],
     "Quote": ["id", "CustomerId", "Status", "Total", "QuoteDate"],
+    "QuoteLocation": ["id", "QuoteId"],
+    "QuoteItem": ["id", "QuoteLocationId", "Item", "Quantity", "Rate"],
     "WorkOrder": ["id", "WorkOrderTypeId", "ServiceLocationId", "WorkNeeded", "ServiceDate", "CompleteTime", "Price"],
 }
 
@@ -154,6 +156,9 @@ IMPORT_TABLES = [
     "WorkOrder",
     "EntryDescription",
     "ServiceStopEntry",
+    "Quote",
+    "QuoteLocation",
+    "QuoteItem",
 ]
 
 CRITICAL_COUNT_KEY_MAP = {
