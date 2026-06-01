@@ -510,6 +510,7 @@ def _rule_label(rule_code: str) -> str:
         "fc_cya_ratio_bad_2wk": "FC:CYA Ratio Out Of Balance",
         "ph_bad_2_of_2_14d": "pH High Two Weeks In A Row",
         "cya_above_100": "CYA Above 100",
+        "pool_stop_duration_high": "Long Stop Duration",
     }
     if rule_code in labels:
         return labels[rule_code]
@@ -822,9 +823,12 @@ def _ensure_backend_owned_dashboard_definitions() -> None:
 def _alert_title(category: str, row: Dict[str, Any]) -> str:
     customer_name = row.get("customer_name") or "Unknown Customer"
     pool_name = row.get("pool_name") or "No Pool"
+    rule_code = str(row.get("rule_code") or "")
     reading_key = _metric_label(row.get("reading_key") or row.get("opportunity_type") or "alert")
     if category == "revenue":
         return f"{customer_name}: {_rule_label(str(row.get('rule_code') or row.get('opportunity_type') or 'revenue_opportunity'))}"
+    if rule_code == "pool_stop_duration_high":
+        return f"{customer_name}: Long Stop Duration at {pool_name}"
     return f"{customer_name}: {reading_key} on {pool_name}"
 
 
@@ -853,6 +857,15 @@ def _alert_summary(category: str, row: Dict[str, Any]) -> str:
         observed_value = row.get("observed_value")
     threshold_value = row.get("threshold_value")
     reading_key = row.get("reading_key") or "metric"
+    if rule_code == "pool_stop_duration_high":
+        count = row.get("observed_count")
+        severity = row.get("severity") or (row.get("metadata_json") or {}).get("severity")
+        window = "6 weeks" if severity == "critical" else "4 weeks"
+        if count is not None and observed_value is not None:
+            return f"{int(count)} stop(s) over 45 min in the last {window} (avg {int(observed_value)} min per long stop)."
+        if count is not None:
+            return f"{int(count)} stop(s) over 45 min in the last {window}."
+        return "Multiple stops exceeded 45 minutes — manager review recommended."
     if rule_code == "ph_bad_2_of_2_14d":
         return f"pH was above {threshold_value} on the last 2 readings."
     if rule_code == "cya_above_100":
@@ -1188,6 +1201,37 @@ def _candidate_detections(cur, refresh_run_id: int) -> List[Dict[str, Any]]:
                 item["entity_type"] = "customer"
                 item["entity_id"] = str(item["customer_id"])
             item["metadata_json"] = _build_revenue_metadata(cur, item, refresh_run_id)
+            candidates.append(item)
+
+    if _view_exists(cur, "pool_stop_duration_alerts_v"):
+        cur.execute(
+            """
+            SELECT
+                'process' AS category,
+                rule_code,
+                severity,
+                customer_id,
+                pool_id,
+                customer_name,
+                pool_name,
+                'stop_duration' AS reading_key,
+                NULL::TEXT AS reading_type,
+                NULL::TEXT AS description,
+                NULL::TEXT AS unit_of_measure,
+                threshold_value,
+                NULL::NUMERIC AS value,
+                observed_value,
+                observed_count,
+                NULL::TEXT AS opportunity_type,
+                service_date
+            FROM pool_stop_duration_alerts_v
+            """
+        )
+        for row in cur.fetchall():
+            item = dict(row)
+            item["entity_type"] = "pool"
+            item["entity_id"] = str(item["pool_id"])
+            item["metadata_json"] = _build_pool_alert_metadata(cur, "process", item, refresh_run_id)
             candidates.append(item)
 
     return candidates

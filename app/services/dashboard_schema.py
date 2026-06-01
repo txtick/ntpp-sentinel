@@ -1041,6 +1041,76 @@ def ensure_dashboard_schema_definitions(conn: Any, *, monthly_chemical_cost_revi
 
         cur.execute(
             """
+            CREATE OR REPLACE VIEW pool_stop_duration_alerts_v AS
+            WITH stop_stats AS (
+                SELECT
+                    p.id AS pool_id,
+                    p.customer_id,
+                    COALESCE(
+                        NULLIF(trim(concat_ws(' ', c.first_name, c.last_name)), ''),
+                        NULLIF(c.company_name, ''),
+                        'Unknown Customer'
+                    ) AS customer_name,
+                    COALESCE(p.name, p.address, 'Pool') AS pool_name,
+                    COUNT(*) FILTER (
+                        WHERE s.minutes_at_stop > 45
+                          AND s.service_date >= NOW() - INTERVAL '28 days'
+                    ) AS long_stop_count_4wk,
+                    COUNT(*) FILTER (
+                        WHERE s.minutes_at_stop > 45
+                          AND s.service_date >= NOW() - INTERVAL '42 days'
+                    ) AS long_stop_count_6wk,
+                    ROUND(
+                        AVG(s.minutes_at_stop) FILTER (
+                            WHERE s.minutes_at_stop > 45
+                              AND s.service_date >= NOW() - INTERVAL '42 days'
+                        )
+                    ) AS avg_long_stop_minutes,
+                    MAX(s.service_date) FILTER (
+                        WHERE s.minutes_at_stop > 45
+                    ) AS service_date
+                FROM pools p
+                JOIN customers c ON c.id = p.customer_id
+                JOIN technician_route_stops s
+                    ON s.source_system = p.source_system
+                   AND s.source_service_location_id = p.source_service_location_id
+                WHERE s.is_skipped = FALSE
+                  AND s.service_date >= NOW() - INTERVAL '42 days'
+                  AND c.is_operationally_active = TRUE
+                GROUP BY
+                    p.id,
+                    p.customer_id,
+                    c.first_name,
+                    c.last_name,
+                    c.company_name,
+                    p.name,
+                    p.address
+            )
+            SELECT
+                pool_id,
+                customer_id,
+                customer_name,
+                pool_name,
+                'pool_stop_duration_high' AS rule_code,
+                CASE
+                    WHEN long_stop_count_6wk >= 3 THEN 'critical'
+                    ELSE 'warning'
+                END AS severity,
+                avg_long_stop_minutes AS observed_value,
+                45.0 AS threshold_value,
+                CASE
+                    WHEN long_stop_count_6wk >= 3 THEN long_stop_count_6wk
+                    ELSE long_stop_count_4wk
+                END AS observed_count,
+                service_date
+            FROM stop_stats
+            WHERE long_stop_count_6wk >= 3
+               OR long_stop_count_4wk >= 2
+            """
+        )
+
+        cur.execute(
+            """
             CREATE OR REPLACE VIEW dashboard_weekly_service_pools_v AS
             SELECT DISTINCT
                 c.id AS customer_id,
