@@ -1886,7 +1886,14 @@ def _upsert_technician_route_stops(
                     rs.complete_time,
                     COALESCE(rs.is_skipped, FALSE) AS is_skipped,
                     rs.sequence,
-                    rs.minutes_at_stop,
+                    CASE
+                        WHEN rs.start_time IS NOT NULL
+                         AND rs.complete_time IS NOT NULL
+                         AND rs.complete_time > rs.start_time
+                         AND EXTRACT(EPOCH FROM (rs.complete_time - rs.start_time)) / 60.0 <= 240
+                        THEN ROUND(EXTRACT(EPOCH FROM (rs.complete_time - rs.start_time)) / 60.0)::INTEGER
+                        ELSE NULL
+                    END AS minutes_at_stop,
                     rs.source_route_move_id,
                     rs.company_id,
                     rs.raw_json
