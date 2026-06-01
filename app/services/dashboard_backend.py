@@ -2489,6 +2489,72 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
 
             cur.execute(
                 """
+                WITH stops AS (
+                    SELECT
+                        p.id AS pool_id,
+                        COALESCE(p.name, p.address, 'Pool ' || p.id::text) AS pool_name,
+                        s.minutes_at_stop
+                    FROM technician_route_stops s
+                    JOIN pools p
+                        ON p.source_system = s.source_system
+                       AND p.source_service_location_id = s.source_service_location_id
+                    WHERE p.customer_id = %s
+                      AND s.is_skipped = FALSE
+                      AND s.service_date >= NOW() - INTERVAL '90 days'
+                ),
+                per_pool AS (
+                    SELECT
+                        pool_id,
+                        pool_name,
+                        COUNT(*) FILTER (WHERE minutes_at_stop IS NOT NULL) AS timed_stop_count,
+                        ROUND(AVG(minutes_at_stop) FILTER (WHERE minutes_at_stop IS NOT NULL)) AS avg_minutes,
+                        COUNT(*) FILTER (WHERE minutes_at_stop > 45) AS long_stop_count
+                    FROM stops
+                    GROUP BY pool_id, pool_name
+                ),
+                customer_rollup AS (
+                    SELECT
+                        COUNT(*) FILTER (WHERE minutes_at_stop IS NOT NULL) AS total_timed_stops,
+                        ROUND(AVG(minutes_at_stop) FILTER (WHERE minutes_at_stop IS NOT NULL)) AS avg_minutes,
+                        COUNT(*) FILTER (WHERE minutes_at_stop > 45) AS total_long_stops
+                    FROM stops
+                )
+                SELECT
+                    pp.pool_id,
+                    pp.pool_name,
+                    pp.timed_stop_count,
+                    pp.avg_minutes,
+                    pp.long_stop_count,
+                    cr.total_timed_stops AS customer_total_timed_stops,
+                    cr.avg_minutes AS customer_avg_minutes,
+                    cr.total_long_stops AS customer_total_long_stops
+                FROM per_pool pp, customer_rollup cr
+                ORDER BY pp.pool_id ASC
+                """,
+                (int(customer_id),),
+            )
+            stop_duration_rows = [dict(row) for row in cur.fetchall()]
+            if stop_duration_rows:
+                stop_duration_stats = {
+                    "by_pool": [
+                        {
+                            "pool_id": r["pool_id"],
+                            "pool_name": r["pool_name"],
+                            "timed_stop_count": r["timed_stop_count"],
+                            "avg_minutes": r["avg_minutes"],
+                            "long_stop_count": r["long_stop_count"],
+                        }
+                        for r in stop_duration_rows
+                    ],
+                    "customer_total_timed_stops": stop_duration_rows[0]["customer_total_timed_stops"],
+                    "customer_avg_minutes": stop_duration_rows[0]["customer_avg_minutes"],
+                    "customer_total_long_stops": stop_duration_rows[0]["customer_total_long_stops"],
+                }
+            else:
+                stop_duration_stats = None
+
+            cur.execute(
+                """
                 SELECT
                     COALESCE(SUM(d.estimated_cost) FILTER (WHERE d.service_date >= NOW() - INTERVAL '30 days'), 0) AS cost_30d,
                     COALESCE(SUM(d.estimated_cost) FILTER (WHERE d.service_date >= NOW() - INTERVAL '60 days'), 0) AS cost_60d,
@@ -2545,6 +2611,7 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
         "chart_policy": chart_policy,
         "chemical_spend_summary": chemical_spend_summary,
         "chemical_spend_by_visit": chemical_spend_by_visit,
+        "stop_duration_stats": stop_duration_stats,
     }
 
 

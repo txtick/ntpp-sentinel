@@ -2635,6 +2635,7 @@ async function loadCustomerProfile() {
   );
   const multiplePools = (detail.pools || []).length > 1;
   const spend = detail.chemical_spend_summary || {};
+  const stopStats = detail.stop_duration_stats || null;
   const visits = detail.chemical_spend_by_visit || [];
   const visits90d = visits.filter((visit) => {
     const ts = new Date(visit.service_date).getTime();
@@ -2863,6 +2864,27 @@ async function loadCustomerProfile() {
             <div class="meta-row"><span>Latest Dose Date</span><strong>${formatDateTime(spend.latest_dose_date)}</strong></div>
           </div>
         </section>
+        ${stopStats ? `
+        <section class="section-card">
+          <h3>Service Duration <span class="muted" style="font-weight:normal;font-size:0.85em">(Last 90 Days)</span></h3>
+          <div class="meta-stack">
+            ${multiplePools && stopStats.by_pool.length > 1 ? `
+              <div class="meta-row"><span>Overall Avg Stop Time</span><strong>${stopStats.customer_avg_minutes != null ? stopStats.customer_avg_minutes + " min" : "—"}</strong></div>
+              <div class="meta-row"><span>Total Long Stops (&gt;45 min)</span><strong>${stopStats.customer_total_long_stops ?? 0}</strong></div>
+              <div class="meta-row"><span>Total Timed Stops</span><strong>${stopStats.customer_total_timed_stops ?? 0}</strong></div>
+              ${stopStats.by_pool.map((p) => `
+                <div class="meta-row" style="padding-top:4px;border-top:1px solid var(--border)">
+                  <span>${escapeHtml(p.pool_name)}</span>
+                  <strong>${p.avg_minutes != null ? p.avg_minutes + " min avg" : "—"} · ${p.timed_stop_count} stop${p.timed_stop_count !== 1 ? "s" : ""}</strong>
+                </div>`).join("")}
+            ` : `
+              <div class="meta-row"><span>Avg Stop Time</span><strong>${stopStats.customer_avg_minutes != null ? stopStats.customer_avg_minutes + " min" : "—"}</strong></div>
+              <div class="meta-row"><span>Long Stops (&gt;45 min)</span><strong>${stopStats.customer_total_long_stops ?? 0}</strong></div>
+              <div class="meta-row"><span>Timed Stops</span><strong>${stopStats.customer_total_timed_stops ?? 0}</strong></div>
+            `}
+          </div>
+        </section>
+        ` : ""}
         <section class="section-card">
           <h3>Tracked Alerts</h3>
           <div class="event-list">
