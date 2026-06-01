@@ -1752,7 +1752,7 @@ def list_alert_instances(
         filters.append("status = %s")
         params.append(normalized_status)
     else:
-        filters.append("status <> 'cleared'")
+        filters.append("status NOT IN ('cleared', 'resolved')")
     if normalized_category:
         filters.append("category = %s")
         params.append(normalized_category)
@@ -2070,8 +2070,8 @@ def list_customers(
                 LEFT JOIN (
                     SELECT
                         customer_id,
-                        COUNT(*) FILTER (WHERE status <> 'cleared') AS open_alert_count,
-                        COUNT(*) FILTER (WHERE status <> 'cleared' AND severity = 'critical') AS critical_alert_count
+                        COUNT(*) FILTER (WHERE status NOT IN ('cleared', 'resolved')) AS open_alert_count,
+                        COUNT(*) FILTER (WHERE status NOT IN ('cleared', 'resolved') AND severity = 'critical') AS critical_alert_count
                     FROM alert_instances
                     GROUP BY customer_id
                 ) alerts ON alerts.customer_id = c.id
@@ -2276,8 +2276,8 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
                 LEFT JOIN (
                     SELECT
                         customer_id,
-                        COUNT(*) FILTER (WHERE status <> 'cleared') AS open_alert_count,
-                        COUNT(*) FILTER (WHERE status <> 'cleared' AND severity = 'critical') AS critical_alert_count
+                        COUNT(*) FILTER (WHERE status NOT IN ('cleared', 'resolved')) AS open_alert_count,
+                        COUNT(*) FILTER (WHERE status NOT IN ('cleared', 'resolved') AND severity = 'critical') AS critical_alert_count
                     FROM alert_instances
                     GROUP BY customer_id
                 ) alerts ON alerts.customer_id = c.id
@@ -2355,7 +2355,7 @@ def get_customer_detail(customer_id: int) -> Dict[str, Any]:
                     cleared_at
                 FROM alert_instances
                 WHERE customer_id = %s
-                  AND status <> 'cleared'
+                  AND status NOT IN ('cleared', 'resolved')
                 ORDER BY
                     CASE status
                         WHEN 'open' THEN 0

@@ -1085,7 +1085,7 @@ function renderFilters() {
     els.filters.innerHTML = `
       <label class="filter-chip"><span>Status</span>
         <select id="filter-alert-status">
-          <option value="">All</option>
+          <option value="">Active</option>
           <option value="open" ${f.status === "open" ? "selected" : ""}>Open</option>
           <option value="acknowledged" ${f.status === "acknowledged" ? "selected" : ""}>Acknowledged</option>
           <option value="snoozed" ${f.status === "snoozed" ? "selected" : ""}>Snoozed</option>
