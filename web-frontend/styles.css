@@ -585,6 +585,95 @@ textarea {
   letter-spacing: 0.08em;
   font-size: 0.7rem;
 }
+.customer-flow-card {
+  display: grid;
+  gap: 12px;
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.customer-flow-window-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.customer-flow-window {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+}
+
+.customer-flow-window span,
+.customer-flow-month span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.flow-positive {
+  color: var(--success);
+}
+
+.flow-negative {
+  color: var(--danger);
+}
+
+.customer-flow-month-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(48px, 1fr));
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.customer-flow-month {
+  display: grid;
+  gap: 6px;
+  min-width: 48px;
+}
+
+.customer-flow-month strong {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.customer-flow-bars {
+  display: grid;
+  gap: 3px;
+  height: 27px;
+  align-content: center;
+}
+
+.customer-flow-bar {
+  min-width: 3px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.flow-positive-bg {
+  background: color-mix(in srgb, var(--success) 74%, transparent);
+}
+
+.flow-negative-bg {
+  background: color-mix(in srgb, var(--danger) 74%, transparent);
+}
+
+@media (max-width: 720px) {
+  .customer-flow-window-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* ─────────────────────────────────────────────
    Section / item / detail cards
@@ -2345,10 +2434,22 @@ textarea {
   letter-spacing: 0.02em;
 }
 
-.sa-badge-active { background: #d1fae5; color: #065f46; }
-.sa-badge-high-value { background: #dbeafe; color: #1e40af; }
-.sa-badge-urgent { background: #fef3c7; color: #92400e; }
-.sa-badge-nocontact { background: #f3f4f6; color: #6b7280; }
+.sa-badge-active {
+  background: #d1fae5;
+  color: #065f46;
+}
+.sa-badge-high-value {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.sa-badge-urgent {
+  background: #fef3c7;
+  color: #92400e;
+}
+.sa-badge-nocontact {
+  background: #f3f4f6;
+  color: #6b7280;
+}
 
 .sa-priority-bar {
   display: flex;

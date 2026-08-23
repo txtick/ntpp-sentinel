@@ -1651,10 +1651,89 @@ function renderWeatherWidget() {
   `;
 }
 
+function formatSignedCount(value) {
+  const n = Number(value || 0);
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function formatLostCount(value) {
+  const n = Number(value || 0);
+  return n > 0 ? `-${n}` : "0";
+}
+
+function renderCustomerFlow(flow = {}) {
+  const windows = flow.windows || [];
+  const monthly = flow.monthly || [];
+  const largestMonthly = Math.max(
+    1,
+    ...monthly.flatMap((item) => [
+      Number(item.new_customer_count || 0),
+      Number(item.lost_customer_count || 0),
+    ]),
+  );
+  const windowHtml = windows
+    .map(
+      (item) => `
+        <div class="customer-flow-window">
+          <span>${escapeHtml(item.window_days)} days</span>
+          <strong class="flow-positive">${formatSignedCount(item.new_customer_count)}</strong>
+          <strong class="flow-negative">${formatLostCount(item.lost_customer_count)}</strong>
+        </div>`,
+    )
+    .join("");
+  const monthlyHtml = monthly
+    .slice(-12)
+    .map((item) => {
+      const monthLabel = item.month
+        ? new Date(`${item.month}-02T12:00:00`).toLocaleDateString("en-US", {
+            month: "short",
+          })
+        : "-";
+      const newCount = Number(item.new_customer_count || 0);
+      const lostCount = Number(item.lost_customer_count || 0);
+      const newWidth = Math.max(
+        3,
+        Math.round((newCount / largestMonthly) * 100),
+      );
+      const lostWidth = Math.max(
+        3,
+        Math.round((lostCount / largestMonthly) * 100),
+      );
+      return `
+        <div class="customer-flow-month">
+          <span>${escapeHtml(monthLabel)}</span>
+          <div class="customer-flow-bars" aria-label="${escapeHtml(monthLabel)} customer flow">
+            <div class="customer-flow-bar flow-positive-bg" style="width:${newWidth}%"></div>
+            <div class="customer-flow-bar flow-negative-bg" style="width:${lostWidth}%"></div>
+          </div>
+          <strong><span class="flow-positive">${formatSignedCount(newCount)}</span> / <span class="flow-negative">${formatLostCount(lostCount)}</span></strong>
+        </div>`;
+    })
+    .join("");
+
+  return `
+    <section class="section-card customer-flow-card">
+      <div class="section-heading-row">
+        <div>
+          <h3>Customer Flow</h3>
+          <p class="panel-subtitle">New customers are based on customer create date; lost customers are based on inactive date.</p>
+        </div>
+      </div>
+      <div class="customer-flow-window-grid">
+        ${windowHtml || `<div class="empty-state">No customer flow data yet.</div>`}
+      </div>
+      <div class="customer-flow-month-grid">
+        ${monthlyHtml || `<div class="empty-state">No monthly customer flow data yet.</div>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderHome() {
   const payload = state.data.home.summary.summary || {};
   const alertCounts = payload.tracked_alert_counts_by_status || [];
   const reminderCounts = payload.reminder_counts || {};
+  const customerFlow = payload.customer_flow || {};
   const cards = [
     {
       label: "Active Customers",
@@ -1711,6 +1790,7 @@ function renderHome() {
     <div class="stat-grid">
       ${cards.map((card) => `<article class="stat-card is-clickable" data-home-nav="${escapeHtml(card.target)}" data-home-status="${escapeHtml(card.status || "")}" data-home-category="${escapeHtml(card.category || "")}" data-home-severity="${escapeHtml(card.severity || "")}" data-home-overdue-only="${escapeHtml(card.overdueOnly || 0)}"><span class="muted">${card.label}</span><strong>${escapeHtml(card.value ?? "0")}</strong></article>`).join("")}
     </div>
+    ${renderCustomerFlow(customerFlow)}
     <section class="section-card">
       <h3>Tracked Alert Status Mix</h3>
       <p class="panel-subtitle">Durable workflow state from the web backend, not raw query output.</p>
@@ -2864,27 +2944,39 @@ async function loadCustomerProfile() {
             <div class="meta-row"><span>Latest Dose Date</span><strong>${formatDateTime(spend.latest_dose_date)}</strong></div>
           </div>
         </section>
-        ${stopStats ? `
+        ${
+          stopStats
+            ? `
         <section class="section-card">
           <h3>Service Duration <span class="muted" style="font-weight:normal;font-size:0.85em">(Last 90 Days)</span></h3>
           <div class="meta-stack">
-            ${multiplePools && stopStats.by_pool.length > 1 ? `
+            ${
+              multiplePools && stopStats.by_pool.length > 1
+                ? `
               <div class="meta-row"><span>Overall Avg Stop Time</span><strong>${stopStats.customer_avg_minutes != null ? stopStats.customer_avg_minutes + " min" : "—"}</strong></div>
               <div class="meta-row"><span>Total Long Stops (&gt;45 min)</span><strong>${stopStats.customer_total_long_stops ?? 0}</strong></div>
               <div class="meta-row"><span>Total Timed Stops</span><strong>${stopStats.customer_total_timed_stops ?? 0}</strong></div>
-              ${stopStats.by_pool.map((p) => `
+              ${stopStats.by_pool
+                .map(
+                  (p) => `
                 <div class="meta-row" style="padding-top:4px;border-top:1px solid var(--border)">
                   <span>${escapeHtml(p.pool_name)}</span>
                   <strong>${p.avg_minutes != null ? p.avg_minutes + " min avg" : "—"} · ${p.timed_stop_count} stop${p.timed_stop_count !== 1 ? "s" : ""}</strong>
-                </div>`).join("")}
-            ` : `
+                </div>`,
+                )
+                .join("")}
+            `
+                : `
               <div class="meta-row"><span>Avg Stop Time</span><strong>${stopStats.customer_avg_minutes != null ? stopStats.customer_avg_minutes + " min" : "—"}</strong></div>
               <div class="meta-row"><span>Long Stops (&gt;45 min)</span><strong>${stopStats.customer_total_long_stops ?? 0}</strong></div>
               <div class="meta-row"><span>Timed Stops</span><strong>${stopStats.customer_total_timed_stops ?? 0}</strong></div>
-            `}
+            `
+            }
           </div>
         </section>
-        ` : ""}
+        `
+            : ""
+        }
         <section class="section-card">
           <h3>Tracked Alerts</h3>
           <div class="event-list">
@@ -6329,7 +6421,9 @@ function attachSaDetailHandlers(_quoteId, _detail) {
 function saBackToList() {
   salesAssist.selectedQuoteId = null;
   document.querySelector(".sa-layout")?.classList.remove("sa-has-selection");
-  document.querySelectorAll(".sa-quote-card").forEach((el) => el.classList.remove("is-selected"));
+  document
+    .querySelectorAll(".sa-quote-card")
+    .forEach((el) => el.classList.remove("is-selected"));
   const detailCol = document.getElementById("sa-detail-col");
   if (detailCol) detailCol.innerHTML = "";
 }

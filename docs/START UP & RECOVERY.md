@@ -54,6 +54,17 @@ Expected dashboard health:
 {"ok": true, "service": "web-backend"}
 ```
 
+Phone/Codex release path from WSL:
+
+```bash
+cd ~/ntpp-sentinel
+./release.sh "commit message"
+```
+
+This preserves the existing operator flow: `release.sh` runs local `push.sh`, then SSHes to production as `kevin@sentinel.northtexaspoolpros.com` with `~/.ssh/kevin-nttp-droplet` and runs `/opt/ntpp-sentinel/deploy.sh`.
+
+Use the direct server deploy command above when the code is already pushed and only a production redeploy is needed.
+
 ---
 
 ## 2. Services

@@ -4,6 +4,15 @@ Copy-paste commands only.
 
 ## Deploy
 
+Phone/Codex release from WSL:
+
+```bash
+cd ~/ntpp-sentinel
+./release.sh "commit message"
+```
+
+Server-only redeploy:
+
 ```bash
 cd /opt/ntpp-sentinel
 ./deploy.sh

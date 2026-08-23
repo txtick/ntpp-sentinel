@@ -1475,7 +1475,72 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
             )
             reminder_counts = dict(cur.fetchone())
             payload["reminder_counts"] = reminder_counts
+            payload["customer_flow"] = _get_customer_flow_metrics(cur)
             return payload
+
+
+def _get_customer_flow_metrics(cur: Any) -> Dict[str, Any]:
+    scoped_customer_cte = """
+        scoped_customers AS (
+            SELECT c.id, c.created_at, c.inactive_since
+            FROM customers c
+            WHERE COALESCE(c.is_lead, FALSE) = FALSE
+              AND COALESCE(c.has_pool, FALSE) = TRUE
+              AND NOT customer_has_tag(c.raw_json, 'service-only')
+              AND NOT customer_has_tag(c.raw_json, 'inspection')
+        )
+    """
+    cur.execute(
+        f"""
+        WITH windows(window_days) AS (
+            VALUES (30), (60), (90)
+        ),
+        {scoped_customer_cte}
+        SELECT
+            w.window_days,
+            COUNT(s.id) FILTER (
+                WHERE s.created_at >= NOW() - make_interval(days => w.window_days)
+            ) AS new_customer_count,
+            COUNT(s.id) FILTER (
+                WHERE s.inactive_since >= NOW() - make_interval(days => w.window_days)
+            ) AS lost_customer_count
+        FROM windows w
+        LEFT JOIN scoped_customers s ON TRUE
+        GROUP BY w.window_days
+        ORDER BY w.window_days
+        """
+    )
+    windows = [dict(row) for row in cur.fetchall()]
+
+    cur.execute(
+        f"""
+        WITH months AS (
+            SELECT generate_series(
+                date_trunc('month', CURRENT_DATE)::date - INTERVAL '11 months',
+                date_trunc('month', CURRENT_DATE)::date,
+                INTERVAL '1 month'
+            )::date AS month_start
+        ),
+        {scoped_customer_cte}
+        SELECT
+            to_char(m.month_start, 'YYYY-MM') AS month,
+            m.month_start,
+            COUNT(s.id) FILTER (
+                WHERE s.created_at >= m.month_start
+                  AND s.created_at < m.month_start + INTERVAL '1 month'
+            ) AS new_customer_count,
+            COUNT(s.id) FILTER (
+                WHERE s.inactive_since >= m.month_start
+                  AND s.inactive_since < m.month_start + INTERVAL '1 month'
+            ) AS lost_customer_count
+        FROM months m
+        LEFT JOIN scoped_customers s ON TRUE
+        GROUP BY m.month_start
+        ORDER BY m.month_start
+        """
+    )
+    monthly = [dict(row) for row in cur.fetchall()]
+    return {"windows": windows, "monthly": monthly}
 
 
 def refresh_alert_instances(trigger_reason: str = "manual") -> Dict[str, Any]:

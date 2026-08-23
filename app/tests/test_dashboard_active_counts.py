@@ -44,3 +44,29 @@ def test_assignment_current_location_index_exists():
     pipeline = (Path(__file__).resolve().parents[1] / "ingest" / "pipeline.py").read_text()
 
     assert "idx_service_location_technician_assignments_location_current" in pipeline
+
+
+def _dashboard_backend_text() -> str:
+    return (Path(__file__).resolve().parents[1] / "services" / "dashboard_backend.py").read_text()
+
+
+def test_dashboard_summary_includes_customer_flow_metrics():
+    text = _dashboard_backend_text()
+
+    assert 'payload["customer_flow"] = _get_customer_flow_metrics(cur)' in text
+    assert "VALUES (30), (60), (90)" in text
+    assert "created_at" in text
+    assert "inactive_since" in text
+
+
+def test_customer_flow_excludes_non_operational_customer_types():
+    text = _dashboard_backend_text()
+    flow_section = text.split("def _get_customer_flow_metrics", 1)[1].split(
+        "def refresh_alert_instances",
+        1,
+    )[0]
+
+    assert "COALESCE(c.is_lead, FALSE) = FALSE" in flow_section
+    assert "COALESCE(c.has_pool, FALSE) = TRUE" in flow_section
+    assert "customer_has_tag(c.raw_json, 'service-only')" in flow_section
+    assert "customer_has_tag(c.raw_json, 'inspection')" in flow_section
