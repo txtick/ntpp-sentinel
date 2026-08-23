@@ -1480,14 +1480,39 @@ def get_dashboard_summary() -> Optional[Dict[str, Any]]:
 
 
 def _get_customer_flow_metrics(cur: Any) -> Dict[str, Any]:
-    scoped_customer_cte = """
-        scoped_customers AS (
-            SELECT c.id, c.created_at, c.inactive_since
+    customer_service_windows_cte = """
+        scoped_assignments AS (
+            SELECT DISTINCT
+                c.id AS customer_id,
+                a.source_service_location_id,
+                a.start_date,
+                a.end_date,
+                (
+                    (a.start_date IS NULL OR a.start_date <= CURRENT_DATE)
+                    AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
+                ) AS is_current
             FROM customers c
+            JOIN service_location_technician_assignments a
+              ON a.customer_id = c.id
             WHERE COALESCE(c.is_lead, FALSE) = FALSE
               AND COALESCE(c.has_pool, FALSE) = TRUE
+              AND COALESCE(c.is_operationally_active, FALSE) = TRUE
               AND NOT customer_has_tag(c.raw_json, 'service-only')
               AND NOT customer_has_tag(c.raw_json, 'inspection')
+              AND a.is_deleted = FALSE
+              AND route_assignment_is_weekly(a.frequency)
+        ),
+        customer_service_windows AS (
+            SELECT
+                customer_id,
+                MIN(start_date) FILTER (WHERE start_date IS NOT NULL) AS first_start_date,
+                MAX(end_date) FILTER (
+                    WHERE end_date IS NOT NULL
+                      AND end_date <= CURRENT_DATE
+                ) AS last_end_date,
+                BOOL_OR(is_current) AS has_current_assignment
+            FROM scoped_assignments
+            GROUP BY customer_id
         )
     """
     cur.execute(
@@ -1495,17 +1520,18 @@ def _get_customer_flow_metrics(cur: Any) -> Dict[str, Any]:
         WITH windows(window_days) AS (
             VALUES (30), (60), (90)
         ),
-        {scoped_customer_cte}
+        {customer_service_windows_cte}
         SELECT
             w.window_days,
-            COUNT(s.id) FILTER (
-                WHERE s.created_at >= NOW() - make_interval(days => w.window_days)
+            COUNT(c.customer_id) FILTER (
+                WHERE c.first_start_date >= NOW() - make_interval(days => w.window_days)
             ) AS new_customer_count,
-            COUNT(s.id) FILTER (
-                WHERE s.inactive_since >= NOW() - make_interval(days => w.window_days)
+            COUNT(c.customer_id) FILTER (
+                WHERE NOT c.has_current_assignment
+                  AND c.last_end_date >= NOW() - make_interval(days => w.window_days)
             ) AS lost_customer_count
         FROM windows w
-        LEFT JOIN scoped_customers s ON TRUE
+        LEFT JOIN customer_service_windows c ON TRUE
         GROUP BY w.window_days
         ORDER BY w.window_days
         """
@@ -1521,20 +1547,21 @@ def _get_customer_flow_metrics(cur: Any) -> Dict[str, Any]:
                 INTERVAL '1 month'
             )::date AS month_start
         ),
-        {scoped_customer_cte}
+        {customer_service_windows_cte}
         SELECT
             to_char(m.month_start, 'YYYY-MM') AS month,
             m.month_start,
-            COUNT(s.id) FILTER (
-                WHERE s.created_at >= m.month_start
-                  AND s.created_at < m.month_start + INTERVAL '1 month'
+            COUNT(c.customer_id) FILTER (
+                WHERE c.first_start_date >= m.month_start
+                  AND c.first_start_date < m.month_start + INTERVAL '1 month'
             ) AS new_customer_count,
-            COUNT(s.id) FILTER (
-                WHERE s.inactive_since >= m.month_start
-                  AND s.inactive_since < m.month_start + INTERVAL '1 month'
+            COUNT(c.customer_id) FILTER (
+                WHERE NOT c.has_current_assignment
+                  AND c.last_end_date >= m.month_start
+                  AND c.last_end_date < m.month_start + INTERVAL '1 month'
             ) AS lost_customer_count
         FROM months m
-        LEFT JOIN scoped_customers s ON TRUE
+        LEFT JOIN customer_service_windows c ON TRUE
         GROUP BY m.month_start
         ORDER BY m.month_start
         """

@@ -103,6 +103,7 @@ Examples:
 
 ## Dashboard Summary / Homepage
 
+- `customers.created_at` and `customers.inactive_since` are Sentinel/import-maintained timestamps in the normalized table, not reliable Skimmer customer start/lost dates. Homepage customer-flow metrics must use weekly route assignment `start_date` / `end_date` instead.
 - `dashboard_summary_v` reads alert counts from `alert_instances`, not from the live analytics views (`current_chemistry_alerts_v`, `chemistry_trend_alerts_v`, `revenue_opportunities_v`).
 - This means homepage stat cards reflect the last dashboard refresh run, not a real-time scan. This is intentional — re-running the full analytics on every page load caused 60+ second load times.
 - If summary counts look stale, the fix is to trigger a dashboard refresh (`POST /jobs/dashboard/refresh`), not to query the views directly.

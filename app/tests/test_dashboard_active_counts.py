@@ -55,11 +55,12 @@ def test_dashboard_summary_includes_customer_flow_metrics():
 
     assert 'payload["customer_flow"] = _get_customer_flow_metrics(cur)' in text
     assert "VALUES (30), (60), (90)" in text
-    assert "created_at" in text
-    assert "inactive_since" in text
+    assert "first_start_date" in text
+    assert "last_end_date" in text
+    assert "service_location_technician_assignments" in text
 
 
-def test_customer_flow_excludes_non_operational_customer_types():
+def test_customer_flow_uses_weekly_route_assignment_lifecycle():
     text = _dashboard_backend_text()
     flow_section = text.split("def _get_customer_flow_metrics", 1)[1].split(
         "def refresh_alert_instances",
@@ -68,5 +69,9 @@ def test_customer_flow_excludes_non_operational_customer_types():
 
     assert "COALESCE(c.is_lead, FALSE) = FALSE" in flow_section
     assert "COALESCE(c.has_pool, FALSE) = TRUE" in flow_section
+    assert "COALESCE(c.is_operationally_active, FALSE) = TRUE" in flow_section
     assert "customer_has_tag(c.raw_json, 'service-only')" in flow_section
     assert "customer_has_tag(c.raw_json, 'inspection')" in flow_section
+    assert "a.is_deleted = FALSE" in flow_section
+    assert "route_assignment_is_weekly(a.frequency)" in flow_section
+    assert "BOOL_OR(is_current) AS has_current_assignment" in flow_section
