@@ -17,8 +17,8 @@ This document captures business behavior that should remain stable unless intent
 - Current-week cleaning counts must follow the live Skimmer route API so the Labor page matches Skimmer's Labor report.
 - Filter-clean counts/pay come from completed Skimmer work orders imported into Sentinel, assigned to the completing tech.
   - Normal evidence is the completed, non-deleted `WorkOrder` row and its assigned `AccountId`.
-  - When Skimmer omits that work-order id from the exported `WorkOrder` table, Sentinel falls back to the matching `CustomerActivityLog` `WorkOrderFinished` event and its `CreatedBy` tech.
-  - The two sources are deduplicated by Skimmer work-order id; an activity event is used only when its related `WorkOrder` row is absent.
+  - When Skimmer omits the completed instance from the exported `WorkOrder` table, Sentinel falls back to the matching `CustomerActivityLog` `WorkOrderFinished` event and its `CreatedBy` tech.
+  - The two sources are deduplicated by Skimmer work-order id; an activity event is used only when its id has no valid completed, non-deleted work order in the payroll range. Stale recurring/template rows with old service dates or placeholder completion times do not suppress the fallback.
 - Pay rules:
   - `$16` per stop/pool
   - `$25` per filter clean

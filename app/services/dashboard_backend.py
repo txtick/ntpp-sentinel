@@ -4072,27 +4072,31 @@ def get_labor_payroll(
                     WHERE t.source_system = 'skimmer'
                       AND t.source_account_id IS NOT NULL
                 ),
+                completed_filter_work_orders AS (
+                    SELECT
+                        w.source_account_id AS tech_id,
+                        w.source_work_order_id
+                    FROM sk_work_order w
+                    LEFT JOIN sk_work_order_type wt
+                      ON wt.source_system = w.source_system
+                     AND wt.source_work_order_type_id = w.source_work_order_type_id
+                    WHERE w.source_system = 'skimmer'
+                      AND w.service_date::date BETWEEN %s AND %s
+                      AND COALESCE(w.is_deleted, FALSE) = FALSE
+                      AND w.complete_time IS NOT NULL
+                      AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+                      AND (
+                          lower(COALESCE(wt.description, '')) = 'filter clean'
+                          OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
+                      )
+                ),
                 filter_clean_rollup AS (
                     SELECT
                         evidence.tech_id,
                         COUNT(DISTINCT evidence.source_work_order_id) AS filter_clean_count
                     FROM (
-                        SELECT
-                            w.source_account_id AS tech_id,
-                            w.source_work_order_id
-                        FROM sk_work_order w
-                        LEFT JOIN sk_work_order_type wt
-                          ON wt.source_system = w.source_system
-                         AND wt.source_work_order_type_id = w.source_work_order_type_id
-                        WHERE w.source_system = 'skimmer'
-                          AND w.service_date::date BETWEEN %s AND %s
-                          AND COALESCE(w.is_deleted, FALSE) = FALSE
-                          AND w.complete_time IS NOT NULL
-                          AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
-                          AND (
-                              lower(COALESCE(wt.description, '')) = 'filter clean'
-                              OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
-                          )
+                        SELECT tech_id, source_work_order_id
+                        FROM completed_filter_work_orders
 
                         UNION ALL
 
@@ -4100,9 +4104,8 @@ def get_labor_payroll(
                             cal.source_created_by_account_id AS tech_id,
                             cal.source_related_entity_id AS source_work_order_id
                         FROM sk_customer_activity_log cal
-                        LEFT JOIN sk_work_order existing
-                          ON existing.source_system = cal.source_system
-                         AND existing.source_work_order_id = cal.source_related_entity_id
+                        LEFT JOIN completed_filter_work_orders existing
+                          ON existing.source_work_order_id = cal.source_related_entity_id
                         WHERE cal.source_system = 'skimmer'
                           AND (cal.source_created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
                           AND COALESCE(cal.is_deleted, FALSE) = FALSE
@@ -4111,7 +4114,7 @@ def get_labor_payroll(
                           AND lower(COALESCE(cal.description, '')) LIKE '%%filter clean%%'
                           AND cal.source_created_by_account_id IS NOT NULL
                           AND cal.source_related_entity_id IS NOT NULL
-                          AND existing.id IS NULL
+                          AND existing.source_work_order_id IS NULL
                     ) evidence
                     JOIN tech_lookup tl ON tl.tech_id = evidence.tech_id
                     GROUP BY evidence.tech_id

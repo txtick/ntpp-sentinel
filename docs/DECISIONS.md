@@ -29,7 +29,7 @@ Keep entries short, but do not skip them.
   - Reason: user wants one commission number to enter instead of separate overtime-like entries.
 - Labor filter-clean counts use the completed Skimmer work order's assigned tech (`AccountId` / `sk_work_order.source_account_id`), not a same-day route-stop match.
   - Reason: filter-clean work orders can exist without matching a normal route stop row, and route-stop joins undercount payroll work.
-- Labor uses `CustomerActivityLog.WorkOrderFinished` as a filter-clean completion fallback only when the related work-order id is absent from the exported `WorkOrder` table.
+- Labor uses `CustomerActivityLog.WorkOrderFinished` as a filter-clean completion fallback when the related id has no valid completed, non-deleted work order in the payroll range.
   - Reason: the 2026-08-16 through 2026-08-22 payroll audit found eight completed John Donnelly filter cleans in the activity log but only one corresponding exported work-order row. Deduplicating on work-order id preserves normal work-order safeguards while recovering omitted payroll work.
 - Payroll week is `Sunday -> Saturday`.
 
