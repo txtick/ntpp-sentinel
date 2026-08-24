@@ -4074,24 +4074,47 @@ def get_labor_payroll(
                 ),
                 filter_clean_rollup AS (
                     SELECT
-                        tl.tech_id,
-                        COUNT(DISTINCT w.id) AS filter_clean_count
-                    FROM sk_work_order w
-                    JOIN tech_lookup tl
-                      ON tl.tech_id = w.source_account_id
-                    LEFT JOIN sk_work_order_type wt
-                      ON wt.source_system = w.source_system
-                     AND wt.source_work_order_type_id = w.source_work_order_type_id
-                    WHERE w.source_system = 'skimmer'
-                      AND w.service_date::date BETWEEN %s AND %s
-                      AND COALESCE(w.is_deleted, FALSE) = FALSE
-                      AND w.complete_time IS NOT NULL
-                      AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
-                      AND (
-                          lower(COALESCE(wt.description, '')) = 'filter clean'
-                          OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
-                      )
-                    GROUP BY tl.tech_id
+                        evidence.tech_id,
+                        COUNT(DISTINCT evidence.source_work_order_id) AS filter_clean_count
+                    FROM (
+                        SELECT
+                            w.source_account_id AS tech_id,
+                            w.source_work_order_id
+                        FROM sk_work_order w
+                        LEFT JOIN sk_work_order_type wt
+                          ON wt.source_system = w.source_system
+                         AND wt.source_work_order_type_id = w.source_work_order_type_id
+                        WHERE w.source_system = 'skimmer'
+                          AND w.service_date::date BETWEEN %s AND %s
+                          AND COALESCE(w.is_deleted, FALSE) = FALSE
+                          AND w.complete_time IS NOT NULL
+                          AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
+                          AND (
+                              lower(COALESCE(wt.description, '')) = 'filter clean'
+                              OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
+                          )
+
+                        UNION ALL
+
+                        SELECT
+                            cal.source_created_by_account_id AS tech_id,
+                            cal.source_related_entity_id AS source_work_order_id
+                        FROM sk_customer_activity_log cal
+                        LEFT JOIN sk_work_order existing
+                          ON existing.source_system = cal.source_system
+                         AND existing.source_work_order_id = cal.source_related_entity_id
+                        WHERE cal.source_system = 'skimmer'
+                          AND (cal.source_created_at AT TIME ZONE %s)::date BETWEEN %s AND %s
+                          AND COALESCE(cal.is_deleted, FALSE) = FALSE
+                          AND lower(COALESCE(cal.activity_type, '')) = 'workorderfinished'
+                          AND lower(COALESCE(cal.related_entity_type, '')) = 'workorder'
+                          AND lower(COALESCE(cal.description, '')) LIKE '%%filter clean%%'
+                          AND cal.source_created_by_account_id IS NOT NULL
+                          AND cal.source_related_entity_id IS NOT NULL
+                          AND existing.id IS NULL
+                    ) evidence
+                    JOIN tech_lookup tl ON tl.tech_id = evidence.tech_id
+                    GROUP BY evidence.tech_id
                 ),
                 active_techs AS (
                     SELECT tech_id FROM tech_lookup
@@ -4112,7 +4135,7 @@ def get_labor_payroll(
                 LEFT JOIN filter_clean_rollup fc ON fc.tech_id = a.tech_id
                 ORDER BY tl.tech_name ASC, tl.tech_id ASC
                 """,
-                [range_start, range_end],
+                [range_start, range_end, DASHBOARD_TIMEZONE, range_start, range_end],
             )
             rows = [dict(row) for row in cur.fetchall()]
 

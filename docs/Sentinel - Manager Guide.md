@@ -80,7 +80,7 @@ Important details:
 - The payroll week is `Sunday -> Saturday`.
 - For `Cleanings` / pool stops, Sentinel follows the live Skimmer route API so the current week matches Skimmer's Labor report.
 - The nightly Skimmer DB refresh happens around `11:00pm`, so the SQLite copy may be behind for same-day reporting.
-- Filter cleans come from completed Skimmer work orders and are rolled into the final `Commission` dollar amount shown for Gusto entry.
+- Filter cleans come from completed Skimmer work orders and are rolled into the final `Commission` dollar amount shown for Gusto entry. If Skimmer's export omits a completed work-order row, Sentinel verifies the matching `WorkOrderFinished` activity event and counts it once by work-order id.
 
 Alert opt-out:
 

@@ -143,6 +143,17 @@ REQUIRED_TABLE_COLUMNS: Dict[str, List[str]] = {
     "QuoteLocation": ["id", "QuoteId"],
     "QuoteItem": ["id", "QuoteLocationId", "Item", "Quantity", "Rate"],
     "WorkOrder": ["id", "WorkOrderTypeId", "ServiceLocationId", "WorkNeeded", "ServiceDate", "CompleteTime", "Price"],
+    "CustomerActivityLog": [
+        "id",
+        "CreatedAt",
+        "Deleted",
+        "CustomerId",
+        "Type",
+        "Description",
+        "CreatedBy",
+        "RelatedEntityId",
+        "RelatedEntityType",
+    ],
 }
 
 IMPORT_TABLES = [
@@ -154,6 +165,7 @@ IMPORT_TABLES = [
     "RouteStop",
     "WorkOrderType",
     "WorkOrder",
+    "CustomerActivityLog",
     "EntryDescription",
     "ServiceStopEntry",
     "Quote",

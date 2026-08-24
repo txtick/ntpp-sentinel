@@ -610,6 +610,55 @@ WORK_ORDER_UPSERT_SQL = """
 """
 
 
+CUSTOMER_ACTIVITY_LOG_UPSERT_SQL = """
+    INSERT INTO sk_customer_activity_log (
+        source_system,
+        source_activity_log_id,
+        source_customer_id,
+        activity_type,
+        title,
+        description,
+        source_created_by_account_id,
+        created_by_name,
+        source_updated_by_account_id,
+        updated_by_name,
+        is_system_generated,
+        source_related_entity_id,
+        related_entity_type,
+        related_entity_display,
+        source_secondary_related_entity_id,
+        secondary_related_entity_type,
+        secondary_related_entity_display,
+        is_deleted,
+        source_created_at,
+        source_updated_at,
+        raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_activity_log_id)
+    DO UPDATE SET
+        source_customer_id = EXCLUDED.source_customer_id,
+        activity_type = EXCLUDED.activity_type,
+        title = EXCLUDED.title,
+        description = EXCLUDED.description,
+        source_created_by_account_id = EXCLUDED.source_created_by_account_id,
+        created_by_name = EXCLUDED.created_by_name,
+        source_updated_by_account_id = EXCLUDED.source_updated_by_account_id,
+        updated_by_name = EXCLUDED.updated_by_name,
+        is_system_generated = EXCLUDED.is_system_generated,
+        source_related_entity_id = EXCLUDED.source_related_entity_id,
+        related_entity_type = EXCLUDED.related_entity_type,
+        related_entity_display = EXCLUDED.related_entity_display,
+        source_secondary_related_entity_id = EXCLUDED.source_secondary_related_entity_id,
+        secondary_related_entity_type = EXCLUDED.secondary_related_entity_type,
+        secondary_related_entity_display = EXCLUDED.secondary_related_entity_display,
+        is_deleted = EXCLUDED.is_deleted,
+        source_created_at = EXCLUDED.source_created_at,
+        source_updated_at = EXCLUDED.source_updated_at,
+        raw_json = EXCLUDED.raw_json,
+        updated_at = NOW()
+"""
+
+
 _IMPORT_CHUNK_SIZE = max(1, int(os.getenv("SKIMMER_IMPORT_CHUNK_SIZE", "500")))
 
 TABLE_NAME_ALIASES = {
@@ -638,6 +687,9 @@ TABLE_NAME_ALIASES = {
     "workordertypes": "work_order_types",
     "work_order_type": "work_order_types",
     "work_order_types": "work_order_types",
+    "customeractivitylog": "customer_activity_logs",
+    "customer_activity_log": "customer_activity_logs",
+    "customer_activity_logs": "customer_activity_logs",
     "quote": "quotes",
     "quotes": "quotes",
     "quotelocation": "quote_locations",
@@ -866,6 +918,32 @@ def _work_order_params(row, source_system="skimmer"):
     )
 
 
+def _customer_activity_log_params(row, source_system="skimmer"):
+    return (
+        source_system,
+        row["id"],
+        row_get(row, "CustomerId"),
+        row_get(row, "Type"),
+        row_get(row, "Title"),
+        row_get(row, "Description"),
+        row_get(row, "CreatedBy"),
+        row_get(row, "CreatedByName"),
+        row_get(row, "UpdatedBy"),
+        row_get(row, "UpdatedByName"),
+        bool(row_get(row, "IsSystemGenerated")),
+        row_get(row, "RelatedEntityId"),
+        row_get(row, "RelatedEntityType"),
+        row_get(row, "RelatedEntityDisplay"),
+        row_get(row, "SecondaryRelatedEntityId"),
+        row_get(row, "SecondaryRelatedEntityType"),
+        row_get(row, "SecondaryRelatedEntityDisplay"),
+        bool(row_get(row, "Deleted")),
+        row_get(row, "CreatedAt"),
+        row_get(row, "UpdatedAt"),
+        row_json(row),
+    )
+
+
 def import_pools(pg_conn, sqlite_conn, source_system="skimmer"):
     imported = 0
     started_at = time.perf_counter()
@@ -1058,6 +1136,31 @@ def import_work_orders(pg_conn, sqlite_conn, source_system="skimmer"):
         )
     log(
         f"work_orders imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
+    )
+    return imported
+
+
+def import_customer_activity_logs(pg_conn, sqlite_conn, source_system="skimmer"):
+    imported = 0
+    started_at = time.perf_counter()
+    chunk_count = 0
+    for rows in _iter_sqlite_rows(
+        sqlite_conn,
+        "SELECT id, CustomerId, Type, Title, Description, CreatedBy, CreatedByName, UpdatedBy, UpdatedByName, IsSystemGenerated, RelatedEntityId, RelatedEntityType, RelatedEntityDisplay, SecondaryRelatedEntityId, SecondaryRelatedEntityType, SecondaryRelatedEntityDisplay, Deleted, CreatedAt, UpdatedAt FROM CustomerActivityLog",
+    ):
+        chunk_started_at = time.perf_counter()
+        imported += _executemany_upsert(
+            pg_conn,
+            CUSTOMER_ACTIVITY_LOG_UPSERT_SQL,
+            [_customer_activity_log_params(row, source_system=source_system) for row in rows],
+        )
+        pg_conn.commit()
+        chunk_count += 1
+        log(
+            f"customer_activity_logs chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}"
+        )
+    log(
+        f"customer_activity_logs imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}"
     )
     return imported
 
@@ -1445,6 +1548,10 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
                 counts["work_order_types_imported"] = import_work_order_types(pg_conn, sqlite_conn, source_system=source_system)
             if "work_orders" in normalized_tables:
                 counts["work_orders_imported"] = import_work_orders(pg_conn, sqlite_conn, source_system=source_system)
+            if "customer_activity_logs" in normalized_tables:
+                counts["customer_activity_logs_imported"] = import_customer_activity_logs(
+                    pg_conn, sqlite_conn, source_system=source_system
+                )
             if "entry_descriptions" in normalized_tables:
                 counts["entry_descriptions_imported"] = import_entry_descriptions(pg_conn, sqlite_conn, source_system=source_system)
             if "service_stop_entries" in normalized_tables:

@@ -359,6 +359,58 @@ def ensure_pg_schema() -> None:
             )
             cur.execute(
                 """
+                CREATE TABLE IF NOT EXISTS sk_customer_activity_log (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_activity_log_id TEXT NOT NULL,
+                    source_customer_id TEXT,
+                    activity_type TEXT,
+                    title TEXT,
+                    description TEXT,
+                    source_created_by_account_id TEXT,
+                    created_by_name TEXT,
+                    source_updated_by_account_id TEXT,
+                    updated_by_name TEXT,
+                    is_system_generated BOOLEAN,
+                    source_related_entity_id TEXT,
+                    related_entity_type TEXT,
+                    related_entity_display TEXT,
+                    source_secondary_related_entity_id TEXT,
+                    secondary_related_entity_type TEXT,
+                    secondary_related_entity_display TEXT,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    source_created_at TIMESTAMPTZ,
+                    source_updated_at TIMESTAMPTZ,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_activity_log_id)
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_customer_activity_log_work_order
+                ON sk_customer_activity_log(
+                    source_system,
+                    activity_type,
+                    related_entity_type,
+                    source_related_entity_id
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_sk_customer_activity_log_creator_date
+                ON sk_customer_activity_log(
+                    source_system,
+                    source_created_by_account_id,
+                    source_created_at DESC
+                )
+                """
+            )
+            cur.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_sk_pool_source_service_location
                 ON sk_pool(source_system, source_service_location_id)
                 """

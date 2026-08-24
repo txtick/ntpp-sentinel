@@ -44,6 +44,7 @@ Examples:
 - Do not trust normalized stop counts alone to match Skimmer's Labor report for the current week.
 - Current-week labor cleanings must be validated against the live Skimmer route API when something looks off.
 - Labor filter-clean counts should use completed Skimmer work orders by work-order tech (`AccountId` / `sk_work_order.source_account_id`), not route-stop joins. Some completed filter-clean work orders do not line up with a normal same-day route stop, which can undercount techs on payroll.
+- Skimmer's exported `WorkOrder` table can omit completed work orders that remain visible in the app. `CustomerActivityLog` retains `WorkOrderFinished` events with the work-order id, completing tech, timestamp, and work-needed text. Labor counts normal completed/non-deleted `WorkOrder` rows first, then uses a deduplicated `CustomerActivityLog` event only when that related work-order id is absent from `WorkOrder`.
 
 ## AI / Trace
 

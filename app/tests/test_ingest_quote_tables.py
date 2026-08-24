@@ -13,6 +13,12 @@ def test_standard_ingest_includes_sales_assist_quote_tables():
     assert "QuoteItem" in pipeline.IMPORT_TABLES
 
 
+def test_standard_ingest_includes_customer_activity_log_for_labor_fallback():
+    assert "CustomerActivityLog" in pipeline.IMPORT_TABLES
+    assert "RelatedEntityId" in pipeline.REQUIRED_TABLE_COLUMNS["CustomerActivityLog"]
+    assert "CreatedBy" in pipeline.REQUIRED_TABLE_COLUMNS["CustomerActivityLog"]
+
+
 def test_quote_tables_have_validation_requirements():
     assert pipeline.REQUIRED_TABLE_COLUMNS["Quote"] == ["id", "CustomerId", "Status", "Total", "QuoteDate"]
     assert "QuoteId" in pipeline.REQUIRED_TABLE_COLUMNS["QuoteLocation"]
