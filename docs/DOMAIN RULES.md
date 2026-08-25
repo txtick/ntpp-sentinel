@@ -56,6 +56,7 @@ This document captures business behavior that should remain stable unless intent
 - The dashboard home `Customer Flow` widget uses weekly route assignment lifecycle dates, not Sentinel `customers.created_at` / `inactive_since` import timestamps:
   - new customers = first weekly route assignment start date
   - lost customers = most recent ended weekly route assignment when the customer no longer has a current weekly assignment
+  - historical assignments remain part of the lifecycle after Skimmer marks the assignment deleted or the customer inactive; only the current-assignment check requires a non-deleted assignment
 - `service-only` customers are one-off repair/cleaning customers and should not count as weekly pools.
 - `inspection` customers are quote/inspection prospects for weekly service and should not count until they become active weekly route customers.
 - The dashboard `Problem Pools` page compares each pool's last-30-days chemical cost against its monthly service rate.

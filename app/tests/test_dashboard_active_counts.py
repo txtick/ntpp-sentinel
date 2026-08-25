@@ -69,9 +69,10 @@ def test_customer_flow_uses_weekly_route_assignment_lifecycle():
 
     assert "COALESCE(c.is_lead, FALSE) = FALSE" in flow_section
     assert "COALESCE(c.has_pool, FALSE) = TRUE" in flow_section
-    assert "COALESCE(c.is_operationally_active, FALSE) = TRUE" in flow_section
+    assert "COALESCE(c.is_operationally_active, FALSE) = TRUE" not in flow_section
     assert "customer_has_tag(c.raw_json, 'service-only')" in flow_section
     assert "customer_has_tag(c.raw_json, 'inspection')" in flow_section
     assert "a.is_deleted = FALSE" in flow_section
+    assert "a.is_deleted = FALSE\n                    AND (a.start_date" in flow_section
     assert "route_assignment_is_weekly(a.frequency)" in flow_section
     assert "BOOL_OR(is_current) AS has_current_assignment" in flow_section

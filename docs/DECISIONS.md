@@ -79,6 +79,8 @@ Keep entries short, but do not skip them.
   - Reason: the home dashboard should match maintained weekly pool service, not every non-inactive Skimmer customer or one-off quote/repair record.
 - The dashboard home `Active Pools` card counts distinct weekly service locations/stops instead of physical pool records.
   - Reason: Skimmer route/labor style pool counts map closer to weekly service stops; pool + spa records at one address should not inflate the home card.
+- Customer Flow keeps inactive customers and deleted weekly route assignments in lifecycle history, but requires a non-deleted assignment to classify a customer as current.
+  - Reason: Skimmer deletes the route assignment when a customer is made inactive; excluding that history causes genuine customer losses to disappear from the dashboard.
 - Added a dedicated `Problem Pools` dashboard page backed by a backend-owned SQL view instead of frontend-only math.
   - Reason: chemical-cost review thresholds and leak dollars need one canonical calculation path that is easy to reuse for future notes/status/automation.
 - `Problem Pools` uses `20%` as the healthy target chemical-cost ratio and reports leak dollars above that target.

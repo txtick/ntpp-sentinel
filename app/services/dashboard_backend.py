@@ -1488,7 +1488,8 @@ def _get_customer_flow_metrics(cur: Any) -> Dict[str, Any]:
                 a.start_date,
                 a.end_date,
                 (
-                    (a.start_date IS NULL OR a.start_date <= CURRENT_DATE)
+                    a.is_deleted = FALSE
+                    AND (a.start_date IS NULL OR a.start_date <= CURRENT_DATE)
                     AND (a.end_date IS NULL OR a.end_date >= CURRENT_DATE)
                 ) AS is_current
             FROM customers c
@@ -1496,10 +1497,8 @@ def _get_customer_flow_metrics(cur: Any) -> Dict[str, Any]:
               ON a.customer_id = c.id
             WHERE COALESCE(c.is_lead, FALSE) = FALSE
               AND COALESCE(c.has_pool, FALSE) = TRUE
-              AND COALESCE(c.is_operationally_active, FALSE) = TRUE
               AND NOT customer_has_tag(c.raw_json, 'service-only')
               AND NOT customer_has_tag(c.raw_json, 'inspection')
-              AND a.is_deleted = FALSE
               AND route_assignment_is_weekly(a.frequency)
         ),
         customer_service_windows AS (
