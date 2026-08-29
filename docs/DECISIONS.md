@@ -93,6 +93,8 @@ Keep entries short, but do not skip them.
   - Reason: technicians need an unmistakable next step on mobile, and protected dashboard content should not flash while Sentinel checks the session.
 - Dashboard static responses use a no-store policy for `/` and all SPA fallback routes, not only named asset paths.
   - Reason: Google sign-in returns to `/`, and stale homepage HTML can otherwise omit newly deployed navigation until the user manually refreshes.
+- A missing/mismatched mobile OAuth session restarts Google sign-in once and then fails back to the branded login page; Sentinel does not accept an unbound OAuth state as a fallback.
+  - Reason: restarting in the callback browser repairs common mobile tab/context changes without weakening CSRF protection or exposing raw JSON downloads to technicians.
 - Rollover technician identity is derived from the signed-in Workspace email matched to the active Skimmer technician email.
   - Reason: server-side identity binding prevents a technician from requesting or submitting another technician's route.
 - Rollover sends use batch idempotency and unique GHL conversation matching.

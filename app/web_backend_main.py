@@ -109,6 +109,7 @@ if not DASHBOARD_SESSION_SECRET:
 GOOGLE_AUTH_AUTHORIZE_URL = os.getenv("GOOGLE_AUTH_AUTHORIZE_URL", "https://accounts.google.com/o/oauth2/v2/auth").strip()
 GOOGLE_AUTH_TOKEN_URL = os.getenv("GOOGLE_AUTH_TOKEN_URL", "https://oauth2.googleapis.com/token").strip()
 GOOGLE_AUTH_USERINFO_URL = os.getenv("GOOGLE_AUTH_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo").strip()
+OAUTH_RECOVERY_STATE_PREFIX = "retry1."
 
 app.add_middleware(
     SessionMiddleware,
@@ -529,10 +530,12 @@ def auth_session(request: Request):
 
 
 @app.get("/auth/google/start")
-async def auth_google_start(request: Request, next: str = "/"):
+async def auth_google_start(request: Request, next: str = "/", retry: int = 0):
     if not _dashboard_auth_enabled():
         raise HTTPException(status_code=503, detail="Google dashboard auth is not configured")
     state = secrets.token_urlsafe(24)
+    if retry == 1:
+        state = f"{OAUTH_RECOVERY_STATE_PREFIX}{state}"
     request.session["oauth_state"] = state
     request.session["oauth_next"] = next if next.startswith("/") else "/"
     query = urlencode(
@@ -550,46 +553,67 @@ async def auth_google_start(request: Request, next: str = "/"):
     return RedirectResponse(url=f"{GOOGLE_AUTH_AUTHORIZE_URL}?{query}", status_code=302)
 
 
+def _dashboard_login_error_redirect(error_code: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/?auth_error={error_code}", status_code=303)
+
+
 @app.get("/auth/google/callback")
-async def auth_google_callback(request: Request, code: str = "", state: str = ""):
+async def auth_google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
     if not _dashboard_auth_enabled():
         raise HTTPException(status_code=503, detail="Google dashboard auth is not configured")
+    if error:
+        _logger.warning("Dashboard Google sign-in returned an OAuth error")
+        return _dashboard_login_error_redirect("google")
+
     expected_state = (request.session.get("oauth_state") or "").strip()
     if not state or not expected_state or state != expected_state:
-        raise HTTPException(status_code=400, detail="Invalid OAuth state")
-
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        token_response = await client.post(
-            GOOGLE_AUTH_TOKEN_URL,
-            data={
-                "client_id": GOOGLE_DASHBOARD_CLIENT_ID,
-                "client_secret": GOOGLE_DASHBOARD_CLIENT_SECRET,
-                "code": code,
-                "grant_type": "authorization_code",
-                "redirect_uri": f"{DASHBOARD_BASE_URL}/auth/google/callback",
-            },
-            headers={"Accept": "application/json"},
+        recovery_attempt = state.startswith(OAUTH_RECOVERY_STATE_PREFIX)
+        _logger.warning(
+            "Dashboard OAuth state mismatch (session_state_present=%s, recovery_attempt=%s)",
+            bool(expected_state),
+            recovery_attempt,
         )
-        token_response.raise_for_status()
-        token_payload = token_response.json()
-        access_token = token_payload.get("access_token")
-        if not access_token:
-            raise HTTPException(status_code=401, detail="Google login did not return an access token")
+        if recovery_attempt:
+            return _dashboard_login_error_redirect("session")
+        return RedirectResponse(url="/auth/google/start?retry=1", status_code=303)
 
-        userinfo_response = await client.get(
-            GOOGLE_AUTH_USERINFO_URL,
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
-        )
-        userinfo_response.raise_for_status()
-        profile = userinfo_response.json()
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            token_response = await client.post(
+                GOOGLE_AUTH_TOKEN_URL,
+                data={
+                    "client_id": GOOGLE_DASHBOARD_CLIENT_ID,
+                    "client_secret": GOOGLE_DASHBOARD_CLIENT_SECRET,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": f"{DASHBOARD_BASE_URL}/auth/google/callback",
+                },
+                headers={"Accept": "application/json"},
+            )
+            token_response.raise_for_status()
+            token_payload = token_response.json()
+            access_token = token_payload.get("access_token")
+            if not access_token:
+                _logger.warning("Dashboard Google sign-in returned no access token")
+                return _dashboard_login_error_redirect("google")
+
+            userinfo_response = await client.get(
+                GOOGLE_AUTH_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+            )
+            userinfo_response.raise_for_status()
+            profile = userinfo_response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        _logger.warning("Dashboard Google sign-in exchange failed (%s)", type(exc).__name__)
+        return _dashboard_login_error_redirect("google")
 
     email = str(profile.get("email") or "").strip().lower()
     email_verified = bool(profile.get("email_verified"))
     hosted_domain = str(profile.get("hd") or "").strip().lower()
     if not email or not email_verified:
-        raise HTTPException(status_code=401, detail="Google account email is not verified")
+        return _dashboard_login_error_redirect("account")
     if not email.endswith(f"@{GOOGLE_DASHBOARD_ALLOWED_DOMAIN}") and hosted_domain != GOOGLE_DASHBOARD_ALLOWED_DOMAIN:
-        raise HTTPException(status_code=403, detail="Google account is not in the allowed Workspace domain")
+        return _dashboard_login_error_redirect("account")
 
     request.session.pop("oauth_state", None)
     redirect_to = request.session.pop("oauth_next", "/")

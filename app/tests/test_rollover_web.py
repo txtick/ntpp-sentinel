@@ -87,3 +87,14 @@ def test_frontend_hides_dashboard_behind_explicit_login_gate():
     assert "function renderAuthGate" in app
     assert "checking || (state.auth.enabled && !state.auth.authenticated)" in app
     assert ".shell[hidden]" in styles
+
+
+def test_mobile_oauth_state_failure_restarts_safely_then_shows_login_page():
+    repo = Path(__file__).resolve().parents[2]
+    backend = (repo / "app" / "web_backend_main.py").read_text()
+    frontend = (repo / "web-frontend" / "app.js").read_text()
+    assert 'OAUTH_RECOVERY_STATE_PREFIX = "retry1."' in backend
+    assert 'RedirectResponse(url="/auth/google/start?retry=1", status_code=303)' in backend
+    assert '_dashboard_login_error_redirect("session")' in backend
+    assert 'raise HTTPException(status_code=400, detail="Invalid OAuth state")' not in backend
+    assert "keep your sign-in session" in frontend

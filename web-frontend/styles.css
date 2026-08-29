@@ -227,6 +227,10 @@ textarea {
   font-weight: 650;
 }
 
+.login-gate-status.is-error {
+  color: var(--color-danger);
+}
+
 .login-gate-help {
   margin: 5px 0 0;
   color: var(--muted);

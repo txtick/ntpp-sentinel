@@ -143,6 +143,11 @@ Examples:
 - If the browser keeps an older cached `app.js` after a deploy, a newly added nav item can appear in HTML while clicks silently fail because the old JS does not know that view exists yet.
 - Frontend static assets now send no-cache headers to reduce HTML/JS version mismatches after deploys.
 
+## Dashboard Google Login
+
+- Mobile Google sign-in can return the OAuth callback in a browser or tab context that did not retain Sentinel's login-start session cookie. The former behavior returned `{"detail":"Invalid OAuth state"}`, which mobile Chrome downloaded as `callback.json`.
+- Sentinel must not bypass OAuth state validation when that happens. It restarts Google sign-in once from the browser that received the callback; a second mismatch returns to the branded login page with a readable retry message instead of JSON.
+
 ## Frontend Tooling / WSL
 
 - Local frontend checks now live in repo-level `package.json` scripts (`lint`, `format:check`, `test`, `check`).

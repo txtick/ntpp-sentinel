@@ -139,6 +139,8 @@ const state = {
     authenticated: false,
     loginUrl: "/auth/google/start",
     user: null,
+    errorCode:
+      new URLSearchParams(window.location.search).get("auth_error") || "",
   },
   selections: {
     alertId: null,
@@ -307,8 +309,17 @@ function renderAuthGate(message = "") {
     els.loginPageButton.hidden = checking;
   }
   if (els.loginGateStatus) {
-    els.loginGateStatus.textContent = message
-      ? message
+    const errorMessages = {
+      session:
+        "We couldn't keep your sign-in session. Try again and keep Google sign-in in this browser.",
+      google: "Google sign-in didn't finish. Tap the button to try again.",
+      account:
+        "Use an approved North Texas Pool Pros Google account to sign in.",
+    };
+    const gateMessage = message || errorMessages[state.auth.errorCode] || "";
+    els.loginGateStatus.classList.toggle("is-error", Boolean(gateMessage));
+    els.loginGateStatus.textContent = gateMessage
+      ? gateMessage
       : checking
         ? "Checking your sign-in…"
         : "Sign in to continue.";
@@ -334,6 +345,12 @@ async function hydrateSession() {
     state.auth.loginUrl = payload.login_url || "/auth/google/start";
     state.auth.user = payload.user || null;
     state.actor = state.auth.user?.actor || state.auth.user?.email || "";
+    if (state.auth.authenticated && state.auth.errorCode) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("auth_error");
+      window.history.replaceState(window.history.state, "", url);
+      state.auth.errorCode = "";
+    }
     renderSessionCard();
     renderAuthGate();
   } catch (error) {

@@ -52,6 +52,7 @@ Its job is to help when a technician route changes and a customer needs a rollov
 What managers should know:
 
 - Opening the dashboard while signed out shows a branded NTPP Sentinel login page instead of an empty dashboard frame. The dashboard appears only after Google sign-in succeeds.
+- If a phone returns from Google without Sentinel's temporary login session, Sentinel safely retries once in that browser. If the phone still blocks the session, the login page explains how to try again instead of downloading an error file.
 - Technicians sign in with their North Texas Pool Pros Google Workspace email.
 - Sentinel matches that email to the active Skimmer technician and shows only that technician's live route for today.
 - Already-serviced stops are visible but cannot be selected.
