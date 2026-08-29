@@ -30,6 +30,10 @@ function verifyHtmlReferences(html) {
     html.includes('<script src="/app.js"></script>'),
     "index.html must reference /app.js",
   );
+  assert(
+    html.includes('<img src="/ntpp-logo.png" alt="" />'),
+    "the login page must display the NTPP logo asset",
+  );
   assert(/id="main-panel"/.test(html), "index.html is missing #main-panel");
   assert(/id="detail-panel"/.test(html), "index.html is missing #detail-panel");
 }

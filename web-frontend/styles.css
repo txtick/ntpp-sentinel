@@ -161,21 +161,17 @@ textarea {
 
 .login-gate-mark {
   display: grid;
-  width: 68px;
-  height: 68px;
-  margin: 0 auto 22px;
+  width: 128px;
+  height: 128px;
+  margin: -8px auto 14px;
   place-items: center;
-  border-radius: 20px;
-  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
-  box-shadow: 0 12px 24px rgba(29, 127, 192, 0.26);
 }
 
-.login-gate-mark svg {
-  width: 44px;
-  fill: none;
-  stroke: #fff;
-  stroke-linecap: round;
-  stroke-width: 3.3;
+.login-gate-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .login-gate-eyebrow {
@@ -260,10 +256,9 @@ textarea {
   }
 
   .login-gate-mark {
-    width: 60px;
-    height: 60px;
-    margin-bottom: 18px;
-    border-radius: 17px;
+    width: 112px;
+    height: 112px;
+    margin: -4px auto 12px;
   }
 }
 
