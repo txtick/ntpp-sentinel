@@ -97,8 +97,8 @@ Keep entries short, but do not skip them.
   - Reason: restarting in the callback browser repairs common mobile tab/context changes without weakening CSRF protection or exposing raw JSON downloads to technicians.
 - Rollover technician identity is derived from the signed-in Workspace email matched to the active Skimmer technician email.
   - Reason: server-side identity binding prevents a technician from requesting or submitting another technician's route.
-- Rollover sends use batch idempotency and unique GHL conversation matching.
-  - Reason: mobile retries must not duplicate customer messages, and ambiguous phone/conversation matches must fail rather than risk contacting the wrong person.
+- Rollover sends use batch idempotency and an exact two-stage GHL identity lookup: Skimmer phone to one GHL contact, then that contact ID to its newest conversation.
+  - Reason: mobile retries must not duplicate customer messages; GHL conversation search ignores phone filters, while exact contact lookup plus contact-scoped conversation search avoids sending through an unrelated recent conversation. Multiple exact contacts still fail closed.
 
 ## Data Source Decisions
 

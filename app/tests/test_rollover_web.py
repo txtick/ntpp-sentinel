@@ -48,7 +48,62 @@ def test_rollover_send_schema_and_idempotency_are_present():
     assert "idempotency_key TEXT NOT NULL UNIQUE" in text
     assert "ON CONFLICT (idempotency_key) DO NOTHING" in text
     assert "A selected customer is already complete" in text
-    assert "Multiple GHL conversations matched this phone" in text
+    assert '"/contacts/lookup"' in text
+    assert '"contactId": contact_id' in text
+
+
+def test_ghl_contact_lookup_requires_one_exact_contact():
+    assert rollover_web._ghl_contact_ids({"contacts": []}) == []
+    assert rollover_web._ghl_contact_ids({"contacts": [{"id": "contact-1"}]}) == ["contact-1"]
+    assert rollover_web._ghl_contact_ids(
+        {"contacts": [{"id": "contact-1"}, {"id": "contact-2"}, {"id": "contact-1"}]}
+    ) == ["contact-1", "contact-2"]
+
+
+def test_ghl_conversation_matches_never_cross_contact_ids():
+    payload = {
+        "conversations": [
+            {"id": "newest-wrong-contact", "contactId": "contact-2"},
+            {"id": "newest-right-contact", "contactId": "contact-1"},
+            {"id": "older-right-contact", "contactId": "contact-1"},
+        ]
+    }
+    assert rollover_web._ghl_conversation_matches(payload, "contact-1") == [
+        ("newest-right-contact", "contact-1"),
+        ("older-right-contact", "contact-1"),
+    ]
+
+
+def test_ghl_phone_resolution_uses_contact_lookup_before_conversation(monkeypatch):
+    calls = []
+
+    def fake_get(path, params, version=None):
+        calls.append((path, params, version))
+        if path == "/contacts/lookup":
+            return {"contacts": [{"id": "contact-1"}]}
+        return {"conversations": [{"id": "conversation-1", "contactId": "contact-1"}]}
+
+    monkeypatch.setattr(rollover_web, "_ghl_json_get", fake_get)
+    assert rollover_web._ghl_conversation_for_phone("+12145550123") == (
+        "conversation-1",
+        "contact-1",
+        None,
+    )
+    assert calls[0][0] == "/contacts/lookup"
+    assert calls[0][2] == "v3"
+    assert calls[1][1]["contactId"] == "contact-1"
+
+
+def test_ghl_phone_resolution_fails_closed_for_duplicate_contacts(monkeypatch):
+    monkeypatch.setattr(
+        rollover_web,
+        "_ghl_json_get",
+        lambda *_args, **_kwargs: {"contacts": [{"id": "contact-1"}, {"id": "contact-2"}]},
+    )
+    conversation_id, contact_id, error = rollover_web._ghl_conversation_for_phone("+12145550123")
+    assert conversation_id is None
+    assert contact_id is None
+    assert error == "Multiple GHL contacts matched this phone"
 
 
 def test_web_routes_require_signed_in_email():

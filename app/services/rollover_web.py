@@ -344,14 +344,36 @@ def _customer_phone(source_customer_id: Any) -> Optional[str]:
     return None
 
 
-def _ghl_conversation_for_phone(phone: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    url = f"{GHL_BASE_URL}/conversations/search?{urllib.parse.urlencode({'locationId': GHL_LOCATION_ID, 'phone': phone})}"
-    req = urllib.request.Request(url, headers=_ghl_headers(), method="GET")
+def _ghl_json_get(path: str, params: Dict[str, Any], version: Optional[str] = None) -> Any:
+    url = f"{GHL_BASE_URL}{path}?{urllib.parse.urlencode(params)}"
+    headers = _ghl_headers()
+    if version:
+        headers["Version"] = version
+    req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"GHL lookup failed ({exc.code}): {detail[:180]}") from exc
     except Exception as exc:
-        return None, None, f"GHL lookup failed: {exc}"
+        raise RuntimeError(f"GHL lookup failed: {exc}") from exc
+
+
+def _ghl_contact_ids(payload: Any) -> List[str]:
+    contacts = payload.get("contacts") if isinstance(payload, dict) else None
+    if not isinstance(contacts, list):
+        return []
+    return list(
+        dict.fromkeys(
+            str(contact.get("id") or "").strip()
+            for contact in contacts
+            if isinstance(contact, dict) and str(contact.get("id") or "").strip()
+        )
+    )
+
+
+def _ghl_conversation_matches(payload: Any, contact_id: str) -> List[Tuple[str, str]]:
     matches: List[Tuple[str, str]] = []
     if isinstance(payload, dict):
         for key in ("conversations", "data", "items"):
@@ -362,17 +384,56 @@ def _ghl_conversation_for_phone(phone: str) -> Tuple[Optional[str], Optional[str
                 if not isinstance(row, dict):
                     continue
                 conversation_id = str(row.get("id") or row.get("conversationId") or "").strip()
-                contact_id = str(row.get("contactId") or "").strip()
-                if conversation_id and contact_id:
-                    matches.append((conversation_id, contact_id))
+                row_contact_id = str(row.get("contactId") or "").strip()
+                if conversation_id and row_contact_id == contact_id:
+                    matches.append((conversation_id, row_contact_id))
             if rows:
                 break
-    unique = list(dict.fromkeys(matches))
-    if len(unique) == 1:
-        return unique[0][0], unique[0][1], None
-    if not unique:
-        return None, None, "No matching GHL conversation"
-    return None, None, "Multiple GHL conversations matched this phone"
+    return list(dict.fromkeys(matches))
+
+
+def _ghl_conversation_for_phone(phone: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Resolve an exact GHL contact first, then its conversation.
+
+    GHL conversations/search does not support a phone query parameter. Passing one is
+    silently ignored and returns the location's recent conversations, so phone must be
+    resolved through the v3 contacts lookup endpoint before searching by contactId.
+    """
+    try:
+        contact_payload = _ghl_json_get(
+            "/contacts/lookup",
+            {"locationId": GHL_LOCATION_ID, "phone": phone, "limit": 20},
+            version="v3",
+        )
+    except Exception as exc:
+        return None, None, str(exc)
+
+    contact_ids = _ghl_contact_ids(contact_payload)
+    if not contact_ids:
+        return None, None, "No matching GHL contact"
+    if len(contact_ids) != 1:
+        return None, None, "Multiple GHL contacts matched this phone"
+    contact_id = contact_ids[0]
+
+    try:
+        conversation_payload = _ghl_json_get(
+            "/conversations/search",
+            {
+                "locationId": GHL_LOCATION_ID,
+                "contactId": contact_id,
+                "sort": "desc",
+                "limit": 20,
+            },
+        )
+    except Exception as exc:
+        return None, contact_id, str(exc)
+
+    matches = _ghl_conversation_matches(conversation_payload, contact_id)
+    if not matches:
+        return None, contact_id, "No matching GHL conversation"
+    # Search results are requested newest first. Multiple conversations for the same
+    # exact contact are safe to resolve deterministically; never cross contact IDs.
+    return matches[0][0], contact_id, None
 
 
 def _ghl_send_sms(conversation_id: str, contact_id: str, message: str) -> None:

@@ -79,7 +79,7 @@ This document captures business behavior that should remain stable unless intent
 - Real completed stops are disabled. Missing completion times and Skimmer's fake `2010-01-01` completion values remain eligible.
 - Technicians select unfinished customers, review a personalized SMS preview, acknowledge review, and explicitly submit once.
 - AI may draft the message from a technician-entered issue/reason, but it never sends. The technician can edit the draft and must separately confirm the send.
-- Customer messages go through one uniquely matched GHL conversation. Missing or ambiguous matches fail closed and are reported per customer.
+- Customer messages resolve the current Skimmer phone to exactly one GHL contact, then use that contact's newest GHL conversation. Missing contacts and phones shared by multiple GHL contacts fail closed and are reported per customer.
 - Web submissions are idempotent so a retry or double tap cannot resend the same batch.
 
 ## Sales Assist
