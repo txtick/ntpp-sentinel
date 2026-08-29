@@ -332,6 +332,15 @@ textarea {
   margin: 14px 0;
 }
 
+.nav-link[hidden],
+.nav-section-label[hidden] {
+  display: none !important;
+}
+
+body.technician-portal .nav {
+  grid-template-columns: 1fr;
+}
+
 .nav-link,
 .button {
   border-radius: var(--radius-md);

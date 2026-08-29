@@ -47,6 +47,12 @@ docker compose exec -T web-backend sh -lc '
 docker compose exec -T sentinel sh -lc 'echo "ROLLOVER_SMS_ENABLED=${ROLLOVER_SMS_ENABLED:-0}"'
 ```
 
+Manager override for people whose active Skimmer record is labeled `Tech`:
+
+```bash
+DASHBOARD_MANAGER_EMAILS=kevin@northtexaspoolpros.com,jarrett@northtexaspoolpros.com
+```
+
 Do not curl the production rollover send endpoint for testing; it sends real GHL SMS. Verify the authenticated route page and use existing batch audit rows instead.
 
 ## Logs

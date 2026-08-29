@@ -57,7 +57,7 @@ from services.rollover_web import (
     get_route_for_user as rollover_get_route_for_user,
     send_rollover as rollover_send,
 )
-from pg import ensure_route_maps_schema, ensure_sales_assist_schema
+from pg import ensure_route_maps_schema, ensure_sales_assist_schema, pg
 from services.dashboard_backend import (
     create_alert_reminder,
     get_dashboard_summary,
@@ -110,6 +110,15 @@ GOOGLE_AUTH_AUTHORIZE_URL = os.getenv("GOOGLE_AUTH_AUTHORIZE_URL", "https://acco
 GOOGLE_AUTH_TOKEN_URL = os.getenv("GOOGLE_AUTH_TOKEN_URL", "https://oauth2.googleapis.com/token").strip()
 GOOGLE_AUTH_USERINFO_URL = os.getenv("GOOGLE_AUTH_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo").strip()
 OAUTH_RECOVERY_STATE_PREFIX = "retry1."
+DASHBOARD_MANAGER_EMAILS = {
+    email.strip().lower()
+    for email in os.getenv(
+        "DASHBOARD_MANAGER_EMAILS",
+        "kevin@northtexaspoolpros.com,jarrett@northtexaspoolpros.com",
+    ).split(",")
+    if email.strip()
+}
+TECHNICIAN_PORTAL_ROLE_TYPES = {"tech", "technician"}
 
 app.add_middleware(
     SessionMiddleware,
@@ -138,6 +147,48 @@ def _dashboard_user(request: Request):
     return user if isinstance(user, dict) else None
 
 
+def _dashboard_access_profile(user) -> dict:
+    email = str((user or {}).get("email") or "").strip().lower()
+    manager_access = {
+        "role": "manager",
+        "landing_view": "home",
+        "allowed_views": None,
+    }
+    technician_access = {
+        "role": "technician",
+        "landing_view": "route-rollover",
+        "allowed_views": ["route-rollover"],
+    }
+    if not email or email in DASHBOARD_MANAGER_EMAILS:
+        return manager_access
+
+    try:
+        with pg() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role_type
+                    FROM technicians
+                    WHERE lower(email) = %s
+                      AND is_active = TRUE
+                    ORDER BY updated_at DESC
+                    LIMIT 2
+                    """,
+                    (email,),
+                )
+                rows = [dict(row) for row in cur.fetchall()]
+    except Exception:
+        _logger.exception("Dashboard role lookup failed for %s", email)
+        return technician_access
+
+    if not rows:
+        return manager_access
+    role_types = {str(row.get("role_type") or "").strip().lower() for row in rows}
+    if role_types and role_types.isdisjoint(TECHNICIAN_PORTAL_ROLE_TYPES):
+        return manager_access
+    return technician_access
+
+
 def _auth_or_401(request: Request) -> None:
     if not WEB_BACKEND_SECRET:
         raise HTTPException(status_code=500, detail="WEB_BACKEND_SECRET is not configured")
@@ -145,15 +196,8 @@ def _auth_or_401(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-def _dashboard_mutation_auth_or_401(request: Request) -> None:
-    if _dashboard_auth_enabled():
-        if _dashboard_user(request) or _secret_matches(request):
-            return
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    _auth_or_401(request)
-
-
-def _dashboard_read_auth_or_401(request: Request) -> None:
+def _dashboard_login_auth_or_401(request: Request) -> None:
+    """Require a dashboard session without imposing a manager role."""
     if _dashboard_auth_enabled():
         if _dashboard_user(request) or _secret_matches(request):
             return
@@ -165,6 +209,30 @@ def _dashboard_read_auth_or_401(request: Request) -> None:
                 "login_url": "/auth/google/start",
             },
         )
+    _auth_or_401(request)
+
+
+def _dashboard_manager_access_or_403(request: Request) -> None:
+    if not _dashboard_auth_enabled() or _secret_matches(request):
+        return
+    user = _dashboard_user(request)
+    if user and _dashboard_access_profile(user)["role"] == "manager":
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="This account is limited to Notify Route Change",
+    )
+
+
+def _dashboard_mutation_auth_or_401(request: Request) -> None:
+    _dashboard_login_auth_or_401(request)
+    _dashboard_manager_access_or_403(request)
+
+
+def _dashboard_read_auth_or_401(request: Request) -> None:
+    if _dashboard_auth_enabled():
+        _dashboard_login_auth_or_401(request)
+        _dashboard_manager_access_or_403(request)
 
 
 _logger = __import__("logging").getLogger("web_backend")
@@ -526,6 +594,7 @@ def auth_session(request: Request):
         "authenticated": bool(user),
         "login_url": "/auth/google/start" if _dashboard_auth_enabled() else None,
         "user": user,
+        "access": _dashboard_access_profile(user) if user else None,
     }
 
 
@@ -643,13 +712,13 @@ def _rollover_user_email(request: Request) -> str:
 
 @app.get("/api/rollover/route")
 def api_rollover_route(request: Request):
-    _dashboard_read_auth_or_401(request)
+    _dashboard_login_auth_or_401(request)
     return rollover_get_route_for_user(_rollover_user_email(request))
 
 
 @app.post("/api/rollover/message/ai")
 async def api_rollover_message_ai(request: Request):
-    _dashboard_mutation_auth_or_401(request)
+    _dashboard_login_auth_or_401(request)
     body = await request.json()
     return await asyncio.to_thread(
         rollover_generate_message,
@@ -660,7 +729,7 @@ async def api_rollover_message_ai(request: Request):
 
 @app.post("/api/rollover/send")
 async def api_rollover_send(request: Request):
-    _dashboard_mutation_auth_or_401(request)
+    _dashboard_login_auth_or_401(request)
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="JSON body is required")

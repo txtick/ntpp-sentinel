@@ -97,6 +97,8 @@ Keep entries short, but do not skip them.
   - Reason: restarting in the callback browser repairs common mobile tab/context changes without weakening CSRF protection or exposing raw JSON downloads to technicians.
 - Rollover technician identity is derived from the signed-in Workspace email matched to the active Skimmer technician email.
   - Reason: server-side identity binding prevents a technician from requesting or submitting another technician's route.
+- Active Skimmer `Tech` accounts are restricted to the Route Rollover portal in both the frontend and backend; owners/non-technician office accounts and `DASHBOARD_MANAGER_EMAILS` overrides retain manager access.
+  - Reason: technicians need one clear mobile workflow, and hiding navigation alone would not protect manager dashboard data or mutations. Kevin and Jarrett are explicit manager overrides because their Skimmer records are labeled `Tech`; Jim retains manager access through his `Owner` role.
 - Rollover sends use batch idempotency and an exact two-stage GHL identity lookup: Skimmer phone to one GHL contact, then that contact ID to its newest conversation.
   - Reason: mobile retries must not duplicate customer messages; GHL conversation search ignores phone filters, while exact contact lookup plus contact-scoped conversation search avoids sending through an unrelated recent conversation. Multiple exact contacts still fail closed.
 

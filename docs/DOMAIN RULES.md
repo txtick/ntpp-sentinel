@@ -73,6 +73,7 @@ This document captures business behavior that should remain stable unless intent
 ## Route Rollover
 
 - Route Rollover is a Google Workspace-authenticated technician webpage in the Sentinel dashboard.
+- Active Skimmer users whose `role_type` is `Tech` land directly on Route Rollover and cannot access other dashboard APIs. Owners, non-technician office accounts, and configured manager email overrides retain the full dashboard.
 - Before authentication is confirmed, the dashboard shell stays hidden behind a dedicated sign-in page. Technicians must be given a clear NTPP Google sign-in action instead of an empty or partially visible dashboard.
 - The signed-in NTPP email must match one active Skimmer technician email; technicians only receive their own live route.
 - The route list comes from Skimmer's live `GetTechRoute` API for the current local date.

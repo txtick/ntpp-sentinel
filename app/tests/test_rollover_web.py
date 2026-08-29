@@ -129,6 +129,8 @@ def test_frontend_has_reviewed_mobile_rollover_flow():
     assert 'id="rollover-reviewed"' in app
     assert 'idempotency_key: rolloverUi.submissionId' in app
     assert "Personalized preview" in app
+    assert 'return isTechnicianPortal() ? "route-rollover" : view;' in app
+    assert 'button.dataset.view !== "route-rollover"' in app
 
 
 def test_frontend_hides_dashboard_behind_explicit_login_gate():

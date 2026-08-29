@@ -714,7 +714,10 @@ ROLLOVER_WEB_ENABLED=1
 ROLLOVER_AI_ENABLED=1
 ROLLOVER_AI_MODEL=gpt-4o-mini
 ROLLOVER_SMS_ENABLED=0
+DASHBOARD_MANAGER_EMAILS=kevin@northtexaspoolpros.com,jarrett@northtexaspoolpros.com
 ```
+
+Active Skimmer accounts with `role_type=Tech` are limited to Notify Route Change. Add any manager who is also stored as a Skimmer Tech to the comma-separated `DASHBOARD_MANAGER_EMAILS` override and redeploy `web-backend`.
 
 `OPENAI_API_KEY` is required only for the optional `Write with AI` button. The standard editable message and GHL send still work without it. Do not test `POST /api/rollover/send` against production customer stops; use the authenticated page for a real, reviewed operational send. Safe verification is `GET /api/rollover/route` plus database inspection of existing batches.
 

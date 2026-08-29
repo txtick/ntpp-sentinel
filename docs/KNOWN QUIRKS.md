@@ -117,6 +117,7 @@ Examples:
 - Skimmer's live route response includes both unfinished and completed stops. The rollover webpage must disable real completed stops instead of treating the full route as eligible.
 - As elsewhere in Sentinel, a route `completeTime` around `2010-01-01` is a placeholder and does not mean the stop was serviced.
 - Some active Skimmer technician records use non-NTPP email domains. They cannot use Workspace-authenticated rollover until their Skimmer email is changed to an allowed NTPP account.
+- Skimmer currently labels Kevin and Jarrett as `Tech` even though they need the full dashboard, so both addresses are defaults in `DASHBOARD_MANAGER_EMAILS`. Any future manager whose Skimmer record remains `Tech` needs the same explicit override.
 - GHL `GET /conversations/search` does not support a `phone` query parameter. It silently ignores that parameter and returns recent location-wide conversations, which looks like an ambiguous phone match. Resolve the exact phone through the v3 `GET /contacts/lookup` endpoint first, then search conversations with the returned `contactId`.
 - A successfully delivered customer in a partially failed batch is not automatically retried. Start a new submission containing only the failed customers after correcting the phone or GHL match.
 

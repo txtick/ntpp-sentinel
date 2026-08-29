@@ -59,8 +59,14 @@ function verifyFrontendHooks(js) {
   );
   assert(js.includes("const state = {"), "app.js must define state");
   assert(
-    js.includes('setView("home", { pushHistory: false })'),
-    "app.js must initialize the home view",
+    js.includes(
+      'setView(state.auth.access?.landing_view || "home", { pushHistory: false })',
+    ),
+    "app.js must initialize the role-appropriate landing view",
+  );
+  assert(
+    js.includes('return isTechnicianPortal() ? "route-rollover" : view;'),
+    "app.js must keep technician accounts in the rollover portal",
   );
 }
 

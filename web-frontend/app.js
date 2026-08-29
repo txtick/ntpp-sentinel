@@ -139,6 +139,11 @@ const state = {
     authenticated: false,
     loginUrl: "/auth/google/start",
     user: null,
+    access: {
+      role: "manager",
+      landing_view: "home",
+      allowed_views: null,
+    },
     errorCode:
       new URLSearchParams(window.location.search).get("auth_error") || "",
   },
@@ -273,6 +278,26 @@ function pushBrowserState() {
   window.history.pushState(snapshotAppState(), "", "");
 }
 
+function isTechnicianPortal() {
+  return state.auth.access?.role === "technician";
+}
+
+function permittedView(view) {
+  return isTechnicianPortal() ? "route-rollover" : view;
+}
+
+function renderAccessMode() {
+  const technicianPortal = isTechnicianPortal();
+  document.body.classList.toggle("technician-portal", technicianPortal);
+  document.querySelectorAll(".nav-link").forEach((button) => {
+    button.hidden =
+      technicianPortal && button.dataset.view !== "route-rollover";
+  });
+  document.querySelectorAll(".nav-section-label").forEach((label) => {
+    label.hidden = technicianPortal;
+  });
+}
+
 function renderSessionCard() {
   if (!els.sessionCard) return;
   if (!state.auth.enabled) {
@@ -285,7 +310,9 @@ function renderSessionCard() {
   if (state.auth.authenticated && state.auth.user) {
     const name = state.auth.user.name || state.auth.user.email || "Signed in";
     const email = state.auth.user.email ? ` (${state.auth.user.email})` : "";
-    els.sessionSummary.textContent = `Signed in as ${name}${email}`;
+    els.sessionSummary.textContent = isTechnicianPortal()
+      ? `Signed in as ${name}${email}. Technician route access.`
+      : `Signed in as ${name}${email}`;
     els.loginButton.hidden = true;
     els.logoutButton.hidden = false;
     return;
@@ -344,6 +371,11 @@ async function hydrateSession() {
     state.auth.authenticated = Boolean(payload.authenticated);
     state.auth.loginUrl = payload.login_url || "/auth/google/start";
     state.auth.user = payload.user || null;
+    state.auth.access = payload.access || {
+      role: "manager",
+      landing_view: "home",
+      allowed_views: null,
+    };
     state.actor = state.auth.user?.actor || state.auth.user?.email || "";
     if (state.auth.authenticated && state.auth.errorCode) {
       const url = new URL(window.location.href);
@@ -353,6 +385,7 @@ async function hydrateSession() {
     }
     renderSessionCard();
     renderAuthGate();
+    renderAccessMode();
   } catch (error) {
     state.auth.checked = true;
     state.auth.enabled = true;
@@ -381,8 +414,14 @@ async function init() {
       state.auth.authenticated = false;
       state.auth.checked = true;
       state.auth.user = null;
+      state.auth.access = {
+        role: "manager",
+        landing_view: "home",
+        allowed_views: null,
+      };
       state.actor = "";
       renderSessionCard();
+      renderAccessMode();
       renderAuthRequired();
       showToast("Signed out.");
     });
@@ -394,6 +433,7 @@ async function init() {
 
   window.addEventListener("popstate", (event) => {
     restoreAppState(event.state || { view: "home" });
+    state.view = permittedView(state.view);
     document.querySelectorAll(".nav-link").forEach((button) => {
       const activeView = ["customer-profile"].includes(state.view)
         ? "customers"
@@ -413,10 +453,11 @@ async function init() {
 
   window.history.replaceState(snapshotAppState(), "", "");
   if (state.auth.enabled && !state.auth.authenticated) return;
-  setView("home", { pushHistory: false });
+  setView(state.auth.access?.landing_view || "home", { pushHistory: false });
 }
 
 function setView(view, { pushHistory = true } = {}) {
+  view = permittedView(view);
   state.view = view;
   document.querySelectorAll(".nav-link").forEach((button) => {
     const activeView = ["customer-profile"].includes(view)
