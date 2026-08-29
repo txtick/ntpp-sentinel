@@ -134,6 +134,7 @@ const state = {
   view: "home",
   actor: "",
   auth: {
+    checked: false,
     enabled: false,
     authenticated: false,
     loginUrl: "/auth/google/start",
@@ -165,6 +166,10 @@ const state = {
 };
 
 const els = {
+  loginGate: document.getElementById("login-gate"),
+  appShell: document.getElementById("app-shell"),
+  loginPageButton: document.getElementById("login-page-button"),
+  loginGateStatus: document.getElementById("login-gate-status"),
   mainPanel: document.getElementById("main-panel"),
   detailPanel: document.getElementById("detail-panel"),
   contentGrid: document.querySelector(".content-grid"),
@@ -290,25 +295,57 @@ function renderSessionCard() {
   els.loginButton.href = state.auth.loginUrl || "/auth/google/start";
 }
 
+function renderAuthGate(message = "") {
+  const checking = !state.auth.checked;
+  const loginRequired =
+    checking || (state.auth.enabled && !state.auth.authenticated);
+  if (els.loginGate) els.loginGate.hidden = !loginRequired;
+  if (els.appShell) els.appShell.hidden = loginRequired;
+
+  if (els.loginPageButton) {
+    els.loginPageButton.href = state.auth.loginUrl || "/auth/google/start";
+    els.loginPageButton.hidden = checking;
+  }
+  if (els.loginGateStatus) {
+    els.loginGateStatus.textContent = message
+      ? message
+      : checking
+        ? "Checking your sign-in…"
+        : "Sign in to continue.";
+  }
+}
+
 function renderAuthRequired() {
-  const loginUrl = state.auth.loginUrl || "/auth/google/start";
-  els.mainPanel.innerHTML = `
-    <div class="empty-state">
-      Sign in is required to use the dashboard.<br /><br />
-      <a class="button button-primary" href="${escapeHtml(loginUrl)}">Sign In with Google</a>
-    </div>
-  `;
+  state.auth.checked = true;
+  renderAuthGate("Your sign-in has expired. Sign in again to continue.");
 }
 
 async function hydrateSession() {
-  const response = await fetch("/auth/session", { credentials: "same-origin" });
-  const payload = await response.json().catch(() => ({}));
-  state.auth.enabled = Boolean(payload.enabled);
-  state.auth.authenticated = Boolean(payload.authenticated);
-  state.auth.loginUrl = payload.login_url || "/auth/google/start";
-  state.auth.user = payload.user || null;
-  state.actor = state.auth.user?.actor || state.auth.user?.email || "";
-  renderSessionCard();
+  try {
+    const response = await fetch("/auth/session", {
+      credentials: "same-origin",
+    });
+    if (!response.ok)
+      throw new Error(`Session check failed (${response.status})`);
+    const payload = await response.json().catch(() => ({}));
+    state.auth.checked = true;
+    state.auth.enabled = Boolean(payload.enabled);
+    state.auth.authenticated = Boolean(payload.authenticated);
+    state.auth.loginUrl = payload.login_url || "/auth/google/start";
+    state.auth.user = payload.user || null;
+    state.actor = state.auth.user?.actor || state.auth.user?.email || "";
+    renderSessionCard();
+    renderAuthGate();
+  } catch (error) {
+    state.auth.checked = true;
+    state.auth.enabled = true;
+    state.auth.authenticated = false;
+    renderSessionCard();
+    renderAuthGate(
+      "Sentinel could not verify your sign-in. Try signing in or refresh this page.",
+    );
+    console.error("Session check failed:", error);
+  }
 }
 
 async function init() {
@@ -325,6 +362,7 @@ async function init() {
         credentials: "same-origin",
       });
       state.auth.authenticated = false;
+      state.auth.checked = true;
       state.auth.user = null;
       state.actor = "";
       renderSessionCard();
@@ -357,6 +395,7 @@ async function init() {
   });
 
   window.history.replaceState(snapshotAppState(), "", "");
+  if (state.auth.enabled && !state.auth.authenticated) return;
   setView("home", { pushHistory: false });
 }
 

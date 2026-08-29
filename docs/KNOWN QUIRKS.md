@@ -138,6 +138,7 @@ Examples:
 ## Dashboard Frontend Cache
 
 - The dashboard SPA is static `index.html` + `app.js` + `styles.css` served by Caddy.
+- The frontend intentionally starts with the full-screen login gate visible and the dashboard shell hidden. After `/auth/session` resolves, authenticated production users see the shell; local development with dashboard auth disabled also reveals it. If the session check fails, the page remains gated instead of exposing a broken dashboard frame.
 - If the browser keeps an older cached `app.js` after a deploy, a newly added nav item can appear in HTML while clicks silently fail because the old JS does not know that view exists yet.
 - Frontend static assets now send no-cache headers to reduce HTML/JS version mismatches after deploys.
 

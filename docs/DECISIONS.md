@@ -89,6 +89,8 @@ Keep entries short, but do not skip them.
   - Reason: missing pricing data is operationally important, but it should not distort the flagged severity counts.
 - Route Rollover moved from an SMS state machine to an authenticated, mobile-friendly dashboard workflow; the SMS entry point is disabled by default with `ROLLOVER_SMS_ENABLED=0`.
   - Reason: customer selection, message review, AI drafting, and per-customer send results are safer and easier to understand on a webpage than through multi-step technician texts.
+- Unauthenticated dashboard visits use a full-screen sign-in gate and do not reveal the application shell until `/auth/session` confirms access.
+  - Reason: technicians need an unmistakable next step on mobile, and protected dashboard content should not flash while Sentinel checks the session.
 - Rollover technician identity is derived from the signed-in Workspace email matched to the active Skimmer technician email.
   - Reason: server-side identity binding prevents a technician from requesting or submitting another technician's route.
 - Rollover sends use batch idempotency and unique GHL conversation matching.

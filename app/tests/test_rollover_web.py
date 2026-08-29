@@ -74,3 +74,16 @@ def test_frontend_has_reviewed_mobile_rollover_flow():
     assert 'id="rollover-reviewed"' in app
     assert 'idempotency_key: rolloverUi.submissionId' in app
     assert "Personalized preview" in app
+
+
+def test_frontend_hides_dashboard_behind_explicit_login_gate():
+    repo = Path(__file__).resolve().parents[2]
+    index = (repo / "web-frontend" / "index.html").read_text()
+    app = (repo / "web-frontend" / "app.js").read_text()
+    styles = (repo / "web-frontend" / "styles.css").read_text()
+    assert 'id="login-gate"' in index
+    assert 'id="login-page-button"' in index
+    assert 'id="app-shell" class="shell" hidden' in index
+    assert "function renderAuthGate" in app
+    assert "checking || (state.auth.enabled && !state.auth.authenticated)" in app
+    assert ".shell[hidden]" in styles
