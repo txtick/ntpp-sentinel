@@ -87,6 +87,12 @@ Keep entries short, but do not skip them.
   - Reason: managers want the page to surface both severity and estimated margin erosion, not just raw chemical spend.
 - Pools with missing or zero service rate remain visible as `Missing Rate`, but they do not count toward Watch/Problem/Critical totals.
   - Reason: missing pricing data is operationally important, but it should not distort the flagged severity counts.
+- Route Rollover moved from an SMS state machine to an authenticated, mobile-friendly dashboard workflow; the SMS entry point is disabled by default with `ROLLOVER_SMS_ENABLED=0`.
+  - Reason: customer selection, message review, AI drafting, and per-customer send results are safer and easier to understand on a webpage than through multi-step technician texts.
+- Rollover technician identity is derived from the signed-in Workspace email matched to the active Skimmer technician email.
+  - Reason: server-side identity binding prevents a technician from requesting or submitting another technician's route.
+- Rollover sends use batch idempotency and unique GHL conversation matching.
+  - Reason: mobile retries must not duplicate customer messages, and ambiguous phone/conversation matches must fail rather than risk contacting the wrong person.
 
 ## Data Source Decisions
 

@@ -155,6 +155,7 @@ CUSTOMER_SYNC_DELAY_SECONDS = float(os.getenv("CUSTOMER_SYNC_DELAY_SECONDS", "0.
 
 # Route Rollover feature
 ROLLOVER_ENABLED = os.getenv("ROLLOVER_ENABLED", "1").lower() in ("1", "true", "yes", "on")
+ROLLOVER_SMS_ENABLED = os.getenv("ROLLOVER_SMS_ENABLED", "0").lower() in ("1", "true", "yes", "on")
 
 def _parse_skimmer_tech_map() -> Dict[str, str]:
     raw = os.getenv("SKIMMER_TECH_ID_MAP", "{}")
@@ -2703,7 +2704,7 @@ register_sms_routes(
         mark_spam=mark_spam,
         resolve_by_phone=resolve_by_phone,
         ghl_conversation_link=ghl_conversation_link,
-        rollover_enabled=ROLLOVER_ENABLED,
+        rollover_enabled=ROLLOVER_ENABLED and ROLLOVER_SMS_ENABLED,
         skimmer_tech_id_map=SKIMMER_TECH_ID_MAP,
         manager_contact_ids=MANAGER_CONTACT_IDS,
         ghl_search_conversation_by_phone=_ghl_search_conversation_by_phone,

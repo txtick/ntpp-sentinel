@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import secrets
@@ -49,6 +50,12 @@ from services.route_sandbox import (
     update_scenario,
     upsert_technician_profile,
     validate_scenario,
+)
+from services.rollover_web import (
+    ensure_schema as ensure_rollover_web_schema,
+    generate_message as rollover_generate_message,
+    get_route_for_user as rollover_get_route_for_user,
+    send_rollover as rollover_send,
 )
 from pg import ensure_route_maps_schema, ensure_sales_assist_schema
 from services.dashboard_backend import (
@@ -458,6 +465,7 @@ def _startup() -> None:
         ensure_route_sandbox_schema()
         ensure_route_maps_schema()
         ensure_sales_assist_schema()
+        ensure_rollover_web_schema()
         try:
             result = backfill_technician_home_coords()
             if result.get("updated"):
@@ -599,6 +607,40 @@ async def auth_google_callback(request: Request, code: str = "", state: str = ""
 def auth_logout(request: Request):
     request.session.clear()
     return {"ok": True}
+
+
+def _rollover_user_email(request: Request) -> str:
+    user = _dashboard_user(request)
+    email = str((user or {}).get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Google Workspace login is required")
+    return email
+
+
+@app.get("/api/rollover/route")
+def api_rollover_route(request: Request):
+    _dashboard_read_auth_or_401(request)
+    return rollover_get_route_for_user(_rollover_user_email(request))
+
+
+@app.post("/api/rollover/message/ai")
+async def api_rollover_message_ai(request: Request):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    return await asyncio.to_thread(
+        rollover_generate_message,
+        _rollover_user_email(request),
+        str(body.get("issue_reason") or ""),
+    )
+
+
+@app.post("/api/rollover/send")
+async def api_rollover_send(request: Request):
+    _dashboard_mutation_auth_or_401(request)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="JSON body is required")
+    return await asyncio.to_thread(rollover_send, _rollover_user_email(request), body)
 
 
 @app.get("/api/home/summary")

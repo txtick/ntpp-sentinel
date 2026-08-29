@@ -160,6 +160,7 @@ const state = {
     technicians: null,
     labor: null,
     reminders: null,
+    rollover: null,
   },
 };
 
@@ -197,6 +198,7 @@ const viewMeta = {
   reminders: { kicker: "Reminders", title: "Follow-Up Queue" },
   settings: { kicker: "Settings", title: "Alert Rule Configuration" },
   "route-sandbox": { kicker: "Routes", title: "Route Sandbox" },
+  "route-rollover": { kicker: "Routes", title: "Notify Route Customers" },
   "route-tech-settings": { kicker: "Routes", title: "Tech Route Settings" },
   "sales-assist": { kicker: "Sales", title: "Sales Assist — Quote Pipeline" },
 };
@@ -1378,6 +1380,12 @@ function renderFilters() {
     return;
   }
 
+  if (state.view === "route-rollover") {
+    setLayout("single");
+    els.filters.innerHTML = "";
+    return;
+  }
+
   if (state.view === "route-tech-settings") {
     setLayout("single");
     els.filters.innerHTML = "";
@@ -1406,6 +1414,7 @@ async function loadCurrentView(force = false) {
     if (state.view === "reminders") await loadReminders(force);
     if (state.view === "settings") await loadSettings(force);
     if (state.view === "route-sandbox") await loadRouteSandbox(force);
+    if (state.view === "route-rollover") await loadRouteRollover(force);
     if (state.view === "route-tech-settings")
       await loadRouteTechSettings(force);
     if (state.view === "sales-assist") await loadSalesAssist(force);
@@ -6414,6 +6423,326 @@ function saCopySms(quoteId) {
     .catch(() => showToast("Copy failed."));
 }
 
+// ── Technician Route Rollover ───────────────────────────────────────────────
+
+const rolloverUi = {
+  route: null,
+  selected: new Set(),
+  issueReason: "",
+  messageTemplate: "",
+  submissionId: null,
+  sending: false,
+  result: null,
+};
+
+function rolloverNewSubmissionId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === "x" ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
+function rolloverPersonalize(template, stop, tech) {
+  const customer = stop.customer_first_name || "there";
+  const techName = tech.first_name || "your technician";
+  return String(template || "")
+    .replaceAll("{{customer_first_name}}", customer)
+    .replaceAll("{customer_first_name}", customer)
+    .replaceAll("{{tech_first_name}}", techName)
+    .replaceAll("{tech_first_name}", techName);
+}
+
+async function loadRouteRollover(force = false) {
+  if (!force && rolloverUi.route) {
+    renderRouteRollover();
+    return;
+  }
+  const payload = await api("/api/rollover/route");
+  rolloverUi.route = payload;
+  rolloverUi.selected = new Set();
+  rolloverUi.issueReason = "";
+  rolloverUi.messageTemplate = payload.default_message_template || "";
+  rolloverUi.submissionId = rolloverNewSubmissionId();
+  rolloverUi.result = null;
+  renderRouteRollover();
+}
+
+function renderRouteRollover() {
+  const route = rolloverUi.route;
+  if (!route) return;
+  const tech = route.technician || {};
+  const stops = route.stops || [];
+  const selectedCount = rolloverUi.selected.size;
+  const unfinished = stops.filter((stop) => !stop.completed);
+  const completed = stops.filter((stop) => stop.completed);
+
+  const stopCards = stops.length
+    ? stops
+        .map((stop) => {
+          const checked = rolloverUi.selected.has(stop.id);
+          return `
+            <label class="rollover-stop ${stop.completed ? "is-complete" : ""}">
+              <input class="rollover-stop-check" type="checkbox" value="${escapeHtml(stop.id)}"
+                ${checked ? "checked" : ""} ${stop.completed ? "disabled" : ""} />
+              <span class="rollover-stop-sequence">${escapeHtml(stop.sequence || "–")}</span>
+              <span class="rollover-stop-copy">
+                <strong>${escapeHtml(stop.customer_name)}</strong>
+                <small>${escapeHtml([stop.address, stop.city].filter(Boolean).join(", "))}</small>
+              </span>
+              <span class="pill ${stop.completed ? "pill-success" : "pill-warning"}">
+                ${stop.completed ? "Serviced" : "Not serviced"}
+              </span>
+            </label>`;
+        })
+        .join("")
+    : `<div class="empty-state">No route stops were found for today. If that seems wrong, contact the office.</div>`;
+
+  const recent = (route.recent_batches || []).length
+    ? (route.recent_batches || [])
+        .map(
+          (batch) => `
+          <div class="rollover-history-row">
+            <span>${escapeHtml(String(batch.service_date || ""))}</span>
+            <strong>${escapeHtml(batch.sent_count)} sent</strong>
+            ${batch.failed_count ? `<span class="text-critical">${escapeHtml(batch.failed_count)} failed</span>` : ""}
+          </div>`,
+        )
+        .join("")
+    : `<p class="muted">No recent route notifications from this account.</p>`;
+
+  els.mainPanel.innerHTML = `
+    <div class="rollover-shell">
+      <section class="rollover-hero">
+        <div>
+          <p class="eyebrow">${escapeHtml(route.service_date)}</p>
+          <h3>${escapeHtml(tech.first_name || "Your")}’s route</h3>
+          <p>Select only the customers whose service is moving to tomorrow. Already-serviced stops cannot be selected.</p>
+        </div>
+        <div class="rollover-counts">
+          <span><strong>${escapeHtml(unfinished.length)}</strong> unfinished</span>
+          <span><strong>${escapeHtml(completed.length)}</strong> serviced</span>
+        </div>
+      </section>
+
+      <section class="rollover-section">
+        <div class="rollover-section-head">
+          <div><span class="rollover-step">1</span><strong>Choose customers</strong></div>
+          <button id="rollover-select-unfinished" class="button button-secondary" type="button">Select all unfinished</button>
+        </div>
+        <div class="rollover-stop-list">${stopCards}</div>
+      </section>
+
+      <section class="rollover-section">
+        <div class="rollover-section-head">
+          <div><span class="rollover-step">2</span><strong>Explain the issue</strong></div>
+        </div>
+        <label>
+          <span>Why is the route moving? <span class="muted">Used to help AI draft the message; not sent unless included below.</span></span>
+          <input id="rollover-issue" maxlength="240" value="${escapeHtml(rolloverUi.issueReason)}"
+            placeholder="Example: truck issue, weather delay, equipment problem, route ran long" />
+        </label>
+      </section>
+
+      <section class="rollover-section">
+        <div class="rollover-section-head">
+          <div><span class="rollover-step">3</span><strong>Review the message</strong></div>
+          <button id="rollover-ai" class="button button-secondary" type="button" ${route.ai_enabled ? "" : "disabled"}>
+            Write with AI
+          </button>
+        </div>
+        <label>
+          <span>Message template <span class="muted">Names are personalized automatically.</span></span>
+          <textarea id="rollover-message" maxlength="600" rows="7">${escapeHtml(rolloverUi.messageTemplate)}</textarea>
+        </label>
+        <div class="rollover-message-tools">
+          <button id="rollover-reset-message" class="button button-secondary" type="button">Use standard message</button>
+          <span id="rollover-message-count" class="muted">${escapeHtml(rolloverUi.messageTemplate.length)} / 600</span>
+        </div>
+        <div id="rollover-previews"></div>
+      </section>
+
+      <section class="rollover-send-card">
+        <label class="rollover-confirm">
+          <input id="rollover-reviewed" type="checkbox" />
+          <span>I reviewed the selected customers and the message above.</span>
+        </label>
+        <button id="rollover-send" class="button button-primary rollover-send-button" type="button" disabled>
+          Send to ${escapeHtml(selectedCount)} customer${selectedCount === 1 ? "" : "s"}
+        </button>
+        <p class="muted">Messages send through each customer’s existing GHL conversation. Sentinel reports every success or failure.</p>
+      </section>
+
+      <section id="rollover-result"></section>
+
+      <details class="rollover-history">
+        <summary>Recent sends</summary>
+        ${recent}
+      </details>
+    </div>`;
+
+  document.querySelectorAll(".rollover-stop-check").forEach((checkbox) => {
+    checkbox.addEventListener("change", (event) => {
+      if (event.target.checked) rolloverUi.selected.add(event.target.value);
+      else rolloverUi.selected.delete(event.target.value);
+      renderRouteRollover();
+    });
+  });
+  document.getElementById("rollover-select-unfinished").onclick = () => {
+    const allSelected =
+      unfinished.length > 0 &&
+      unfinished.every((stop) => rolloverUi.selected.has(stop.id));
+    rolloverUi.selected = new Set(
+      allSelected ? [] : unfinished.map((stop) => stop.id),
+    );
+    renderRouteRollover();
+  };
+  document.getElementById("rollover-issue").oninput = (event) => {
+    rolloverUi.issueReason = event.target.value;
+  };
+  document.getElementById("rollover-message").oninput = (event) => {
+    rolloverUi.messageTemplate = event.target.value;
+    document.getElementById("rollover-message-count").textContent =
+      `${event.target.value.length} / 600`;
+    renderRolloverPreviews();
+  };
+  document.getElementById("rollover-reset-message").onclick = () => {
+    rolloverUi.messageTemplate = route.default_message_template || "";
+    renderRouteRollover();
+  };
+  document.getElementById("rollover-ai").onclick = rolloverDraftWithAi;
+  document.getElementById("rollover-reviewed").onchange =
+    updateRolloverSendButton;
+  document.getElementById("rollover-send").onclick = rolloverSubmit;
+  renderRolloverPreviews();
+  renderRolloverResult();
+  updateRolloverSendButton();
+}
+
+function renderRolloverPreviews() {
+  const container = document.getElementById("rollover-previews");
+  if (!container || !rolloverUi.route) return;
+  const selected = (rolloverUi.route.stops || []).filter((stop) =>
+    rolloverUi.selected.has(stop.id),
+  );
+  if (!selected.length) {
+    container.innerHTML = `<p class="muted rollover-preview-empty">Select a customer to see the personalized preview.</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <details class="rollover-previews" open>
+      <summary>Personalized preview${selected.length > 1 ? "s" : ""} (${selected.length})</summary>
+      ${selected
+        .map(
+          (stop) =>
+            `<article><strong>${escapeHtml(stop.customer_name)}</strong><p>${escapeHtml(
+              rolloverPersonalize(
+                rolloverUi.messageTemplate,
+                stop,
+                rolloverUi.route.technician,
+              ),
+            )}</p></article>`,
+        )
+        .join("")}
+    </details>`;
+}
+
+function updateRolloverSendButton() {
+  const reviewed = document.getElementById("rollover-reviewed")?.checked;
+  const button = document.getElementById("rollover-send");
+  if (!button) return;
+  button.disabled =
+    !reviewed || rolloverUi.selected.size === 0 || rolloverUi.sending;
+}
+
+async function rolloverDraftWithAi() {
+  if (!rolloverUi.issueReason.trim()) {
+    showToast("Add the issue or reason first.", 4000);
+    document.getElementById("rollover-issue")?.focus();
+    return;
+  }
+  const button = document.getElementById("rollover-ai");
+  button.disabled = true;
+  button.textContent = "Writing…";
+  try {
+    const result = await api("/api/rollover/message/ai", {
+      method: "POST",
+      body: JSON.stringify({ issue_reason: rolloverUi.issueReason }),
+    });
+    rolloverUi.messageTemplate = result.message_template;
+    renderRouteRollover();
+    showToast("AI draft ready. Please review it before sending.");
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Write with AI";
+    showToast(error.message, 5000);
+  }
+}
+
+async function rolloverSubmit() {
+  const count = rolloverUi.selected.size;
+  if (!count || rolloverUi.sending) return;
+  if (
+    !window.confirm(
+      `Send the reviewed route-change message to ${count} customer${count === 1 ? "" : "s"}?`,
+    )
+  )
+    return;
+  rolloverUi.sending = true;
+  updateRolloverSendButton();
+  setStatus("Sending…", "warning");
+  try {
+    const result = await api("/api/rollover/send", {
+      method: "POST",
+      body: JSON.stringify({
+        stop_ids: [...rolloverUi.selected],
+        issue_reason: rolloverUi.issueReason,
+        message_template: rolloverUi.messageTemplate,
+        idempotency_key: rolloverUi.submissionId,
+      }),
+    });
+    rolloverUi.result = result;
+    rolloverUi.sending = false;
+    setStatus("Sent", result.batch?.failed_count ? "warning" : "info");
+    renderRolloverResult();
+    document
+      .getElementById("rollover-result")
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch (error) {
+    rolloverUi.sending = false;
+    setStatus("Error", "critical");
+    updateRolloverSendButton();
+    showToast(error.message, 6000);
+  }
+}
+
+function renderRolloverResult() {
+  const container = document.getElementById("rollover-result");
+  const result = rolloverUi.result;
+  if (!container || !result?.batch) return;
+  const batch = result.batch;
+  container.innerHTML = `
+    <div class="rollover-result-card ${batch.failed_count ? "has-failures" : "is-success"}">
+      <h3>${batch.failed_count ? "Finished with an issue" : "Customers notified"}</h3>
+      <p><strong>${escapeHtml(batch.sent_count)}</strong> sent · <strong>${escapeHtml(batch.failed_count)}</strong> failed</p>
+      <div class="rollover-result-items">
+        ${(result.items || [])
+          .map(
+            (item) =>
+              `<div><span>${item.status === "sent" ? "✓" : "!"} ${escapeHtml(item.customer_name)}</span><small>${escapeHtml(
+                item.status === "sent"
+                  ? "Sent through GHL"
+                  : item.error_message || "Could not send",
+              )}</small></div>`,
+          )
+          .join("")}
+      </div>
+      <button id="rollover-start-over" class="button button-secondary" type="button">Refresh route</button>
+    </div>`;
+  document.getElementById("rollover-start-over").onclick = () =>
+    loadRouteRollover(true);
+}
+
 function attachSaDetailHandlers(_quoteId, _detail) {
   // Placeholder — event listeners attached inline via onclick
 }
@@ -6436,6 +6765,8 @@ window.saCopyCallScript = saCopyCallScript;
 window.saCopySms = saCopySms;
 window.saApplyFilters = saApplyFilters;
 window.saResetFilters = saResetFilters;
+
+window.loadRouteRollover = loadRouteRollover;
 
 window.sandboxMoveStop = sandboxMoveStop;
 window.sandboxCloseDetail = sandboxCloseDetail;

@@ -43,7 +43,7 @@ The default repo schedule runs on Monday-Saturday, but exact send times and acti
 - Response timers run only during configured business hours.
 
 ## Route Rollover
-Sentinel also supports Route Rollover messaging.
+Sentinel supports a mobile-friendly Route Rollover page under `Routes -> Notify Route Change`.
 
 This is separate from missed-call and missed-text monitoring.
 
@@ -51,12 +51,17 @@ Its job is to help when a technician route changes and a customer needs a rollov
 
 What managers should know:
 
-- It is a live operational workflow inside Sentinel.
-- It uses Skimmer assignment data to identify the technician context.
+- Technicians sign in with their North Texas Pool Pros Google Workspace email.
+- Sentinel matches that email to the active Skimmer technician and shows only that technician's live route for today.
+- Already-serviced stops are visible but cannot be selected.
+- The technician selects the customers moving to tomorrow, enters the issue/reason, and either edits the standard message or asks AI to draft one.
+- Every selected customer's personalized message is previewed before sending.
+- A review checkbox and final confirmation are required before the GHL send starts.
 - It sends only when Sentinel finds a single confident customer conversation match.
 - If the match is unclear, Sentinel is designed to avoid sending rather than risk messaging the wrong customer.
+- The result lists each customer as sent or failed. A double tap or browser retry will not duplicate the batch.
 
-In practice, this means Route Rollover is meant to reduce manual follow-up during technician handoffs without creating extra customer confusion.
+The old technician SMS command is disabled by default. It can be temporarily restored with `ROLLOVER_SMS_ENABLED=1`, but the webpage is the normal workflow.
 
 ## Labor Page
 The dashboard also includes a `Labor` tab for weekly payroll prep.

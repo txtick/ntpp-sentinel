@@ -70,6 +70,17 @@ This document captures business behavior that should remain stable unless intent
   - `monthly_leak = max(0, monthly_chemical_cost - (monthly_service_rate * 20%))`
 - Pools with missing or zero service rate stay visible on the report as `Missing Rate`, show `N/A` for percent, and are excluded from Watch/Problem/Critical totals.
 
+## Route Rollover
+
+- Route Rollover is a Google Workspace-authenticated technician webpage in the Sentinel dashboard.
+- The signed-in NTPP email must match one active Skimmer technician email; technicians only receive their own live route.
+- The route list comes from Skimmer's live `GetTechRoute` API for the current local date.
+- Real completed stops are disabled. Missing completion times and Skimmer's fake `2010-01-01` completion values remain eligible.
+- Technicians select unfinished customers, review a personalized SMS preview, acknowledge review, and explicitly submit once.
+- AI may draft the message from a technician-entered issue/reason, but it never sends. The technician can edit the draft and must separately confirm the send.
+- Customer messages go through one uniquely matched GHL conversation. Missing or ambiguous matches fail closed and are reported per customer.
+- Web submissions are idempotent so a retry or double tap cannot resend the same batch.
+
 ## Sales Assist
 
 - Sales Assist quote status comes from imported Skimmer quote tables: `sk_quote`, `sk_quote_location`, and `sk_quote_item`.

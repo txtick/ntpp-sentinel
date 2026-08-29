@@ -683,6 +683,9 @@ Operator-relevant backend paths:
   - `GET /api/technicians`
   - `GET /api/technicians/{tech_id}`
   - `GET /api/labor/payroll`
+  - `GET /api/rollover/route`
+  - `POST /api/rollover/message/ai`
+  - `POST /api/rollover/send`
   - `GET /api/alerts`
   - `GET /api/alerts/{alert_id}`
   - `GET /api/alerts/{alert_id}/events`
@@ -702,6 +705,18 @@ Operator-relevant backend paths:
   - `POST /api/reminders/{reminder_id}/snooze`
   - `POST /api/reminders/{reminder_id}/complete`
   - `POST /api/reminders/{reminder_id}/cancel`
+
+Route Rollover configuration:
+
+```bash
+ROLLOVER_ENABLED=1
+ROLLOVER_WEB_ENABLED=1
+ROLLOVER_AI_ENABLED=1
+ROLLOVER_AI_MODEL=gpt-4o-mini
+ROLLOVER_SMS_ENABLED=0
+```
+
+`OPENAI_API_KEY` is required only for the optional `Write with AI` button. The standard editable message and GHL send still work without it. Do not test `POST /api/rollover/send` against production customer stops; use the authenticated page for a real, reviewed operational send. Safe verification is `GET /api/rollover/route` plus database inspection of existing batches.
 
 Reminder note:
 

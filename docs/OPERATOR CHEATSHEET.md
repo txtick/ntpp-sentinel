@@ -26,6 +26,29 @@ curl -s https://dashboard.northtexaspoolpros.com/health
 cd /opt/ntpp-sentinel && docker compose ps
 ```
 
+## Route Rollover
+
+Normal technician workflow:
+
+```text
+Dashboard -> Routes -> Notify Route Change
+```
+
+Configuration check:
+
+```bash
+cd /opt/ntpp-sentinel
+docker compose exec -T web-backend sh -lc '
+  echo "ROLLOVER_WEB_ENABLED=${ROLLOVER_WEB_ENABLED:-1}"
+  echo "ROLLOVER_AI_ENABLED=${ROLLOVER_AI_ENABLED:-1}"
+  echo "ROLLOVER_AI_MODEL=${ROLLOVER_AI_MODEL:-${AI_GATE_MODEL:-gpt-4o-mini}}"
+  echo "OPENAI_API_KEY chars: ${#OPENAI_API_KEY}"
+'
+docker compose exec -T sentinel sh -lc 'echo "ROLLOVER_SMS_ENABLED=${ROLLOVER_SMS_ENABLED:-0}"'
+```
+
+Do not curl the production rollover send endpoint for testing; it sends real GHL SMS. Verify the authenticated route page and use existing batch audit rows instead.
+
 ## Logs
 
 ```bash

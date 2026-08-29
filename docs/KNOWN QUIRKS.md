@@ -112,6 +112,13 @@ Examples:
 - If a customer's imported Skimmer tags change in a way that affects alert suppression, already-open tracked alerts will not disappear until the next dashboard refresh recalculates the backend-owned alert set.
 - Customer-tag-driven alert suppression depends on the nightly Skimmer import preserving tags into `sk_customer.raw_json` and then `customers.raw_json`. In this dataset, customer tags may live in relational `CustomerTag`/`Tag` tables even when `Customer.Tags` is null, so the importer must merge both sources or dashboard suppression logic like `filter-sand` and `no-sentinel-alerts` will silently fail even when the tag exists in Skimmer.
 
+## Route Rollover
+
+- Skimmer's live route response includes both unfinished and completed stops. The rollover webpage must disable real completed stops instead of treating the full route as eligible.
+- As elsewhere in Sentinel, a route `completeTime` around `2010-01-01` is a placeholder and does not mean the stop was serviced.
+- Some active Skimmer technician records use non-NTPP email domains. They cannot use Workspace-authenticated rollover until their Skimmer email is changed to an allowed NTPP account.
+- A successfully delivered customer in a partially failed batch is not automatically retried. Start a new submission containing only the failed customers after correcting the phone or GHL match.
+
 ## Problem Pools Report
 
 - The `Problem Pools` page is not refresh-driven like tracked alerts; it reads directly from `problem_pools_v`, so page loads reflect the current imported Postgres data without a dashboard refresh step.
