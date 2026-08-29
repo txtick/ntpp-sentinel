@@ -9,6 +9,7 @@ const frontendDir = path.join(repoRoot, "web-frontend");
 const appJsPath = path.join(frontendDir, "app.js");
 const cssPath = path.join(frontendDir, "styles.css");
 const htmlPath = path.join(frontendDir, "index.html");
+const caddyPath = path.join(frontendDir, "Caddyfile");
 
 function assert(condition, message) {
   if (!condition) {
@@ -74,14 +75,29 @@ function verifyChartStyling(css) {
   });
 }
 
+function verifyCachePolicy(caddy) {
+  assert(
+    caddy.includes(
+      'header Cache-Control "no-store, no-cache, must-revalidate"',
+    ),
+    "Caddyfile must disable caching for the homepage and SPA fallback routes",
+  );
+  assert(
+    !caddy.includes("header /index.html Cache-Control"),
+    "Caddyfile must not limit the HTML cache policy to /index.html",
+  );
+}
+
 function main() {
   const html = readUtf8(htmlPath);
   const js = readUtf8(appJsPath);
   const css = readUtf8(cssPath);
+  const caddy = readUtf8(caddyPath);
 
   verifyHtmlReferences(html);
   verifyFrontendHooks(js);
   verifyChartStyling(css);
+  verifyCachePolicy(caddy);
 
   console.log("frontend smoke checks passed");
 }

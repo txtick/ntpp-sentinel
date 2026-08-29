@@ -91,6 +91,8 @@ Keep entries short, but do not skip them.
   - Reason: customer selection, message review, AI drafting, and per-customer send results are safer and easier to understand on a webpage than through multi-step technician texts.
 - Unauthenticated dashboard visits use a full-screen sign-in gate and do not reveal the application shell until `/auth/session` confirms access.
   - Reason: technicians need an unmistakable next step on mobile, and protected dashboard content should not flash while Sentinel checks the session.
+- Dashboard static responses use a no-store policy for `/` and all SPA fallback routes, not only named asset paths.
+  - Reason: Google sign-in returns to `/`, and stale homepage HTML can otherwise omit newly deployed navigation until the user manually refreshes.
 - Rollover technician identity is derived from the signed-in Workspace email matched to the active Skimmer technician email.
   - Reason: server-side identity binding prevents a technician from requesting or submitting another technician's route.
 - Rollover sends use batch idempotency and unique GHL conversation matching.
