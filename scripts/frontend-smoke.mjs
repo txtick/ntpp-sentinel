@@ -68,6 +68,18 @@ function verifyFrontendHooks(js) {
     js.includes('return isTechnicianPortal() ? "route-rollover" : view;'),
     "app.js must keep technician accounts in the rollover portal",
   );
+  assert(
+    js.includes("function showSignInPage("),
+    "app.js must provide a full sign-in-page transition",
+  );
+  assert(
+    js.includes("if (response.status === 401)"),
+    "all expired API sessions must return to the sign-in page",
+  );
+  assert(
+    js.includes('document.addEventListener("visibilitychange"'),
+    "the app must recheck a phone session when returning to the foreground",
+  );
 }
 
 function verifyChartStyling(css) {

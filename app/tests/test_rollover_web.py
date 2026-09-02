@@ -143,6 +143,9 @@ def test_frontend_hides_dashboard_behind_explicit_login_gate():
     assert 'id="app-shell" class="shell" hidden' in index
     assert "function renderAuthGate" in app
     assert "checking || (state.auth.enabled && !state.auth.authenticated)" in app
+    assert "function showSignInPage" in app
+    assert "if (response.status === 401)" in app
+    assert 'document.addEventListener("visibilitychange"' in app
     assert ".shell[hidden]" in styles
 
 

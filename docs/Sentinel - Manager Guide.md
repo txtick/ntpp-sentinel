@@ -53,6 +53,7 @@ What managers should know:
 
 - Opening the dashboard while signed out shows a branded NTPP Sentinel login page instead of an empty dashboard frame. The dashboard appears only after Google sign-in succeeds.
 - If a phone returns from Google without Sentinel's temporary login session, Sentinel safely retries once in that browser. If the phone still blocks the session, the login page explains how to try again instead of downloading an error file.
+- If a saved dashboard session expires, Sentinel hides the dashboard and returns to the sign-in page when the app is reopened or the next protected action is attempted.
 - Technicians sign in with their North Texas Pool Pros Google Workspace email.
 - Active Skimmer `Tech` accounts land directly on Notify Route Change and do not see or have API access to the manager dashboard. Kevin, Jim, and Jarrett retain the full dashboard.
 - Sentinel matches that email to the active Skimmer technician and shows only that technician's live route for today.

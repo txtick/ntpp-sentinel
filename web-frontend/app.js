@@ -353,12 +353,24 @@ function renderAuthGate(message = "") {
   }
 }
 
-function renderAuthRequired() {
+function showSignInPage(message = "Sign in to continue.") {
   state.auth.checked = true;
-  renderAuthGate("Your sign-in has expired. Sign in again to continue.");
+  state.auth.enabled = true;
+  state.auth.authenticated = false;
+  state.auth.user = null;
+  state.auth.access = {
+    role: "manager",
+    landing_view: "home",
+    allowed_views: null,
+  };
+  state.actor = "";
+  renderSessionCard();
+  renderAccessMode();
+  renderAuthGate(message);
 }
 
-async function hydrateSession() {
+async function hydrateSession({ resumed = false } = {}) {
+  const wasAuthenticated = state.auth.authenticated;
   try {
     const response = await fetch("/auth/session", {
       credentials: "same-origin",
@@ -384,14 +396,14 @@ async function hydrateSession() {
       state.auth.errorCode = "";
     }
     renderSessionCard();
-    renderAuthGate();
     renderAccessMode();
-  } catch (error) {
-    state.auth.checked = true;
-    state.auth.enabled = true;
-    state.auth.authenticated = false;
-    renderSessionCard();
     renderAuthGate(
+      resumed && wasAuthenticated && !state.auth.authenticated
+        ? "Your sign-in has expired. Sign in again to continue."
+        : "",
+    );
+  } catch (error) {
+    showSignInPage(
       "Sentinel could not verify your sign-in. Try signing in or refresh this page.",
     );
     console.error("Session check failed:", error);
@@ -411,21 +423,26 @@ async function init() {
         method: "POST",
         credentials: "same-origin",
       });
-      state.auth.authenticated = false;
-      state.auth.checked = true;
-      state.auth.user = null;
-      state.auth.access = {
-        role: "manager",
-        landing_view: "home",
-        allowed_views: null,
-      };
-      state.actor = "";
-      renderSessionCard();
-      renderAccessMode();
-      renderAuthRequired();
+      showSignInPage("You’re signed out. Sign in again to continue.");
       showToast("Signed out.");
     });
   }
+
+  let resumeSessionCheck = null;
+  const verifySessionOnResume = () => {
+    if (
+      document.hidden ||
+      !state.auth.enabled ||
+      !state.auth.authenticated ||
+      resumeSessionCheck
+    )
+      return;
+    resumeSessionCheck = hydrateSession({ resumed: true }).finally(() => {
+      resumeSessionCheck = null;
+    });
+  };
+  document.addEventListener("visibilitychange", verifySessionOnResume);
+  window.addEventListener("focus", verifySessionOnResume);
 
   document
     .getElementById("refresh-view")
@@ -516,13 +533,12 @@ async function api(path, { method = "GET", body = undefined } = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401 && data.auth_required) {
-      state.auth.enabled = true;
-      state.auth.authenticated = false;
-      state.auth.loginUrl = data.login_url || "/auth/google/start";
-      renderSessionCard();
-      renderAuthRequired();
-      throw new Error("Dashboard login required.");
+    if (response.status === 401) {
+      const authDetail =
+        data.detail && typeof data.detail === "object" ? data.detail : data;
+      state.auth.loginUrl = authDetail.login_url || "/auth/google/start";
+      showSignInPage("Your sign-in has expired. Sign in again to continue.");
+      throw new Error("Your sign-in has expired.");
     }
     const detail = data.detail
       ? JSON.stringify(data.detail)

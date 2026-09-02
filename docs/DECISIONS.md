@@ -91,6 +91,8 @@ Keep entries short, but do not skip them.
   - Reason: customer selection, message review, AI drafting, and per-customer send results are safer and easier to understand on a webpage than through multi-step technician texts.
 - Unauthenticated dashboard visits use a full-screen sign-in gate and do not reveal the application shell until `/auth/session` confirms access.
   - Reason: technicians need an unmistakable next step on mobile, and protected dashboard content should not flash while Sentinel checks the session.
+- Expired dashboard sessions transition the whole UI back to the sign-in page on any `401`, and the app rechecks the session when a phone returns to the foreground.
+  - Reason: leaving stale authenticated chrome visible after the server session expires is confusing and can make technicians believe unavailable actions are still usable.
 - Dashboard static responses use a no-store policy for `/` and all SPA fallback routes, not only named asset paths.
   - Reason: Google sign-in returns to `/`, and stale homepage HTML can otherwise omit newly deployed navigation until the user manually refreshes.
 - A missing/mismatched mobile OAuth session restarts Google sign-in once and then fails back to the branded login page; Sentinel does not accept an unbound OAuth state as a fallback.
