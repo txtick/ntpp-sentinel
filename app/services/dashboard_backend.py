@@ -4115,7 +4115,7 @@ def _jarrett_repair_commissions(cur: Any, range_start: date, range_end: date) ->
             ) p ON TRUE
         )
         SELECT *,
-               round(GREATEST(COALESCE(subtotal_amount,0)-COALESCE(total_cost,0),0)*%s,2) AS commission_amount
+               round((GREATEST(COALESCE(subtotal_amount,0)-COALESCE(total_cost,0),0)*%s)::numeric,2) AS commission_amount
         FROM matched
         ORDER BY service_date, customer_name
         """,
@@ -4204,6 +4204,16 @@ def get_labor_payroll(
                       AND w.complete_time IS NOT NULL
                       AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
                       AND lower(COALESCE(wt.description, '')) = 'filter clean'
+                      AND (
+                          NOT EXISTS (
+                              SELECT 1
+                              FROM tech_lookup jarrett
+                              WHERE jarrett.tech_id = w.source_account_id
+                                AND lower(COALESCE(jarrett.first_name, '')) = 'jarrett'
+                                AND lower(COALESCE(jarrett.last_name, '')) = 'mundy'
+                          )
+                          OR w.service_date::date >= %s
+                      )
                 ),
                 filter_clean_rollup AS (
                     SELECT
@@ -4230,6 +4240,16 @@ def get_labor_payroll(
                           AND cal.source_created_by_account_id IS NOT NULL
                           AND cal.source_related_entity_id IS NOT NULL
                           AND existing.source_work_order_id IS NULL
+                          AND (
+                              NOT EXISTS (
+                                  SELECT 1
+                                  FROM tech_lookup jarrett
+                                  WHERE jarrett.tech_id = cal.source_created_by_account_id
+                                    AND lower(COALESCE(jarrett.first_name, '')) = 'jarrett'
+                                    AND lower(COALESCE(jarrett.last_name, '')) = 'mundy'
+                              )
+                              OR (cal.source_created_at AT TIME ZONE %s)::date >= %s
+                          )
                     ) evidence
                     JOIN tech_lookup tl ON tl.tech_id = evidence.tech_id
                     GROUP BY evidence.tech_id
@@ -4253,7 +4273,16 @@ def get_labor_payroll(
                 LEFT JOIN filter_clean_rollup fc ON fc.tech_id = a.tech_id
                 ORDER BY tl.tech_name ASC, tl.tech_id ASC
                 """,
-                [range_start, range_end, DASHBOARD_TIMEZONE, range_start, range_end],
+                [
+                    range_start,
+                    range_end,
+                    JARRETT_COMMISSION_CUTOFF,
+                    DASHBOARD_TIMEZONE,
+                    range_start,
+                    range_end,
+                    DASHBOARD_TIMEZONE,
+                    JARRETT_COMMISSION_CUTOFF,
+                ],
             )
             rows = [dict(row) for row in cur.fetchall()]
             repair_commissions = _jarrett_repair_commissions(cur, range_start, range_end)
@@ -4286,6 +4315,8 @@ def get_labor_payroll(
         if pool_count <= 0 and filter_clean_count <= 0 and not (is_jarrett and repair_commissions["payable_total"] > 0):
             continue
         if is_salary and not include_salary and not is_jarrett:
+            continue
+        if is_jarrett and filter_clean_count <= 0 and repair_commissions["payable_total"] <= 0:
             continue
         regular_pool_count = min(pool_count, LABOR_REGULAR_POOL_CAP)
         commission_pool_count = max(0, pool_count - LABOR_REGULAR_POOL_CAP)
