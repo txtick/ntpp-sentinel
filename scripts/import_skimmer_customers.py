@@ -698,6 +698,14 @@ TABLE_NAME_ALIASES = {
     "quoteitem": "quote_items",
     "quote_item": "quote_items",
     "quote_items": "quote_items",
+    "invoice": "invoices",
+    "invoices": "invoices",
+    "invoicelocation": "invoice_locations",
+    "invoice_locations": "invoice_locations",
+    "invoiceitem": "invoice_items",
+    "invoice_items": "invoice_items",
+    "payment": "payments",
+    "payments": "payments",
 }
 
 
@@ -1259,9 +1267,9 @@ QUOTE_ITEM_UPSERT_SQL = """
     INSERT INTO sk_quote_item (
         source_system, source_quote_item_id, source_quote_location_id,
         source_quote_id, item_name, description, quantity, unit_price,
-        total_price, sequence, is_taxable, source_product_id,
+        unit_cost, total_price, sequence, is_taxable, source_product_id,
         source_work_order_type_id, company_id, raw_json
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (source_system, source_quote_item_id) DO UPDATE SET
         source_quote_location_id = EXCLUDED.source_quote_location_id,
         source_quote_id = EXCLUDED.source_quote_id,
@@ -1269,6 +1277,7 @@ QUOTE_ITEM_UPSERT_SQL = """
         description = EXCLUDED.description,
         quantity = EXCLUDED.quantity,
         unit_price = EXCLUDED.unit_price,
+        unit_cost = EXCLUDED.unit_cost,
         total_price = EXCLUDED.total_price,
         sequence = EXCLUDED.sequence,
         is_taxable = EXCLUDED.is_taxable,
@@ -1360,6 +1369,7 @@ def _quote_item_params(row, quote_id_map, source_system="skimmer"):
         row_get(row, "Description"),
         row_get(row, "Quantity"),
         row_get(row, "Rate"),
+        row_get(row, "Cost"),
         # total_price: Quantity * Rate (Cost is wholesale/internal cost, not the line total)
         (row_get(row, "Quantity") or 0) * (row_get(row, "Rate") or 0) if row_get(row, "Rate") is not None else None,
         row_get(row, "Sequence"),
@@ -1450,6 +1460,105 @@ def import_quote_items(pg_conn, sqlite_conn, source_system="skimmer"):
         log(f"quote_items chunk={chunk_count} rows={len(rows)} elapsed_ms={round((time.perf_counter() - chunk_started_at) * 1000, 1)}")
     log(f"quote_items imported={imported} chunks={chunk_count} total_elapsed_ms={round((time.perf_counter() - started_at) * 1000, 1)}")
     return imported
+
+
+INVOICE_UPSERT_SQL = """
+    INSERT INTO sk_invoice (
+        source_system, source_invoice_id, source_customer_id, invoice_number,
+        invoice_date, subtotal_amount, discount_total, tax_amount, total_amount,
+        amount_due, payment_status, paid_amount, source_quote_id, is_deleted, raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_invoice_id) DO UPDATE SET
+        source_customer_id=EXCLUDED.source_customer_id, invoice_number=EXCLUDED.invoice_number,
+        invoice_date=EXCLUDED.invoice_date, subtotal_amount=EXCLUDED.subtotal_amount,
+        discount_total=EXCLUDED.discount_total, tax_amount=EXCLUDED.tax_amount,
+        total_amount=EXCLUDED.total_amount, amount_due=EXCLUDED.amount_due,
+        payment_status=EXCLUDED.payment_status, paid_amount=EXCLUDED.paid_amount,
+        source_quote_id=EXCLUDED.source_quote_id, is_deleted=EXCLUDED.is_deleted,
+        raw_json=EXCLUDED.raw_json, updated_at=NOW()
+"""
+
+INVOICE_LOCATION_UPSERT_SQL = """
+    INSERT INTO sk_invoice_location (
+        source_system, source_invoice_location_id, source_invoice_id,
+        source_service_location_id, is_deleted, raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_invoice_location_id) DO UPDATE SET
+        source_invoice_id=EXCLUDED.source_invoice_id,
+        source_service_location_id=EXCLUDED.source_service_location_id,
+        is_deleted=EXCLUDED.is_deleted, raw_json=EXCLUDED.raw_json, updated_at=NOW()
+"""
+
+INVOICE_ITEM_UPSERT_SQL = """
+    INSERT INTO sk_invoice_item (
+        source_system, source_invoice_item_id, source_invoice_location_id,
+        source_invoice_id, item_name, quantity, unit_price, cost_quantity,
+        unit_cost, subtotal_amount, source_work_order_id,
+        source_work_order_type_id, is_deleted, raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_invoice_item_id) DO UPDATE SET
+        source_invoice_location_id=EXCLUDED.source_invoice_location_id,
+        source_invoice_id=EXCLUDED.source_invoice_id, item_name=EXCLUDED.item_name,
+        quantity=EXCLUDED.quantity, unit_price=EXCLUDED.unit_price,
+        cost_quantity=EXCLUDED.cost_quantity, unit_cost=EXCLUDED.unit_cost,
+        subtotal_amount=EXCLUDED.subtotal_amount,
+        source_work_order_id=EXCLUDED.source_work_order_id,
+        source_work_order_type_id=EXCLUDED.source_work_order_type_id,
+        is_deleted=EXCLUDED.is_deleted, raw_json=EXCLUDED.raw_json, updated_at=NOW()
+"""
+
+PAYMENT_UPSERT_SQL = """
+    INSERT INTO sk_payment (
+        source_system, source_payment_id, source_customer_id, source_invoice_id,
+        payment_date, status, amount, amount_refunded_online,
+        amount_refunded_offline, is_deleted, raw_json
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (source_system, source_payment_id) DO UPDATE SET
+        source_customer_id=EXCLUDED.source_customer_id,
+        source_invoice_id=EXCLUDED.source_invoice_id, payment_date=EXCLUDED.payment_date,
+        status=EXCLUDED.status, amount=EXCLUDED.amount,
+        amount_refunded_online=EXCLUDED.amount_refunded_online,
+        amount_refunded_offline=EXCLUDED.amount_refunded_offline,
+        is_deleted=EXCLUDED.is_deleted, raw_json=EXCLUDED.raw_json, updated_at=NOW()
+"""
+
+
+def _import_rows(pg_conn, sqlite_conn, select_sql, upsert_sql, param_builder):
+    imported = 0
+    for rows in _iter_sqlite_rows(sqlite_conn, select_sql):
+        imported += _executemany_upsert(pg_conn, upsert_sql, [param_builder(row) for row in rows])
+        pg_conn.commit()
+    return imported
+
+
+def import_invoices(pg_conn, sqlite_conn, source_system="skimmer"):
+    return _import_rows(pg_conn, sqlite_conn,
+        "SELECT id,CustomerId,InvoiceNumber,InvoiceDate,Subtotal,DiscountTotal,TaxAmount,Total,AmountDue,PaymentStatus,PaidAmount,QuoteId,Deleted FROM Invoice",
+        INVOICE_UPSERT_SQL,
+        lambda r: (source_system,r["id"],row_get(r,"CustomerId"),row_get(r,"InvoiceNumber"),row_get(r,"InvoiceDate"),row_get(r,"Subtotal"),row_get(r,"DiscountTotal"),row_get(r,"TaxAmount"),row_get(r,"Total"),row_get(r,"AmountDue"),row_get(r,"PaymentStatus"),row_get(r,"PaidAmount"),row_get(r,"QuoteId"),bool(row_get(r,"Deleted")),row_json(r)))
+
+
+def import_invoice_locations(pg_conn, sqlite_conn, source_system="skimmer"):
+    return _import_rows(pg_conn, sqlite_conn,
+        "SELECT id,InvoiceId,ServiceLocationId,Deleted FROM InvoiceLocation",
+        INVOICE_LOCATION_UPSERT_SQL,
+        lambda r: (source_system,r["id"],row_get(r,"InvoiceId"),row_get(r,"ServiceLocationId"),bool(row_get(r,"Deleted")),row_json(r)))
+
+
+def import_invoice_items(pg_conn, sqlite_conn, source_system="skimmer"):
+    cur = sqlite_conn.cursor(); cur.execute("SELECT id,InvoiceId FROM InvoiceLocation")
+    invoice_map = {str(r["id"]): str(r["InvoiceId"]) for r in cur.fetchall() if r["id"] and r["InvoiceId"]}
+    return _import_rows(pg_conn, sqlite_conn,
+        "SELECT id,InvoiceLocationId,Item,Quantity,Rate,CostQuantity,Cost,Subtotal,WorkOrderId,WorkOrderTypeId,Deleted FROM InvoiceItem",
+        INVOICE_ITEM_UPSERT_SQL,
+        lambda r: (source_system,r["id"],row_get(r,"InvoiceLocationId"),invoice_map.get(str(row_get(r,"InvoiceLocationId") or "")),row_get(r,"Item"),row_get(r,"Quantity"),row_get(r,"Rate"),row_get(r,"CostQuantity"),row_get(r,"Cost"),row_get(r,"Subtotal"),row_get(r,"WorkOrderId"),row_get(r,"WorkOrderTypeId"),bool(row_get(r,"Deleted")),row_json(r)))
+
+
+def import_payments(pg_conn, sqlite_conn, source_system="skimmer"):
+    return _import_rows(pg_conn, sqlite_conn,
+        "SELECT id,CustomerId,InvoiceId,PaymentDate,Status,Amount,AmountRefundedOnline,AmountRefundedOffline,Deleted FROM Payment",
+        PAYMENT_UPSERT_SQL,
+        lambda r: (source_system,r["id"],row_get(r,"CustomerId"),row_get(r,"InvoiceId"),row_get(r,"PaymentDate"),row_get(r,"Status"),row_get(r,"Amount"),row_get(r,"AmountRefundedOnline"),row_get(r,"AmountRefundedOffline"),bool(row_get(r,"Deleted")),row_json(r)))
 
 
 def import_customers(sqlite_conn, pg_conn, source_system="skimmer"):
@@ -1562,6 +1671,14 @@ def import_skimmer_data(sqlite_path, tables, source_system="skimmer"):
                 counts["quote_locations_imported"] = import_quote_locations(pg_conn, sqlite_conn, source_system=source_system)
             if "quote_items" in normalized_tables:
                 counts["quote_items_imported"] = import_quote_items(pg_conn, sqlite_conn, source_system=source_system)
+            if "invoices" in normalized_tables:
+                counts["invoices_imported"] = import_invoices(pg_conn, sqlite_conn, source_system=source_system)
+            if "invoice_locations" in normalized_tables:
+                counts["invoice_locations_imported"] = import_invoice_locations(pg_conn, sqlite_conn, source_system=source_system)
+            if "invoice_items" in normalized_tables:
+                counts["invoice_items_imported"] = import_invoice_items(pg_conn, sqlite_conn, source_system=source_system)
+            if "payments" in normalized_tables:
+                counts["payments_imported"] = import_payments(pg_conn, sqlite_conn, source_system=source_system)
             pg_conn.commit()
         except Exception as exc:
             pg_conn.rollback()
@@ -1618,6 +1735,10 @@ def main():
             "quotes",
             "quote_locations",
             "quote_items",
+            "invoices",
+            "invoice_locations",
+            "invoice_items",
+            "payments",
         ]
 
     counts = import_skimmer_data(args.sqlite, tables, source_system=args.source_system)

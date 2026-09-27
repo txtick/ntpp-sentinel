@@ -13,6 +13,15 @@ def test_standard_ingest_includes_sales_assist_quote_tables():
     assert "QuoteItem" in pipeline.IMPORT_TABLES
 
 
+def test_standard_ingest_includes_commission_billing_tables():
+    assert "Invoice" in pipeline.IMPORT_TABLES
+    assert "InvoiceLocation" in pipeline.IMPORT_TABLES
+    assert "InvoiceItem" in pipeline.IMPORT_TABLES
+    assert "Payment" in pipeline.IMPORT_TABLES
+    assert "Cost" in pipeline.REQUIRED_TABLE_COLUMNS["InvoiceItem"]
+    assert "PaymentStatus" in pipeline.REQUIRED_TABLE_COLUMNS["Invoice"]
+
+
 def test_standard_ingest_includes_customer_activity_log_for_labor_fallback():
     assert "CustomerActivityLog" in pipeline.IMPORT_TABLES
     assert "RelatedEntityId" in pipeline.REQUIRED_TABLE_COLUMNS["CustomerActivityLog"]

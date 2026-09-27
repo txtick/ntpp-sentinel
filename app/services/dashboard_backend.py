@@ -27,6 +27,9 @@ GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28").strip()
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "").strip()
 LABOR_POOL_RATE = float(os.getenv("LABOR_POOL_RATE", "16"))
 LABOR_FILTER_CLEAN_RATE = float(os.getenv("LABOR_FILTER_CLEAN_RATE", "25"))
+JARRETT_FILTER_CLEAN_RATE = float(os.getenv("JARRETT_FILTER_CLEAN_RATE", "8"))
+JARRETT_REPAIR_MARGIN_RATE = float(os.getenv("JARRETT_REPAIR_MARGIN_RATE", "0.08"))
+JARRETT_COMMISSION_CUTOFF = date.fromisoformat(os.getenv("JARRETT_COMMISSION_CUTOFF", "2026-09-27"))
 LABOR_REGULAR_POOL_CAP = max(0, int(os.getenv("LABOR_REGULAR_POOL_CAP", "40")))
 LABOR_SALARY_TECH_NAMES = tuple(
     part.strip().lower()
@@ -4035,6 +4038,122 @@ def list_technicians(
     }
 
 
+def _jarrett_repair_commissions(cur: Any, range_start: date, range_end: date) -> Dict[str, Any]:
+    cur.execute(
+        """
+        WITH jarrett AS (
+            SELECT source_account_id
+            FROM technicians
+            WHERE source_system = 'skimmer'
+              AND lower(COALESCE(first_name, '')) = 'jarrett'
+              AND lower(COALESCE(last_name, '')) = 'mundy'
+            LIMIT 1
+        ), repairs AS (
+            SELECT w.source_work_order_id, w.service_date, w.complete_time,
+                   sl.source_customer_id,
+                   COALESCE(NULLIF(trim(concat_ws(' ',c.first_name,c.last_name)),''),c.company_name,sl.source_customer_id) AS customer_name,
+                   w.work_needed
+            FROM sk_work_order w
+            JOIN jarrett j ON j.source_account_id = w.source_account_id
+            JOIN sk_work_order_type wt
+              ON wt.source_system=w.source_system
+             AND wt.source_work_order_type_id=w.source_work_order_type_id
+            JOIN sk_service_location sl
+              ON sl.source_system=w.source_system
+             AND sl.source_location_id=w.source_service_location_id
+            LEFT JOIN customers c
+              ON c.source_system=w.source_system AND c.source_customer_id=sl.source_customer_id
+            WHERE w.source_system='skimmer'
+              AND lower(COALESCE(wt.description,''))='scheduled repair'
+              AND COALESCE(w.is_deleted,FALSE)=FALSE
+              AND w.complete_time >= %s::date
+        ), matched AS (
+            SELECT r.*, q.source_quote_id, q.quote_number, q.job_id,
+                   q.subtotal_amount,
+                   qc.total_cost,
+                   i.source_invoice_id, i.invoice_number, i.invoice_date,
+                   i.payment_status, i.amount_due, i.paid_amount,
+                   p.payment_date,
+                   q.match_count AS quote_match_count,
+                   i.match_count AS invoice_match_count
+            FROM repairs r
+            LEFT JOIN LATERAL (
+                SELECT q.*,
+                       count(*) OVER () AS match_count
+                FROM sk_quote q
+                WHERE q.source_system='skimmer'
+                  AND q.source_customer_id=r.source_customer_id
+                  AND q.job_id IS NOT NULL AND trim(q.job_id)<>''
+                  AND COALESCE(q.is_deleted,FALSE)=FALSE
+                  AND q.quote_date::date BETWEEN r.service_date::date - 30 AND r.service_date::date + 14
+                ORDER BY abs(q.quote_date::date-r.service_date::date), q.quote_date DESC
+                LIMIT 1
+            ) q ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT round(sum(COALESCE(qi.quantity,1)*COALESCE(qi.unit_cost,0)),2) AS total_cost
+                FROM sk_quote_item qi
+                WHERE qi.source_system='skimmer' AND qi.source_quote_id=q.source_quote_id
+            ) qc ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT i.*,
+                       count(*) OVER () AS match_count
+                FROM sk_invoice i
+                WHERE i.source_system='skimmer'
+                  AND i.source_customer_id=r.source_customer_id
+                  AND COALESCE(i.is_deleted,FALSE)=FALSE
+                  AND i.invoice_date::date BETWEEN r.service_date::date - 3 AND r.service_date::date + 14
+                  AND i.subtotal_amount=q.subtotal_amount
+                ORDER BY abs(i.invoice_date::date-r.service_date::date), i.invoice_date
+                LIMIT 1
+            ) i ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT max(payment_date) FILTER (WHERE lower(COALESCE(status,''))='paid') AS payment_date
+                FROM sk_payment p
+                WHERE p.source_system='skimmer'
+                  AND p.source_invoice_id=i.source_invoice_id
+                  AND COALESCE(p.is_deleted,FALSE)=FALSE
+            ) p ON TRUE
+        )
+        SELECT *,
+               round(GREATEST(COALESCE(subtotal_amount,0)-COALESCE(total_cost,0),0)*%s,2) AS commission_amount
+        FROM matched
+        ORDER BY service_date, customer_name
+        """,
+        [JARRETT_COMMISSION_CUTOFF, JARRETT_REPAIR_MARGIN_RATE],
+    )
+    rows = [dict(row) for row in cur.fetchall()]
+    payable: List[Dict[str, Any]] = []
+    outstanding: List[Dict[str, Any]] = []
+    review: List[Dict[str, Any]] = []
+    for row in rows:
+        subtotal = float(row.get("subtotal_amount") or 0)
+        cost = float(row.get("total_cost") or 0)
+        row["subtotal_amount"] = subtotal
+        row["total_cost"] = cost
+        row["margin_amount"] = round(max(subtotal - cost, 0), 2)
+        row["commission_amount"] = float(row.get("commission_amount") or 0)
+        paid = str(row.get("payment_status") or "").lower() == "paid" and float(row.get("amount_due") or 0) <= 0
+        payment_date = row.get("payment_date")
+        if not row.get("source_quote_id") or not row.get("source_invoice_id") or int(row.get("quote_match_count") or 0) != 1 or int(row.get("invoice_match_count") or 0) != 1 or cost <= 0:
+            row["status"] = "review"
+            review.append(row)
+        elif paid and payment_date and range_start <= payment_date.astimezone(ZoneInfo(DASHBOARD_TIMEZONE)).date() <= range_end:
+            row["status"] = "payable"
+            payable.append(row)
+        elif not paid:
+            row["status"] = "outstanding"
+            outstanding.append(row)
+    return {
+        "cutoff_date": JARRETT_COMMISSION_CUTOFF.isoformat(),
+        "margin_rate": JARRETT_REPAIR_MARGIN_RATE,
+        "payable": payable,
+        "outstanding": outstanding,
+        "review": review,
+        "payable_total": round(sum(item["commission_amount"] for item in payable), 2),
+        "outstanding_total": round(sum(item["commission_amount"] for item in outstanding), 2),
+    }
+
+
 def get_labor_payroll(
     *,
     start_date: Optional[str] = None,
@@ -4084,10 +4203,7 @@ def get_labor_payroll(
                       AND COALESCE(w.is_deleted, FALSE) = FALSE
                       AND w.complete_time IS NOT NULL
                       AND w.complete_time >= TIMESTAMPTZ '2011-01-01 00:00:00+00'
-                      AND (
-                          lower(COALESCE(wt.description, '')) = 'filter clean'
-                          OR lower(COALESCE(w.work_needed, '')) LIKE '%%filter clean%%'
-                      )
+                      AND lower(COALESCE(wt.description, '')) = 'filter clean'
                 ),
                 filter_clean_rollup AS (
                     SELECT
@@ -4140,6 +4256,7 @@ def get_labor_payroll(
                 [range_start, range_end, DASHBOARD_TIMEZONE, range_start, range_end],
             )
             rows = [dict(row) for row in cur.fetchall()]
+            repair_commissions = _jarrett_repair_commissions(cur, range_start, range_end)
 
     items: List[Dict[str, Any]] = []
     summary = {
@@ -4163,20 +4280,23 @@ def get_labor_payroll(
         row = row_map.get(tech_id, {"tech_id": tech_id, "tech_name": api_counts.get(tech_id, {}).get("tech_name") or tech_id})
         api_row = api_counts.get(tech_id, {})
         is_salary = _is_salary_tech(row)
+        is_jarrett = str(row.get("first_name") or "").strip().lower() == "jarrett" and str(row.get("last_name") or "").strip().lower() == "mundy"
         pool_count = int(api_row.get("pool_count") or 0)
         filter_clean_count = int(row.get("filter_clean_count") or 0)
-        if pool_count <= 0 and filter_clean_count <= 0:
+        if pool_count <= 0 and filter_clean_count <= 0 and not (is_jarrett and repair_commissions["payable_total"] > 0):
             continue
-        if is_salary and not include_salary:
+        if is_salary and not include_salary and not is_jarrett:
             continue
         regular_pool_count = min(pool_count, LABOR_REGULAR_POOL_CAP)
         commission_pool_count = max(0, pool_count - LABOR_REGULAR_POOL_CAP)
 
         regular_pool_pay = 0.0 if is_salary else regular_pool_count * LABOR_POOL_RATE
         commission_pool_pay = 0.0 if is_salary else commission_pool_count * LABOR_POOL_RATE
-        filter_clean_pay = 0.0 if is_salary else filter_clean_count * LABOR_FILTER_CLEAN_RATE
-        gusto_commission_amount = commission_pool_pay + filter_clean_pay
-        total_pay = regular_pool_pay + commission_pool_pay + filter_clean_pay
+        jarrett_filter_count = filter_clean_count if is_jarrett and range_end >= JARRETT_COMMISSION_CUTOFF else 0
+        filter_clean_pay = jarrett_filter_count * JARRETT_FILTER_CLEAN_RATE if is_jarrett else (0.0 if is_salary else filter_clean_count * LABOR_FILTER_CLEAN_RATE)
+        repair_commission_pay = repair_commissions["payable_total"] if is_jarrett else 0.0
+        gusto_commission_amount = commission_pool_pay + filter_clean_pay + repair_commission_pay
+        total_pay = regular_pool_pay + commission_pool_pay + filter_clean_pay + repair_commission_pay
 
         item = {
             "tech_id": row.get("tech_id"),
@@ -4195,16 +4315,17 @@ def get_labor_payroll(
             "regular_pool_pay": regular_pool_pay,
             "commission_pool_pay": commission_pool_pay,
             "filter_clean_pay": filter_clean_pay,
+            "repair_commission_pay": repair_commission_pay,
             "total_pay": total_pay,
             "gusto_regular_hours": 0 if is_salary else regular_pool_count,
-            "gusto_commission_amount": 0.0 if is_salary else gusto_commission_amount,
-            "notes": "Salary tech" if is_salary else "",
+            "gusto_commission_amount": gusto_commission_amount if is_jarrett else (0.0 if is_salary else gusto_commission_amount),
+            "notes": "Salary tech · Jarrett commissions included" if is_jarrett else ("Salary tech" if is_salary else ""),
         }
         items.append(item)
 
         summary["tech_count"] += 1
         summary["salary_tech_count"] += 1 if is_salary else 0
-        summary["payable_tech_count"] += 0 if is_salary else 1
+        summary["payable_tech_count"] += 1 if (not is_salary or is_jarrett) else 0
         summary["total_pools"] += pool_count
         summary["total_regular_pools"] += regular_pool_count
         summary["total_commission_pools"] += commission_pool_count
@@ -4227,6 +4348,9 @@ def get_labor_payroll(
         "pay_rules": {
             "pool_rate": LABOR_POOL_RATE,
             "filter_clean_rate": LABOR_FILTER_CLEAN_RATE,
+            "jarrett_filter_clean_rate": JARRETT_FILTER_CLEAN_RATE,
+            "jarrett_repair_margin_rate": JARRETT_REPAIR_MARGIN_RATE,
+            "jarrett_commission_cutoff": JARRETT_COMMISSION_CUTOFF.isoformat(),
             "regular_pool_cap": LABOR_REGULAR_POOL_CAP,
             "salary_tech_names": list(LABOR_SALARY_TECH_NAMES),
             "gusto_regular_unit_label": "hours",
@@ -4234,6 +4358,7 @@ def get_labor_payroll(
         },
         "summary": summary,
         "items": items,
+        "jarrett_repair_commissions": repair_commissions,
         "filters": {
             "include_salary": bool(include_salary),
         },

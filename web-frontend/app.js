@@ -3182,6 +3182,23 @@ function renderLabor() {
   const rules = result.pay_rules || {};
   const items = result.items || [];
   const range = result.range || {};
+  const repairs = result.jarrett_repair_commissions || {};
+  const repairRows = (rows, emptyText) =>
+    (rows || [])
+      .map(
+        (item) => `
+          <div class="payroll-table-row repair-commission-row">
+            <div><strong>${escapeHtml(item.customer_name || "Unknown customer")}</strong><div class="muted">${escapeHtml(item.work_needed || "Scheduled Repair")}</div></div>
+            <div>${escapeHtml(formatDate(item.service_date))}</div>
+            <div>${escapeHtml(item.invoice_number || "—")}</div>
+            <div>${escapeHtml(currency(item.subtotal_amount) || "$0.00")}</div>
+            <div>${escapeHtml(currency(item.total_cost) || "$0.00")}</div>
+            <div>${escapeHtml(currency(item.margin_amount) || "$0.00")}</div>
+            <div><strong>${escapeHtml(currency(item.commission_amount) || "$0.00")}</strong></div>
+            <div>${badge(item.status || "review", item.status === "payable" ? "acknowledged" : item.status === "outstanding" ? "info" : "warning")}</div>
+          </div>`,
+      )
+      .join("") || `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
 
   els.mainPanel.innerHTML = `
     <section class="section-card">
@@ -3193,6 +3210,7 @@ function renderLabor() {
         <div class="meta-stack">
           <div class="meta-row"><span>Pool Rate</span><strong>${escapeHtml(currency(rules.pool_rate) || "$0.00")}</strong></div>
           <div class="meta-row"><span>Filter Clean Rate</span><strong>${escapeHtml(currency(rules.filter_clean_rate) || "$0.00")}</strong></div>
+          <div class="meta-row"><span>Jarrett Filter Clean</span><strong>${escapeHtml(currency(rules.jarrett_filter_clean_rate) || "$8.00")}</strong></div>
         </div>
       </div>
       <div class="stat-grid">
@@ -3249,6 +3267,20 @@ function renderLabor() {
           }
         </div>
       </div>
+    </section>
+    <section class="section-card">
+      <div class="item-card-header"><div><h3>Jarrett Repair Commissions</h3><p class="panel-subtitle">8% of pre-tax, pre-discount job margin. Only fully paid invoices enter the selected payroll week. Tracking began ${escapeHtml(repairs.cutoff_date || rules.jarrett_commission_cutoff || "2026-09-27")}.</p></div><div class="meta-stack"><div class="meta-row"><span>Pay This Week</span><strong>${escapeHtml(currency(repairs.payable_total) || "$0.00")}</strong></div><div class="meta-row"><span>Still Outstanding</span><strong>${escapeHtml(currency(repairs.outstanding_total) || "$0.00")}</strong></div></div></div>
+      <h4>Pay This Week</h4>
+      <div class="payroll-table-wrap"><div class="payroll-table">
+        <div class="payroll-table-row payroll-table-head repair-commission-row"><div>Customer / Job</div><div>Completed</div><div>Invoice</div><div>Subtotal</div><div>Costs</div><div>Margin</div><div>Commission</div><div>Status</div></div>
+        ${repairRows(repairs.payable, "No repair commissions became payable in this payroll range.")}
+      </div></div>
+      <h4>Outstanding Unpaid Repairs</h4>
+      <div class="payroll-table-wrap"><div class="payroll-table">
+        <div class="payroll-table-row payroll-table-head repair-commission-row"><div>Customer / Job</div><div>Completed</div><div>Invoice</div><div>Subtotal</div><div>Costs</div><div>Margin</div><div>Commission</div><div>Status</div></div>
+        ${repairRows(repairs.outstanding, "No unpaid repair commissions are outstanding.")}
+      </div></div>
+      ${(repairs.review || []).length ? `<h4>Needs Review</h4><div class="payroll-table-wrap"><div class="payroll-table"><div class="payroll-table-row payroll-table-head repair-commission-row"><div>Customer / Job</div><div>Completed</div><div>Invoice</div><div>Subtotal</div><div>Costs</div><div>Margin</div><div>Commission</div><div>Status</div></div>${repairRows(repairs.review, "")}</div></div>` : ""}
     </section>
   `;
 }

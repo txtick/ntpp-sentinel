@@ -142,6 +142,10 @@ REQUIRED_TABLE_COLUMNS: Dict[str, List[str]] = {
     "Quote": ["id", "CustomerId", "Status", "Total", "QuoteDate"],
     "QuoteLocation": ["id", "QuoteId"],
     "QuoteItem": ["id", "QuoteLocationId", "Item", "Quantity", "Rate"],
+    "Invoice": ["id", "CustomerId", "InvoiceNumber", "InvoiceDate", "Subtotal", "PaymentStatus", "PaidAmount"],
+    "InvoiceLocation": ["id", "InvoiceId", "ServiceLocationId"],
+    "InvoiceItem": ["id", "InvoiceLocationId", "Item", "Quantity", "Rate", "Cost", "Subtotal"],
+    "Payment": ["id", "CustomerId", "InvoiceId", "PaymentDate", "Status", "Amount"],
     "WorkOrder": ["id", "WorkOrderTypeId", "ServiceLocationId", "WorkNeeded", "ServiceDate", "CompleteTime", "Price"],
     "CustomerActivityLog": [
         "id",
@@ -171,6 +175,10 @@ IMPORT_TABLES = [
     "Quote",
     "QuoteLocation",
     "QuoteItem",
+    "Invoice",
+    "InvoiceLocation",
+    "InvoiceItem",
+    "Payment",
 ]
 
 CRITICAL_COUNT_KEY_MAP = {

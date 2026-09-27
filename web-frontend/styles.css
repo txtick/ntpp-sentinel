@@ -1427,6 +1427,10 @@ textarea {
   opacity: 0.72;
 }
 
+.repair-commission-row {
+  grid-template-columns: minmax(220px, 1.8fr) repeat(7, minmax(90px, 0.8fr));
+}
+
 .problem-pools-row,
 .problem-pools-head {
   grid-template-columns:

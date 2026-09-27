@@ -943,6 +943,7 @@ def ensure_sales_assist_schema() -> None:
                     description TEXT,
                     quantity NUMERIC,
                     unit_price NUMERIC,
+                    unit_cost NUMERIC,
                     total_price NUMERIC,
                     sequence INTEGER,
                     is_taxable BOOLEAN,
@@ -956,6 +957,7 @@ def ensure_sales_assist_schema() -> None:
                 )
                 """
             )
+            cur.execute("ALTER TABLE sk_quote_item ADD COLUMN IF NOT EXISTS unit_cost NUMERIC")
             cur.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_sk_quote_item_quote
@@ -968,6 +970,96 @@ def ensure_sales_assist_schema() -> None:
                 ON sk_quote_item(source_system, source_quote_location_id)
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_invoice (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_invoice_id TEXT NOT NULL,
+                    source_customer_id TEXT,
+                    invoice_number INTEGER,
+                    invoice_date TIMESTAMPTZ,
+                    subtotal_amount NUMERIC,
+                    discount_total NUMERIC,
+                    tax_amount NUMERIC,
+                    total_amount NUMERIC,
+                    amount_due NUMERIC,
+                    payment_status TEXT,
+                    paid_amount NUMERIC,
+                    source_quote_id TEXT,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_invoice_id)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sk_invoice_customer_date ON sk_invoice(source_system, source_customer_id, invoice_date DESC)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_invoice_location (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_invoice_location_id TEXT NOT NULL,
+                    source_invoice_id TEXT NOT NULL,
+                    source_service_location_id TEXT,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_invoice_location_id)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sk_invoice_location_invoice ON sk_invoice_location(source_system, source_invoice_id)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_invoice_item (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_invoice_item_id TEXT NOT NULL,
+                    source_invoice_location_id TEXT NOT NULL,
+                    source_invoice_id TEXT,
+                    item_name TEXT,
+                    quantity NUMERIC,
+                    unit_price NUMERIC,
+                    cost_quantity NUMERIC,
+                    unit_cost NUMERIC,
+                    subtotal_amount NUMERIC,
+                    source_work_order_id TEXT,
+                    source_work_order_type_id TEXT,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_invoice_item_id)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sk_invoice_item_invoice ON sk_invoice_item(source_system, source_invoice_id)")
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sk_payment (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_system TEXT NOT NULL DEFAULT 'skimmer',
+                    source_payment_id TEXT NOT NULL,
+                    source_customer_id TEXT,
+                    source_invoice_id TEXT,
+                    payment_date TIMESTAMPTZ,
+                    status TEXT,
+                    amount NUMERIC,
+                    amount_refunded_online NUMERIC,
+                    amount_refunded_offline NUMERIC,
+                    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    raw_json JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_system, source_payment_id)
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_sk_payment_invoice_date ON sk_payment(source_system, source_invoice_id, payment_date DESC)")
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS quote_ai_sales_notes (

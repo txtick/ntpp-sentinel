@@ -160,6 +160,9 @@ Examples:
 
 ## Labor / Skimmer Route Cache
 
+- The nightly Skimmer export can leave `Invoice.QuoteId` and `InvoiceItem.WorkOrderId` blank even when a Job quote, completed repair work order, and invoice clearly represent the same work. Jarrett repair commission matching therefore uses customer, nearby dates, exact subtotal, and requires one unique quote and invoice match; missing costs or ambiguous matches go to `Needs Review` instead of payroll.
+- The export does not include a `Job` table. `Quote.JobId` is the only exported Job identifier.
+
 - Skimmer daily route API responses are cached in-process for 24 hours per calendar day.
 - Past days are immutable so 24 hours is safe. Today's routes also cache for 24 hours since payroll is only reviewed on Monday/Tuesday.
 - Cache is in-memory and resets on container restart. First load after a restart will hit the Skimmer API for each day in the selected range.

@@ -21,6 +21,11 @@ Keep entries short, but do not skip them.
 
 ## Labor / Payroll
 
+- Jarrett repair commissions start fresh on `2026-09-27`, use `8%` of pre-tax/pre-discount job margin, and become payable in the week the invoice is fully paid; earlier completed jobs are never backfilled.
+  - Reason: repair commissions must follow collected revenue while retaining unpaid completed repairs until a later payment, without duplicating the advance paid for the prior week.
+- Jarrett receives `$8` per completed standalone `Filter Clean` work order without an invoice/payment requirement; other cleaning technicians retain the existing `$25` rate.
+  - Reason: some filter cleans are included in monthly service and are not separately invoiced, and Jarrett's rate differs from cleaning-tech payroll.
+
 - Current-week Labor cleanings use the live Skimmer route API, not the nightly SQLite DB and not normalized Postgres stop counts.
   - Reason: this is what matched Skimmer's Labor report exactly.
 - Labor page treats stops/cleanings/pools interchangeably for payroll.

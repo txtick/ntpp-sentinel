@@ -12,6 +12,12 @@ This document captures business behavior that should remain stable unless intent
 
 ## Payroll / Labor
 
+- Jarrett repair/filter-clean commission tracking begins on `2026-09-27`; earlier work is not backfilled.
+- Jarrett repair commission is `8%` of job margin: `(subtotal before tax and discounts - line-item costs) * 0.08`.
+- A repair commission becomes payable only after the matching invoice is fully paid. Completed unpaid repairs remain visible until payment makes them payable in a later payroll week.
+- Jarrett receives `$8` for each completed `Filter Clean` work order, regardless of invoice/payment status. This is Jarrett-only; cleaning technicians remain at `$25` per completed filter clean.
+- A filter-clean line item inside a `Scheduled Repair` does not also earn the standalone `$8`; the work order type itself must be `Filter Clean`.
+
 - Payroll week is `Sunday -> Saturday`.
 - For this app, `pool`, `stop`, and Skimmer `cleaning` are treated interchangeably for technician payroll.
 - Current-week cleaning counts must follow the live Skimmer route API so the Labor page matches Skimmer's Labor report.
