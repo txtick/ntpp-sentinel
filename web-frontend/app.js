@@ -3189,7 +3189,7 @@ function renderLabor() {
         (item) => `
           <div class="payroll-table-row repair-commission-row">
             <div><strong>${escapeHtml(item.customer_name || "Unknown customer")}</strong><div class="muted">${escapeHtml(item.work_needed || "Scheduled Repair")}</div></div>
-            <div>${escapeHtml(formatDate(item.service_date))}</div>
+            <div>${escapeHtml(formatShortDate(item.service_date))}</div>
             <div>${escapeHtml(item.invoice_number || "—")}</div>
             <div>${escapeHtml(currency(item.subtotal_amount) || "$0.00")}</div>
             <div>${escapeHtml(currency(item.total_cost) || "$0.00")}</div>
