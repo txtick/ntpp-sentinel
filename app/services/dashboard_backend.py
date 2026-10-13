@@ -4048,35 +4048,40 @@ def _jarrett_repair_commissions(cur: Any, range_start: date, range_end: date) ->
               AND lower(COALESCE(first_name, '')) = 'jarrett'
               AND lower(COALESCE(last_name, '')) = 'mundy'
             LIMIT 1
-        ), repairs AS (
-            SELECT w.source_work_order_id, w.service_date, w.complete_time,
-                   sl.source_customer_id,
+        ), completed_work AS (
+            SELECT DISTINCT ON (cal.source_related_entity_id)
+                   cal.source_related_entity_id AS source_work_order_id,
+                   (cal.source_created_at AT TIME ZONE %s)::date AS completed_date,
+                   COALESCE(sl.source_customer_id, cal.source_customer_id) AS source_customer_id,
                    COALESCE(NULLIF(trim(concat_ws(' ',c.first_name,c.last_name)),''),c.company_name,sl.source_customer_id) AS customer_name,
-                   w.work_needed
-            FROM sk_work_order w
-            JOIN jarrett j ON j.source_account_id = w.source_account_id
-            JOIN sk_work_order_type wt
+                   COALESCE(w.work_needed, cal.description) AS work_needed,
+                   wt.description AS work_order_type
+            FROM sk_customer_activity_log cal
+            JOIN jarrett j ON j.source_account_id = cal.source_created_by_account_id
+            LEFT JOIN sk_work_order w
+              ON w.source_system=cal.source_system
+             AND w.source_work_order_id=cal.source_related_entity_id
+            LEFT JOIN sk_work_order_type wt
               ON wt.source_system=w.source_system
              AND wt.source_work_order_type_id=w.source_work_order_type_id
-            JOIN sk_service_location sl
+            LEFT JOIN sk_service_location sl
               ON sl.source_system=w.source_system
              AND sl.source_location_id=w.source_service_location_id
             LEFT JOIN customers c
-              ON c.source_system=w.source_system AND c.source_customer_id=sl.source_customer_id
-            WHERE w.source_system='skimmer'
-              AND lower(COALESCE(wt.description,''))='scheduled repair'
-              AND COALESCE(w.is_deleted,FALSE)=FALSE
-              AND w.complete_time >= %s::date
-        ), matched AS (
+              ON c.source_system=cal.source_system
+             AND c.source_customer_id=COALESCE(sl.source_customer_id, cal.source_customer_id)
+            WHERE cal.source_system='skimmer'
+              AND lower(COALESCE(cal.activity_type,''))='workorderfinished'
+              AND lower(COALESCE(cal.related_entity_type,''))='workorder'
+              AND COALESCE(cal.is_deleted,FALSE)=FALSE
+              AND (cal.source_created_at AT TIME ZONE %s)::date >= %s::date
+              AND lower(COALESCE(wt.description,'')) <> 'filter clean'
+            ORDER BY cal.source_related_entity_id, cal.source_created_at DESC
+        ), matched_work AS (
             SELECT r.*, q.source_quote_id, q.quote_number, q.job_id,
-                   q.subtotal_amount,
-                   qc.total_cost,
-                   i.source_invoice_id, i.invoice_number, i.invoice_date,
-                   i.payment_status, i.amount_due, i.paid_amount,
-                   p.payment_date,
-                   q.match_count AS quote_match_count,
-                   i.match_count AS invoice_match_count
-            FROM repairs r
+                   q.subtotal_amount, qc.total_cost,
+                   q.match_count AS quote_match_count
+            FROM completed_work r
             LEFT JOIN LATERAL (
                 SELECT q.*,
                        count(*) OVER () AS match_count
@@ -4085,8 +4090,9 @@ def _jarrett_repair_commissions(cur: Any, range_start: date, range_end: date) ->
                   AND q.source_customer_id=r.source_customer_id
                   AND q.job_id IS NOT NULL AND trim(q.job_id)<>''
                   AND COALESCE(q.is_deleted,FALSE)=FALSE
-                  AND q.quote_date::date BETWEEN r.service_date::date - 30 AND r.service_date::date + 14
-                ORDER BY abs(q.quote_date::date-r.service_date::date), q.quote_date DESC
+                  AND lower(COALESCE(q.status,''))='approved'
+                  AND q.quote_date::date BETWEEN r.completed_date - 60 AND r.completed_date + 14
+                ORDER BY abs(q.quote_date::date-r.completed_date), q.quote_date DESC
                 LIMIT 1
             ) q ON TRUE
             LEFT JOIN LATERAL (
@@ -4094,32 +4100,69 @@ def _jarrett_repair_commissions(cur: Any, range_start: date, range_end: date) ->
                 FROM sk_quote_item qi
                 WHERE qi.source_system='skimmer' AND qi.source_quote_id=q.source_quote_id
             ) qc ON TRUE
+            WHERE lower(COALESCE(r.work_order_type,'')) NOT IN ('pool inspection','go back','scheduled diagnostic')
+              AND (lower(COALESCE(r.work_order_type,''))='scheduled repair' OR q.source_quote_id IS NOT NULL)
+        ), jobs AS (
+            SELECT COALESCE(job_id, source_work_order_id) AS job_key,
+                   max(source_work_order_id) AS source_work_order_id,
+                   max(completed_date) AS service_date,
+                   max(source_customer_id) AS source_customer_id,
+                   max(customer_name) AS customer_name,
+                   string_agg(DISTINCT work_needed, ' / ') AS work_needed,
+                   string_agg(DISTINCT work_order_type, ', ') AS work_order_type,
+                   max(source_quote_id) AS source_quote_id,
+                   max(quote_number) AS quote_number,
+                   max(job_id) AS job_id,
+                   max(subtotal_amount) AS subtotal_amount,
+                   max(total_cost) AS total_cost,
+                   max(quote_match_count) AS quote_match_count
+            FROM matched_work
+            GROUP BY COALESCE(job_id, source_work_order_id)
+        ), matched AS (
+            SELECT j.*, invoices.source_invoice_id, invoices.invoice_number,
+                   invoices.invoice_date, invoices.payment_status,
+                   invoices.amount_due, invoices.paid_amount,
+                   invoices.payment_date, invoices.invoiced_subtotal,
+                   invoices.invoice_match_count
+            FROM jobs j
             LEFT JOIN LATERAL (
-                SELECT i.*,
-                       count(*) OVER () AS match_count
+                SELECT string_agg(i.source_invoice_id, ',') AS source_invoice_id,
+                       string_agg(i.invoice_number::text, ', ' ORDER BY i.invoice_number) AS invoice_number,
+                       max(i.invoice_date) AS invoice_date,
+                       CASE WHEN bool_and(lower(COALESCE(i.payment_status,''))='paid' AND COALESCE(i.amount_due,0)<=0)
+                            THEN 'Paid' ELSE 'Outstanding' END AS payment_status,
+                       sum(COALESCE(i.amount_due,0)) AS amount_due,
+                       sum(COALESCE(i.paid_amount,0)) AS paid_amount,
+                       max(p.payment_date) AS payment_date,
+                       sum(COALESCE(i.subtotal_amount,0)) AS invoiced_subtotal,
+                       count(*) AS invoice_match_count
                 FROM sk_invoice i
+                LEFT JOIN LATERAL (
+                    SELECT max(payment_date) FILTER (WHERE lower(COALESCE(status,''))='paid') AS payment_date
+                    FROM sk_payment p
+                    WHERE p.source_system='skimmer'
+                      AND p.source_invoice_id=i.source_invoice_id
+                      AND COALESCE(p.is_deleted,FALSE)=FALSE
+                ) p ON TRUE
                 WHERE i.source_system='skimmer'
-                  AND i.source_customer_id=r.source_customer_id
                   AND COALESCE(i.is_deleted,FALSE)=FALSE
-                  AND i.invoice_date::date BETWEEN r.service_date::date - 3 AND r.service_date::date + 14
-                  AND i.subtotal_amount=q.subtotal_amount
-                ORDER BY abs(i.invoice_date::date-r.service_date::date), i.invoice_date
-                LIMIT 1
-            ) i ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT max(payment_date) FILTER (WHERE lower(COALESCE(status,''))='paid') AS payment_date
-                FROM sk_payment p
-                WHERE p.source_system='skimmer'
-                  AND p.source_invoice_id=i.source_invoice_id
-                  AND COALESCE(p.is_deleted,FALSE)=FALSE
-            ) p ON TRUE
+                  AND (
+                      i.source_quote_id=j.source_quote_id
+                      OR (
+                          (i.source_quote_id IS NULL OR trim(i.source_quote_id)='')
+                          AND i.source_customer_id=j.source_customer_id
+                          AND i.invoice_date::date BETWEEN j.service_date - 3 AND j.service_date + 14
+                          AND i.subtotal_amount=j.subtotal_amount
+                      )
+                  )
+            ) invoices ON TRUE
         )
         SELECT *,
                round((GREATEST(COALESCE(subtotal_amount,0)-COALESCE(total_cost,0),0)*%s)::numeric,2) AS commission_amount
         FROM matched
         ORDER BY service_date, customer_name
         """,
-        [JARRETT_COMMISSION_CUTOFF, JARRETT_REPAIR_MARGIN_RATE],
+        [DASHBOARD_TIMEZONE, DASHBOARD_TIMEZONE, JARRETT_COMMISSION_CUTOFF, JARRETT_REPAIR_MARGIN_RATE],
     )
     rows = [dict(row) for row in cur.fetchall()]
     payable: List[Dict[str, Any]] = []
@@ -4132,15 +4175,19 @@ def _jarrett_repair_commissions(cur: Any, range_start: date, range_end: date) ->
         row["total_cost"] = cost
         row["margin_amount"] = round(max(subtotal - cost, 0), 2)
         row["commission_amount"] = float(row.get("commission_amount") or 0)
-        paid = str(row.get("payment_status") or "").lower() == "paid" and float(row.get("amount_due") or 0) <= 0
+        fully_invoiced = float(row.get("invoiced_subtotal") or 0) >= subtotal
+        paid = fully_invoiced and str(row.get("payment_status") or "").lower() == "paid" and float(row.get("amount_due") or 0) <= 0
         payment_date = row.get("payment_date")
-        if not row.get("source_quote_id") or not row.get("source_invoice_id") or int(row.get("quote_match_count") or 0) != 1 or int(row.get("invoice_match_count") or 0) != 1 or cost <= 0:
+        if not row.get("source_quote_id") or int(row.get("quote_match_count") or 0) != 1 or cost <= 0:
             row["status"] = "review"
             review.append(row)
-        elif paid and payment_date and range_start <= payment_date.astimezone(ZoneInfo(DASHBOARD_TIMEZONE)).date() <= range_end:
-            row["status"] = "payable"
-            payable.append(row)
-        elif not paid:
+        elif paid and payment_date:
+            paid_date = payment_date.astimezone(ZoneInfo(DASHBOARD_TIMEZONE)).date()
+            eligible_date = max(row["service_date"], paid_date)
+            if range_start <= eligible_date <= range_end:
+                row["status"] = "payable"
+                payable.append(row)
+        else:
             row["status"] = "outstanding"
             outstanding.append(row)
     return {

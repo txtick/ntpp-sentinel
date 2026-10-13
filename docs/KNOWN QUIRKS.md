@@ -160,7 +160,8 @@ Examples:
 
 ## Labor / Skimmer Route Cache
 
-- The nightly Skimmer export can leave `Invoice.QuoteId` and `InvoiceItem.WorkOrderId` blank even when a Job quote, completed repair work order, and invoice clearly represent the same work. Jarrett repair commission matching therefore uses customer, nearby dates, exact subtotal, and requires one unique quote and invoice match; missing costs or ambiguous matches go to `Needs Review` instead of payroll.
+- The nightly Skimmer export can leave `Invoice.QuoteId` and `InvoiceItem.WorkOrderId` blank even when a Job quote, completed repair work order, and invoice clearly represent the same work. Jarrett repair commission matching prefers all invoices directly linked to the quote; when that link is blank, it may use a unique customer/date/exact-subtotal fallback. Missing costs or ambiguous quote matches go to `Needs Review` instead of payroll.
+- A single sold Skimmer job can produce several completed work orders with specialized type names (for example, multiple drain-and-clean steps) and several deposit/progress invoices. Jarrett commission tracking must deduplicate by quote `JobId`, aggregate invoices linked to that quote, and must not require the work-order type to equal `Scheduled Repair` or one invoice subtotal to equal the full quote.
 - The export does not include a `Job` table. `Quote.JobId` is the only exported Job identifier.
 
 - Skimmer daily route API responses are cached in-process for 24 hours per calendar day.

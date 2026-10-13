@@ -14,7 +14,10 @@ This document captures business behavior that should remain stable unless intent
 
 - Jarrett repair/filter-clean commission tracking begins on `2026-09-27`; earlier work is not backfilled.
 - Jarrett repair commission is `8%` of job margin: `(subtotal before tax and discounts - line-item costs) * 0.08`.
+- Jarrett repair commissions are tracked once per approved quoted job he completes, even when the completing work order uses a specific operational type such as drain-and-clean instead of the literal `Scheduled Repair` type.
+- Standalone filter-clean work orders remain `$8` only and are excluded from repair-margin commission, even when a filter clean has a job quote.
 - A repair commission becomes payable only after the matching invoice is fully paid. Completed unpaid repairs remain visible until payment makes them payable in a later payroll week.
+- Split/progress invoices are aggregated by their quote. A job is not payable until the invoiced subtotal covers the approved quote subtotal and every included invoice is fully paid. If payment precedes completion, the commission enters the payroll week when Jarrett completes the job.
 - Jarrett receives `$8` for each completed `Filter Clean` work order, regardless of invoice/payment status. This is Jarrett-only; cleaning technicians remain at `$25` per completed filter clean.
 - A filter-clean line item inside a `Scheduled Repair` does not also earn the standalone `$8`; the work order type itself must be `Filter Clean`.
 

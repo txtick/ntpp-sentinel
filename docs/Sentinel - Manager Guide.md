@@ -90,7 +90,7 @@ Important details:
 - For `Cleanings` / pool stops, Sentinel follows the live Skimmer route API so the current week matches Skimmer's Labor report.
 - The nightly Skimmer DB refresh happens around `11:00pm`, so the SQLite copy may be behind for same-day reporting.
 - Filter cleans come from completed Skimmer work orders and are rolled into the final `Commission` dollar amount shown for Gusto entry. If Skimmer's export omits a completed work-order row, Sentinel verifies the matching `WorkOrderFinished` activity event and counts it once by work-order id.
-- Starting September 27, 2026, Jarrett's Labor view also shows repair commissions and unpaid repair invoices. Repairs pay 8% of pre-tax/pre-discount margin in the payroll week when the invoice becomes fully paid. Jarrett's standalone filter cleans pay $8 when completed; cleaning technicians remain at $25.
+- Starting September 27, 2026, Jarrett's Labor view also shows repair commissions and unpaid repair invoices. Repairs pay 8% of pre-tax/pre-discount margin once per approved quoted job he completes; specialized job work orders such as drain-and-clean steps are grouped into that one job. Split invoices must collectively cover the quote and all be fully paid. The commission enters the week of the later event: job completion or final payment. Jarrett's standalone filter cleans pay $8 when completed and do not also earn margin commission; cleaning technicians remain at $25.
 
 Alert opt-out:
 
