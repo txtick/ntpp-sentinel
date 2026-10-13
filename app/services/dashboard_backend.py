@@ -26,6 +26,7 @@ GHL_TOKEN = os.getenv("GHL_TOKEN", "").strip()
 GHL_VERSION = os.getenv("GHL_VERSION", "2021-07-28").strip()
 GHL_LOCATION_ID = os.getenv("GHL_LOCATION_ID", "").strip()
 LABOR_POOL_RATE = float(os.getenv("LABOR_POOL_RATE", "16"))
+JOHN_DONNELLY_POOL_RATE = float(os.getenv("JOHN_DONNELLY_POOL_RATE", "17"))
 LABOR_FILTER_CLEAN_RATE = float(os.getenv("LABOR_FILTER_CLEAN_RATE", "25"))
 JARRETT_FILTER_CLEAN_RATE = float(os.getenv("JARRETT_FILTER_CLEAN_RATE", "8"))
 JARRETT_REPAIR_MARGIN_RATE = float(os.getenv("JARRETT_REPAIR_MARGIN_RATE", "0.08"))
@@ -669,6 +670,15 @@ def _is_salary_tech(item: Dict[str, Any]) -> bool:
     if split_name:
         candidates.add(split_name[0])
     return any(candidate in LABOR_SALARY_TECH_NAMES for candidate in candidates if candidate)
+
+
+def _labor_pool_rate(item: Dict[str, Any]) -> float:
+    first_name = str(item.get("first_name") or "").strip().lower()
+    last_name = str(item.get("last_name") or "").strip().lower()
+    username = str(item.get("username") or "").strip().lower()
+    if (first_name == "john" and last_name == "donnelly") or username == "jdonnelly":
+        return JOHN_DONNELLY_POOL_RATE
+    return LABOR_POOL_RATE
 
 
 # Cache for Skimmer daily route responses. Past days are immutable; today refreshes every 10 min.
@@ -4367,9 +4377,10 @@ def get_labor_payroll(
             continue
         regular_pool_count = min(pool_count, LABOR_REGULAR_POOL_CAP)
         commission_pool_count = max(0, pool_count - LABOR_REGULAR_POOL_CAP)
+        pool_rate = _labor_pool_rate(row)
 
-        regular_pool_pay = 0.0 if is_salary else regular_pool_count * LABOR_POOL_RATE
-        commission_pool_pay = 0.0 if is_salary else commission_pool_count * LABOR_POOL_RATE
+        regular_pool_pay = 0.0 if is_salary else regular_pool_count * pool_rate
+        commission_pool_pay = 0.0 if is_salary else commission_pool_count * pool_rate
         jarrett_filter_count = filter_clean_count if is_jarrett and range_end >= JARRETT_COMMISSION_CUTOFF else 0
         filter_clean_pay = jarrett_filter_count * JARRETT_FILTER_CLEAN_RATE if is_jarrett else (0.0 if is_salary else filter_clean_count * LABOR_FILTER_CLEAN_RATE)
         repair_commission_pay = repair_commissions["payable_total"] if is_jarrett else 0.0
@@ -4386,6 +4397,7 @@ def get_labor_payroll(
             "is_active": bool(row.get("is_active")),
             "is_salary": is_salary,
             "pool_count": pool_count,
+            "pool_rate": pool_rate,
             "service_day_count": len(api_row.get("completed_service_days") or []),
             "regular_pool_count": regular_pool_count,
             "commission_pool_count": commission_pool_count,
@@ -4397,7 +4409,7 @@ def get_labor_payroll(
             "total_pay": total_pay,
             "gusto_regular_hours": 0 if is_salary else regular_pool_count,
             "gusto_commission_amount": gusto_commission_amount if is_jarrett else (0.0 if is_salary else gusto_commission_amount),
-            "notes": "Salary tech · Jarrett commissions included" if is_jarrett else ("Salary tech" if is_salary else ""),
+            "notes": "Salary tech · Jarrett commissions included" if is_jarrett else ("Salary tech" if is_salary else (f"${pool_rate:.2f}/pool" if pool_rate != LABOR_POOL_RATE else "")),
         }
         items.append(item)
 
@@ -4425,6 +4437,7 @@ def get_labor_payroll(
         },
         "pay_rules": {
             "pool_rate": LABOR_POOL_RATE,
+            "pool_rate_exceptions": {"John Donnelly": JOHN_DONNELLY_POOL_RATE},
             "filter_clean_rate": LABOR_FILTER_CLEAN_RATE,
             "jarrett_filter_clean_rate": JARRETT_FILTER_CLEAN_RATE,
             "jarrett_repair_margin_rate": JARRETT_REPAIR_MARGIN_RATE,

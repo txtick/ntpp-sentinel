@@ -30,6 +30,7 @@ This document captures business behavior that should remain stable unless intent
   - The two sources are deduplicated by Skimmer work-order id; an activity event is used only when its id has no valid completed, non-deleted work order in the payroll range. Stale recurring/template rows with old service dates or placeholder completion times do not suppress the fallback.
 - Pay rules:
   - `$16` per stop/pool
+  - John Donnelly: `$17` per stop/pool, including pools over `40`
   - `$25` per filter clean
   - first `40` stops/pools = regular Gusto hours
   - over `40` stops/pools = commission

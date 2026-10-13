@@ -23,6 +23,7 @@ Keep entries short, but do not skip them.
 
 - Jarrett repair commissions start fresh on `2026-09-27`, use `8%` of pre-tax/pre-discount job margin, and become payable in the week the invoice is fully paid; earlier completed jobs are never backfilled.
 - Jarrett's repair commission is keyed once per approved quoted job completed by him, not only to work orders whose type label is exactly `Scheduled Repair`. Filter cleans keep their separate `$8` rule, and inspections, diagnostics, and callbacks without a sold job are not repair commission jobs. Split invoices must collectively cover the quote and be fully paid; eligibility is the later of job completion or final payment.
+- John Donnelly's cleaning rate is `$17` per completed pool/stop; the standard technician rate remains `$16`. His `$17` rate also applies to over-40 commission pools.
   - Reason: repair commissions must follow collected revenue while retaining unpaid completed repairs until a later payment, without duplicating the advance paid for the prior week.
 - Jarrett receives `$8` per completed standalone `Filter Clean` work order without an invoice/payment requirement; other cleaning technicians retain the existing `$25` rate.
   - Reason: some filter cleans are included in monthly service and are not separately invoiced, and Jarrett's rate differs from cleaning-tech payroll.

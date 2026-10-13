@@ -17,6 +17,18 @@ def test_cleaning_tech_filter_clean_rate_is_unchanged():
     assert dashboard_backend.LABOR_FILTER_CLEAN_RATE == 25
 
 
+def test_john_donnelly_has_seventeen_dollar_pool_rate():
+    assert dashboard_backend._labor_pool_rate(
+        {"first_name": "John", "last_name": "Donnelly", "username": "jdonnelly"}
+    ) == 17
+
+
+def test_other_technicians_keep_base_pool_rate():
+    assert dashboard_backend._labor_pool_rate(
+        {"first_name": "Other", "last_name": "Tech", "username": "other"}
+    ) == dashboard_backend.LABOR_POOL_RATE
+
+
 class _Cursor:
     def __init__(self, rows):
         self.rows = rows

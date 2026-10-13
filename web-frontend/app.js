@@ -3208,7 +3208,8 @@ function renderLabor() {
           <p class="panel-subtitle">${escapeHtml(range.label || "")} · Up to ${escapeHtml(rules.regular_pool_cap ?? 40)} pools count as regular Gusto hours, then the rest roll into commission.</p>
         </div>
         <div class="meta-stack">
-          <div class="meta-row"><span>Pool Rate</span><strong>${escapeHtml(currency(rules.pool_rate) || "$0.00")}</strong></div>
+          <div class="meta-row"><span>Base Pool Rate</span><strong>${escapeHtml(currency(rules.pool_rate) || "$0.00")}</strong></div>
+          <div class="meta-row"><span>John Donnelly</span><strong>${escapeHtml(currency(rules.pool_rate_exceptions?.["John Donnelly"]) || "$17.00")}/pool</strong></div>
           <div class="meta-row"><span>Filter Clean Rate</span><strong>${escapeHtml(currency(rules.filter_clean_rate) || "$0.00")}</strong></div>
           <div class="meta-row"><span>Jarrett Filter Clean</span><strong>${escapeHtml(currency(rules.jarrett_filter_clean_rate) || "$8.00")}</strong></div>
         </div>

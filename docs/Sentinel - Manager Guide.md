@@ -77,6 +77,7 @@ What it shows:
 - first `40` pools as regular Gusto hours
 - pools over `40` as commission dollars
 - one final commission dollar amount that already includes filter-clean pay
+- John Donnelly is calculated at `$17` per pool for both regular and over-40 pools; the standard rate remains `$16`
 
 Default pay logic:
 
